@@ -6,6 +6,7 @@ import { Hud } from './hud';
 import { Gesture, type GestureResult } from './gestures';
 import { TOOLS, TOOL_BY_ID } from './config';
 import type { Point, ToolId } from './types';
+import { portraitViewport } from './layout';
 
 const canvas = document.querySelector<HTMLCanvasElement>('#game')!;
 let renderer: THREE.WebGLRenderer;
@@ -28,6 +29,7 @@ renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.toneMappingExposure = 1.12;
 renderer.autoClear = false;
 renderer.info.autoReset = false;
+renderer.setClearColor('#f8f0df');
 
 const game = new Game(import.meta.env.MODE === 'test' ? 42 : undefined);
 const world = new World();
@@ -60,11 +62,30 @@ function safeInsets() {
   return { top, bottom, left, right };
 }
 function resize() {
-  cancelGesture(); width = innerWidth; height = innerHeight;
+  cancelGesture();
+  const visible = window.visualViewport;
+  const viewport = portraitViewport({ x: visible?.offsetLeft ?? 0, y: visible?.offsetTop ?? 0,
+    w: Math.round(Math.min(innerWidth, visible?.width ?? innerWidth)), h: Math.round(Math.min(innerHeight, visible?.height ?? innerHeight)) }, matchMedia('(pointer: coarse)').matches);
+  width = viewport.w; height = viewport.h;
+  hud.rotateRequired = viewport.rotateRequired;
+  if (hud.rotateRequired) game.pause('Back in portrait. Ready to continue?');
+  canvas.style.width = width + 'px'; canvas.style.height = height + 'px';
+  canvas.style.left = viewport.x + 'px'; canvas.style.top = viewport.y + 'px';
   renderer.setPixelRatio(Math.min(devicePixelRatio || 1, 1.5)); renderer.setSize(width, height, false);
-  world.resize(width, height); const safe = safeInsets(); hud.resize(width, height, safe.top, safe.bottom, safe.left, safe.right);
+  const safe = safeInsets(); hud.resize(width, height, safe.top, safe.bottom, safe.left, safe.right);
+  world.resize(width, height, hud.layout.room);
   world.update(game, 0, performance.now() / 1000); hud.draw(game, world, 0, true);
-  if (!contextLost) { renderer.info.reset(); renderer.clear(); renderer.render(world.scene, world.camera); renderer.clearDepth(); renderer.render(world.attackScene, world.attackCamera); renderer.clearDepth(); renderer.render(hud.scene, hud.camera); }
+  if (!contextLost) renderFrame();
+}
+function renderFrame() {
+  renderer.info.reset(); renderer.setScissorTest(false); renderer.setViewport(0, 0, width, height); renderer.clear();
+  const v = world.viewport;
+  renderer.setViewport(v.x, height - v.y - v.h, v.w, v.h);
+  renderer.setScissor(v.x, height - v.y - v.h, v.w, v.h); renderer.setScissorTest(true);
+  if (!hud.rotateRequired) renderer.render(world.scene, world.camera);
+  renderer.setScissorTest(false); renderer.setViewport(0, 0, width, height);
+  renderer.clearDepth(); if (!hud.rotateRequired) renderer.render(world.attackScene, world.attackCamera);
+  renderer.clearDepth(); renderer.render(hud.scene, hud.camera);
 }
 function action(id: string) {
   cancelGesture();
@@ -86,7 +107,7 @@ function applyGesture(result: GestureResult) {
 }
 function point(event: PointerEvent): Point { const rect = canvas.getBoundingClientRect(); return { x: event.clientX - rect.left, y: event.clientY - rect.top }; }
 canvas.addEventListener('pointerdown', event => {
-  if (pointerId !== undefined || !event.isPrimary || (event.pointerType === 'mouse' && event.button !== 0) || contextLost) return;
+  if (hud.rotateRequired || pointerId !== undefined || !event.isPrimary || (event.pointerType === 'mouse' && event.button !== 0) || contextLost) return;
   event.preventDefault(); canvas.focus({ preventScroll: true });
   const p = point(event); const hit = hud.hit(p.x, p.y);
   pointerId = event.pointerId; canvas.setPointerCapture(event.pointerId);
@@ -121,7 +142,7 @@ canvas.addEventListener('pointercancel', cancelGesture);
 canvas.addEventListener('lostpointercapture', cancelGesture);
 canvas.addEventListener('contextmenu', event => event.preventDefault());
 window.addEventListener('keydown', event => {
-  if (event.repeat) return;
+  if (event.repeat || hud.rotateRequired) return;
   if (event.key === 'Escape') { cancelGesture(); if (game.active) game.pause(); else if (game.phase === 'paused' && !contextLost && !document.hidden) game.resume(); }
   if (/^[1-5]$/.test(event.key)) { cancelGesture(); game.select(TOOLS[Number(event.key) - 1].id); }
   hud.invalidate();
@@ -135,8 +156,15 @@ canvas.addEventListener('webglcontextlost', event => {
   event.preventDefault(); contextLost = true; cancelGesture(); game.pause('Graphics paused. Resume when the room returns.');
 });
 canvas.addEventListener('webglcontextrestored', () => { contextLost = false; hud.texture.needsUpdate = true; lastTime = performance.now(); resize(); });
-window.addEventListener('resize', resize);
-window.visualViewport?.addEventListener('resize', resize);
+let resizePending = false;
+function scheduleResize() {
+  if (resizePending) return;
+  resizePending = true;
+  requestAnimationFrame(() => { resizePending = false; resize(); });
+}
+window.addEventListener('resize', scheduleResize);
+window.visualViewport?.addEventListener('resize', scheduleResize);
+window.visualViewport?.addEventListener('scroll', scheduleResize);
 
 function frame(now: number) {
   const realDt = Math.max(0, (now - lastTime) / 1000); lastTime = now;
@@ -144,14 +172,14 @@ function frame(now: number) {
   if (realDt > 1 && game.active && !manualClock) { cancelGesture(); game.pause('A little interruption. Ready to continue?'); }
   const dt = Math.min(realDt, 0.1);
   if (!contextLost) {
-    if (!manualClock) game.tick(dt);
+    if (!manualClock && !hud.rotateRequired) game.tick(dt);
     if (game.phase !== previousPhase) {
       cancelGesture();
       previousPhase = game.phase;
     }
     if (previousRevision !== game.revision) { hud.invalidate(); previousRevision = game.revision; }
     world.update(game, dt, now / 1000, manualClock ? 0 : dt); hud.draw(game, world, dt);
-    renderer.info.reset(); renderer.clear(); renderer.render(world.scene, world.camera); renderer.clearDepth(); renderer.render(world.attackScene, world.attackCamera); renderer.clearDepth(); renderer.render(hud.scene, hud.camera);
+    renderFrame();
     fpsFrames++; fpsTime += realDt;
     if (fpsTime >= 1) { fps = Math.round(fpsFrames / fpsTime); fpsTime = 0; fpsFrames = 0; }
   }

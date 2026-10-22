@@ -5,12 +5,47 @@ import type { World } from '../../src/world';
 
 type Runtime = { game: Game; hud: Hud; world: World; setManualClock(value: boolean): void; refresh(): void; stats(): { fps: number; calls: number; triangles: number; textures: number; geometries: number } };
 
+test('centers a portrait canvas on desktop and maps clicks into it', async ({ browser, baseURL }, info) => {
+  const context = await browser.newContext({ viewport: { width: 1280, height: 800 }, hasTouch: false, isMobile: false, baseURL });
+  try {
+    const page = await context.newPage(); await page.goto('/'); await page.waitForFunction(() => !!window.__CATSLAVE_TEST__);
+    const target = await page.evaluate(() => {
+      const t = window.__CATSLAVE_TEST__; t.setManualClock(true); t.game.reset(true); t.refresh();
+      const r = document.querySelector('canvas')!.getBoundingClientRect(), hit = t.hud.hits.find(h => h.id === 'tool:food')!;
+      return { x: r.left + hit.x + hit.w / 2, y: r.top + hit.y + hit.h / 2, left: r.left, w: r.width, h: r.height, rotate: t.hud.rotateRequired };
+    });
+    expect(target.rotate).toBe(false); expect(target.w).toBeLessThan(target.h); expect(target.left * 2 + target.w).toBe(1280);
+    await page.mouse.click(target.x, target.y);
+    expect(await page.evaluate(() => window.__CATSLAVE_TEST__.game.selected)).toBe('food');
+    await page.screenshot({ path: `test-results/portrait-desktop-${info.project.name}.png` });
+  } finally { await context.close(); }
+});
+
+test('uses the visible viewport and offsets touch input when browser chrome reduces the canvas', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto('/'); await page.waitForFunction(() => !!window.__CATSLAVE_TEST__);
+  await page.evaluate(() => {
+    const t = window.__CATSLAVE_TEST__; t.setManualClock(true); t.game.reset(true);
+    Object.defineProperty(window, 'visualViewport', { configurable: true, value: { width: 350, height: 600, offsetLeft: 22, offsetTop: 12 } });
+    window.dispatchEvent(new Event('resize'));
+  });
+  await expect.poll(() => page.evaluate(() => window.__CATSLAVE_TEST__.hud.height)).toBe(600);
+  const target = await page.evaluate(() => {
+    const t = window.__CATSLAVE_TEST__, rect = document.querySelector('canvas')!.getBoundingClientRect();
+    const hit = t.hud.hits.find(h => h.id === 'tool:food')!;
+    return { x: rect.left + hit.x + hit.w / 2, y: rect.top + hit.y + hit.h / 2, width: rect.width, height: rect.height, left: rect.left, top: rect.top };
+  });
+  expect(target.width).toBe(350); expect(target.height).toBe(600); expect(target.left).toBe(22); expect(target.top).toBe(12);
+  await page.touchscreen.tap(target.x, target.y);
+  expect(await page.evaluate(() => window.__CATSLAVE_TEST__.game.selected)).toBe('food');
+});
+
 test('keeps controls in bounds, care targets separate, and resources bounded', async ({ page, browserName }, info) => {
   const errors: string[] = []; page.on('pageerror', error => errors.push(error.message));
   page.on('console', message => { if (message.type() === 'error') errors.push(message.text()); });
   await page.goto('/'); await page.waitForFunction(() => !!window.__CATSLAVE_TEST__);
   await page.evaluate(() => window.__CATSLAVE_TEST__.setManualClock(true));
-  for (const viewport of [{ width: 320, height: 568 }, { width: 390, height: 844 }, { width: 844, height: 390 }]) {
+  for (const viewport of [{ width: 320, height: 480 }, { width: 390, height: 664 }, { width: 390, height: 844 }]) {
     await page.setViewportSize(viewport);
     await expect.poll(() => page.evaluate(() => window.__CATSLAVE_TEST__.hud.width)).toBe(viewport.width);
     // Playwright #42885: Windows WebKit 1.64 paints resized WebGL canvases blank.
@@ -29,7 +64,10 @@ test('keeps controls in bounds, care targets separate, and resources bounded', a
       expect(h.x + h.w, h.id).toBeLessThanOrEqual(viewport.width + 0.1); expect(h.y + h.h, h.id).toBeLessThanOrEqual(viewport.height + 0.1);
       expect(h.w, h.id).toBeGreaterThanOrEqual(48); expect(h.h, h.id).toBeGreaterThanOrEqual(48);
     }
-    await page.screenshot({ path: `test-results/layout-${viewport.width}-${info.project.name}.png` });
+    const room = await page.evaluate(() => window.__CATSLAVE_TEST__.hud.layout.room);
+    const controls = hits.filter(hit => hit.id === 'pause' || hit.id.startsWith('tool:'));
+    for (const control of controls) expect(control.x + control.w <= room.x || control.x >= room.x + room.w || control.y + control.h <= room.y || control.y >= room.y + room.h).toBe(true);
+    await page.screenshot({ path: `test-results/layout-${viewport.width}x${viewport.height}-${info.project.name}.png` });
   }
   await page.setViewportSize({ width: 390, height: 844 });
   await expect.poll(() => page.evaluate(() => window.__CATSLAVE_TEST__.hud.width)).toBe(390);
@@ -75,8 +113,8 @@ test('cancels gestures on resize and pauses for WebGL context recovery', async (
   await page.mouse.move(hit.x + 50, hit.y + hit.h / 2);
   const progress = await page.evaluate(() => window.__CATSLAVE_TEST__.game.events[0].progress);
   expect(progress).toBeGreaterThan(0);
-  await page.setViewportSize({ width: 844, height: 390 });
-  await expect.poll(() => page.evaluate(() => window.__CATSLAVE_TEST__.hud.width)).toBe(844);
+  await page.setViewportSize({ width: 320, height: 568 });
+  await expect.poll(() => page.evaluate(() => window.__CATSLAVE_TEST__.hud.width)).toBe(320);
   await page.mouse.move(400, 210); await page.mouse.up();
   expect(await page.evaluate(() => window.__CATSLAVE_TEST__.game.events[0].progress)).toBe(progress);
   const supported = await page.evaluate(() => {

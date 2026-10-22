@@ -119,6 +119,22 @@ test('keeps a fixed room view, retains work, pauses, resizes, and loses a run', 
   await expect.poll(() => page.evaluate(() => window.__CATSLAVE_TEST__.hud.width)).toBe(844);
   await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
   await page.screenshot({ path: `test-results/landscape-${info.project.name}.png` });
+  expect(await page.evaluate(() => window.__CATSLAVE_TEST__.hud.rotateRequired)).toBe(true);
+  expect((await state(page)).phase).toBe('paused');
+  expect(await page.evaluate(() => window.__CATSLAVE_TEST__.hud.hits)).toHaveLength(0);
+  const paused = await state(page);
+  await page.evaluate(() => window.__CATSLAVE_TEST__.setManualClock(false));
+  await page.keyboard.press('Escape'); await page.touchscreen.tap(400, 210);
+  await page.waitForTimeout(350);
+  expect((await state(page)).phase).toBe('paused');
+  expect((await state(page)).clock).toBe(paused.clock);
+  expect((await state(page)).hp).toBe(paused.hp);
+  await page.setViewportSize(viewport);
+  await expect.poll(() => page.evaluate(() => window.__CATSLAVE_TEST__.hud.rotateRequired)).toBe(false);
+  expect((await state(page)).phase).toBe('paused');
+  await page.evaluate(() => window.__CATSLAVE_TEST__.setManualClock(true));
+  await tap(page, 'resume');
+  expect((await state(page)).events[0].progress).toBe(partial);
   await tap(page, 'pause'); await tap(page, 'restart');
   await page.evaluate(() => {
     const t = window.__CATSLAVE_TEST__; t.game.hp = 10; t.game.spawn(t.game.cats[0], 'poop');

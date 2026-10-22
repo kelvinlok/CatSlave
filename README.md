@@ -33,7 +33,8 @@ references TypeScript that must first be compiled and bundled.
 ## Play
 
 - **Tutorial** starts five untimed lessons. **Play** starts the survival run immediately.
-- The entire room is visible from one fixed human-height perspective. Cats share the whole floor, including the foreground beside the hideout, bed, and extended rug; there are no directional views, turn buttons, or camera swipes.
+- Mobile play is portrait-only. Turning a phone sideways pauses the run and shows a rotate-back screen; returning upright requires Resume. Desktop uses a centered portrait canvas. Cats share the whole floor, including the foreground beside the hideout, bed, and extended rug; there are no directional views, turn buttons, or camera swipes.
+- A 45-degree camera uses a longer distance and a tightly fitted field of view to fill more portrait height and keep distant cats readable. The slim status strip and named bottom tool tray sit outside its viewport, so controls cannot cover care targets. The canvas tracks Safari's visible viewport and safe areas as browser chrome changes; no fullscreen or Home Screen installation is required.
 - Read the picture in a cat’s thought bubble, select a tool, then interact with the outlined floor target. Hungry and bored cats also accept input on their thought bubbles; the wand can play directly with the cat. Sweep poop, rub vomit, brush fur, tap to pour food, and drag the wand near a bored cat. Movement-based actions require movement, not holding still.
 - Cats walk on four articulated legs, turn toward destinations, pause to sniff, blink, and swish their tails. They roam across the shared room; hungry and bored cats wait near their care target.
 - Between care needs, cats choose unoccupied furniture: hop up the three-tier cat tree, crawl into a cardboard box through its circular opening, watch from the windowsill, perch on the cabinet, nap on the bench, bed or sunny floor, groom on the rug, and scratch the post. Approaches and departures use staged movement with jump arcs and object-specific poses. Cats return to the open floor before a new need starts its patience timer.
@@ -59,6 +60,7 @@ Mouse input works on desktop. Number keys 1–5 select tools, and Escape pauses 
 - `src/need-icons.ts`: wordless care pictograms that match the floor objects.
 - `src/hud.ts`: canvas-textured Three.js UI, screen layout, and raycastable controls.
 - `src/main.ts`: rendering loop, input dispatch, resizing, and interruption recovery.
+- `src/layout.ts`: shared safe-area layout for the room viewport, HUD, and touch targets. Viewport handling follows WebKit's [Visual Viewport API](https://webkit.org/blog/9674/new-webkit-features-in-safari-13/) support.
 - `src/config.ts`: stage timings, tool work requirements, upgrade efficiencies, coat colors, and attack constants.
 - `src/types.ts`: internal data contracts. Cat appearance is separate from the neutral behavior profile so model replacements and traits can be added later.
 

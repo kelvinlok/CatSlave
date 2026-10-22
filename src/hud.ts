@@ -4,6 +4,7 @@ import { Game } from './simulation';
 import { World } from './world';
 import { needIcon } from './need-icons';
 import type { CareEvent, Point, ToolId } from './types';
+import { gameLayout, type GameLayout } from './layout';
 
 const C = { ink: '#493e38', muted: '#8f8072', paper: '#fff9eb', cream: '#f7efdf', line: '#e1d5bf', coral: '#c77355', green: '#72866b', paleGreen: '#e6eadb', red: '#bd5c51' };
 export interface Hit { id: string; x: number; y: number; w: number; h: number; eventId?: number; tool?: ToolId; }
@@ -77,6 +78,8 @@ export class Hud {
   hits: Hit[] = [];
   width = 1;
   height = 1;
+  layout: GameLayout = gameLayout(390, 844);
+  rotateRequired = false;
   top = 12;
   bottom = 12;
   left = 0;
@@ -103,6 +106,7 @@ export class Hud {
   resize(width: number, height: number, safeTop: number, safeBottom: number, safeLeft = 0, safeRight = 0) {
     this.width = width; this.height = height; this.top = Math.max(12, safeTop); this.bottom = Math.max(12, safeBottom);
     this.left = safeLeft; this.right = safeRight;
+    this.layout = gameLayout(width, height, { top: safeTop, bottom: safeBottom, left: safeLeft, right: safeRight });
     this.dpr = Math.min(devicePixelRatio || 1, 1.5, 2048 / Math.max(width, height));
     this.canvas.width = Math.round(width * this.dpr); this.canvas.height = Math.round(height * this.dpr);
     // A texture's storage dimensions are immutable after upload on some WebGL drivers.
@@ -168,16 +172,28 @@ export class Hud {
     text(this.ctx, 'CATSLAVE', this.left + 48, this.top + 16, 11, C.ink, 'left', 'bold');
   }
 
+  private rotationScreen() {
+    const { ctx, width: w, height: h } = this;
+    ctx.fillStyle = C.cream; ctx.fillRect(0, 0, w, h);
+    const x = w / 2, y = h / 2;
+    round(ctx, x - 22, y - 83, 44, 70, 9, C.paper, C.green);
+    line(ctx, [[x - 8, y - 22], [x + 8, y - 22]], C.green, 3);
+    paw(ctx, x, y - 52, 27, C.green);
+    text(ctx, 'Rotate to portrait', x, y + 15, Math.min(27, w * 0.055), C.ink, 'center', 'serif');
+    text(ctx, 'Your cats will wait. Nothing is ticking.', x, y + 47, 12, C.muted, 'center');
+  }
+
   private title() {
     const { width: w, height: h, ctx } = this;
     this.backdrop(); this.brand();
     const center = w / 2, panel = this.panelWidth, x = (w - panel) / 2;
     if (this.compact) {
       // Landscape keeps the cat visible on the right and the introduction on the left.
-      round(ctx, 16, this.top + 45, w * 0.46, h - this.top - this.bottom - 60, 22, 'rgba(255,249,235,0.95)', C.line);
-      const left = 36, cw = w * 0.46 - 40;
-      text(ctx, 'CatSlave.', left, this.top + 91, 43, C.ink, 'left', 'serif');
-      text(ctx, 'At their service. Always.', left, this.top + 130, 15, C.muted);
+      const panelX = this.left + 12, panelW = Math.min((w - this.left - this.right) * 0.48, 420);
+      round(ctx, panelX, this.top + 45, panelW, h - this.top - this.bottom - 60, 22, 'rgba(255,249,235,0.95)', C.line);
+      const left = panelX + 16, cw = panelW - 32;
+      text(ctx, 'CatSlave.', left, this.top + (h < 340 ? 70 : 91), h < 340 ? 32 : 43, C.ink, 'left', 'serif');
+      if (h >= 340) text(ctx, 'At their service. Always.', left, this.top + 130, 15, C.muted);
       this.button('learn', 'Tutorial  →', left, h - this.bottom - 126, cw, 52, true);
       this.button('start', 'Play', left, h - this.bottom - 65, cw, 48);
       return;
@@ -192,65 +208,50 @@ export class Hud {
   }
 
   private gameplay(game: Game, world: World) {
-    const { ctx, width: w, height: h } = this;
-    const compact = this.compact, top = this.top;
-    const headerGradient = ctx.createLinearGradient(0, 0, 0, compact ? 110 : 175);
-    headerGradient.addColorStop(0, 'rgba(248,240,224,0.98)'); headerGradient.addColorStop(0.8, 'rgba(248,240,224,0.92)'); headerGradient.addColorStop(1, 'rgba(248,240,224,0)');
-    ctx.fillStyle = headerGradient; ctx.fillRect(0, 0, w, compact ? 110 : 175);
-    paw(ctx, this.left + 28, top + 15, 24);
-    text(ctx, 'CatSlave', this.left + 47, top + 16, w < 360 ? 18 : 21, C.ink, 'left', 'serif');
-    text(ctx, game.phase === 'tutorial' ? `LEARN 0${game.tutorialStep + 1} / 05` : `STAGE 0${game.stage + 1} / 05`, w / 2 + (w < 360 ? 12 : 0), top + 16, 10, C.muted, 'center', 'bold');
-    const pauseX = w - this.right - 62;
-    round(ctx, pauseX, top - 3, 48, 45, 14, C.paper, C.line);
-    line(ctx, [[pauseX + 20, top + 12], [pauseX + 20, top + 25]], C.ink, 3); line(ctx, [[pauseX + 29, top + 12], [pauseX + 29, top + 25]], C.ink, 3);
-    this.addHit({ id: 'pause', x: pauseX, y: top - 3, w: 48, h: 48 });
-    const statusY = top + (compact ? 44 : 57);
-    heart(ctx, this.left + 25, statusY, 16, game.hp <= 30 ? C.red : C.coral);
-    text(ctx, `${game.hp}`, this.left + 41, statusY, 14, C.ink, 'left', 'bold');
-    round(ctx, this.left + 74, statusY - 4, Math.min(77, w * 0.17), 8, 4, '#dfd5c3');
-    round(ctx, this.left + 74, statusY - 4, Math.min(77, w * 0.17) * game.hp / 100, 8, 4, game.hp <= 30 ? C.red : C.coral);
+    const { ctx, width: w, height: h, layout } = this;
+    const { header, room, pause } = layout;
     const seconds = Math.ceil(game.timeLeft);
-    text(ctx, game.phase === 'tutorial' ? 'NO RUSH' : `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`, w - this.right - 18, statusY, 18, C.ink, 'right', 'bold');
-    text(ctx, game.phase === 'tutorial' ? 'PRACTICE' : `${game.cats.length} / 5`, w / 2 + (w < 360 ? 12 : 0), statusY, 11, C.muted, 'center');
-    if (game.phase === 'tutorial') this.tutorialCaption(game, top + (compact ? 83 : 113));
+    const timer = game.phase === 'tutorial' ? 'Practice' : Math.floor(seconds / 60) + ':' + String(seconds % 60).padStart(2, '0');
+    round(ctx, header.x, header.y, header.w, header.h, 12, 'rgba(255,249,235,0.92)', C.line);
+    heart(ctx, header.x + 16, header.y + header.h / 2, 14, game.hp <= 30 ? C.red : C.coral);
+    text(ctx, String(game.hp), header.x + 29, header.y + header.h / 2, 13, C.ink, 'left', 'bold');
+    text(ctx, (game.phase === 'tutorial' ? 'Learn ' + (game.tutorialStep + 1) : 'Stage ' + (game.stage + 1)) + ' / 5', header.x + header.w / 2, header.y + header.h / 2, 11, C.muted, 'center', 'bold');
+    text(ctx, timer, header.x + header.w - 10, header.y + header.h / 2, 13, C.ink, 'right', 'bold');
+
     this.bubbleCenters = [];
     game.events.forEach(event => this.eventCard(game, world, event, game.events.length));
-    const trayW = Math.min(w - 24, 540), trayX = (w - trayW) / 2;
-    const trayH = compact ? 65 : 91, trayY = h - this.bottom - trayH - 8;
-    const fade = ctx.createLinearGradient(0, trayY - 100, 0, h);
-    fade.addColorStop(0, 'rgba(248,240,224,0)'); fade.addColorStop(0.40, 'rgba(248,240,224,0.94)'); fade.addColorStop(1, C.cream);
-    ctx.fillStyle = fade; ctx.fillRect(0, trayY - 100, w, h - trayY + 100);
-    round(ctx, trayX, trayY, trayW, trayH, 20, C.paper, C.line);
-    const cell = trayW / 5;
     TOOLS.forEach((tool, i) => {
-      const x = trayX + i * cell, selected = game.selected === tool.id;
-      if (selected) round(ctx, x + 5, trayY + 5, cell - 10, trayH - 10, 14, C.paleGreen);
-      toolIcon(ctx, tool.id, x + cell / 2, trayY + (compact ? 24 : 31), compact ? 29 : 38);
-      text(ctx, tool.name, x + cell / 2, trayY + (compact ? 48 : 60), compact ? 10 : 11, selected ? C.green : C.ink, 'center', 'bold');
-      if (!compact) for (let level = 0; level < 3; level++) ellipse(ctx, x + cell / 2 + (level - 1) * 9, trayY + 77, 2.5, 2.5, level < game.levels[tool.id] ? C.green : C.line);
-      this.addHit({ id: `tool:${tool.id}`, x, y: trayY, w: cell, h: trayH });
+      const r = layout.tools[i], selected = game.selected === tool.id;
+      round(ctx, r.x + 1, r.y, r.w - 2, r.h, 12, selected ? C.paleGreen : C.paper, selected ? C.green : C.line);
+      toolIcon(ctx, tool.id, r.x + r.w / 2, r.y + 22, 31);
+      text(ctx, tool.name, r.x + r.w / 2, r.y + 45, 10, selected ? C.green : C.ink, 'center', 'bold');
+      for (let level = 0; level < 3; level++) ellipse(ctx, r.x + r.w / 2 + (level - 1) * 7, r.y + 57, 2, 2, level < game.levels[tool.id] ? C.green : C.line);
+      this.addHit({ id: 'tool:' + tool.id, ...r });
     });
-    const arrowY = trayY - 45;
-    if (game.phase === 'tutorial') text(ctx, TOOL_BY_ID[game.selected].instruction, w / 2, trayY - 22, 12, C.ink, 'center', 'bold');
-    if (game.phase === 'tutorial' && game.feedback && game.clock < game.feedbackUntil) {
-      const toastWidth = Math.min(w - 32, 350), y = compact ? h * 0.42 : top + 170;
-      round(ctx, (w - toastWidth) / 2, y, toastWidth, 36, 12, C.ink);
-      text(ctx, game.feedback, w / 2, y + 18, 12, C.paper, 'center');
+    round(ctx, pause.x, pause.y, pause.w, pause.h, 12, C.paper, C.line);
+    line(ctx, [[pause.x + pause.w / 2 - 4, pause.y + 12], [pause.x + pause.w / 2 - 4, pause.y + 25]], C.ink, 3);
+    line(ctx, [[pause.x + pause.w / 2 + 4, pause.y + 12], [pause.x + pause.w / 2 + 4, pause.y + 25]], C.ink, 3);
+    this.addHit({ id: 'pause', ...pause });
+    if (game.phase === 'tutorial') {
+      if (game.tutorialDone) this.tutorialCaption(game, room.y + 4);
+      else {
+        const label = TOOL_BY_ID[game.selected].instruction;
+        const tw = Math.min(room.w - 12, 240), tx = room.x + (room.w - tw) / 2;
+        round(ctx, tx, room.y + 2, tw, 24, 9, 'rgba(255,249,235,0.88)');
+        text(ctx, label, room.x + room.w / 2, room.y + 14, 11, C.ink, 'center');
+      }
     }
     if (game.events.some(e => game.warning(e))) {
-      const pulse = 0.25 + Math.sin(game.clock * 18) * 0.12;
-      ctx.strokeStyle = 'rgba(168,48,40,' + pulse + ')'; ctx.lineWidth = 10;
-      ctx.strokeRect(5, 5, w - 10, h - 10);
-      paw(ctx, w / 2, arrowY + 25, 34, C.red);
-      for (let i = 0; i < 3; i++) line(ctx, [[w / 2 - 12 + i * 9, arrowY + 4], [w / 2 - 8 + i * 9, arrowY - 5]], C.red, 2);
+      ctx.strokeStyle = 'rgba(168,48,40,' + (0.25 + Math.sin(game.clock * 18) * 0.12) + ')'; ctx.lineWidth = 8;
+      ctx.strokeRect(4, 4, w - 8, h - 8);
     }
   }
 
   private tutorialCaption(game: Game, y: number) {
     const tool = TOOLS[game.tutorialStep];
-    const ctx = this.ctx, center = this.width / 2;
+    const ctx = this.ctx, center = this.layout.room.x + this.layout.room.w / 2;
     if (game.tutorialDone) {
-      const bw = Math.min(this.width - 32, 320);
+      const bw = Math.min(this.layout.room.w - 16, 320);
       this.button('tutorial-next', game.tutorialStep === 4 ? 'You’re hired. Start stage 1  →' : 'Nicely done. Next lesson  →', center - bw / 2, y, bw, 48, true);
     } else if (this.height >= 720) {
       text(ctx, `0${game.tutorialStep + 1} / 05  ·  ${tool.label}`, center, y + 5, this.compact ? 15 : 22, C.ink, 'center', 'serif');
@@ -263,11 +264,14 @@ export class Hud {
     const anchor = world.catLabelPosition(cat.id);
     if (!screen.visible || !anchor) return;
     const thought = world.project(anchor), radius = 24;
-    let x = Math.max(radius + 10, Math.min(this.width - radius - 10, thought.x));
-    let y = Math.max(this.top + (game.phase === 'tutorial' && !this.compact ? 185 : 90), Math.min(this.height - this.bottom - 155, thought.y - 29));
+    const area = this.layout.room;
+    const minX = area.x + 32, maxX = area.x + area.w - 32;
+    const minY = area.y + 32, maxY = area.y + area.h - 32;
+    let x = Math.max(minX, Math.min(maxX, thought.x));
+    let y = Math.max(minY, Math.min(maxY, thought.y - 29));
     const preferred = { x, y };
     for (const [dx, dy] of [[0, 0], [-58, 0], [58, 0], [0, -58], [-58, -58], [58, -58], [0, -116]]) {
-      const candidate = { x: Math.max(34, Math.min(this.width - 34, preferred.x + dx)), y: Math.max(this.top + 90, preferred.y + dy) };
+      const candidate = { x: Math.max(minX, Math.min(maxX, preferred.x + dx)), y: Math.max(minY, Math.min(maxY, preferred.y + dy)) };
       if (this.bubbleCenters.every(p => Math.hypot(p.x - candidate.x, p.y - candidate.y) > 57)) { x = candidate.x; y = candidate.y; break; }
     }
     this.bubbleCenters.push({ x, y });
@@ -286,8 +290,8 @@ export class Hud {
       for (let i = 0; i < 3; i++) line(ctx, [[x + radius - 5 + i * 5, y - radius - 1], [x + radius - 8 + i * 5, y - radius + 11]], C.red, 2);
     }
     const width = count > 1 ? 84 : 112, height = 52;
-    const left = Math.max(8, Math.min(this.width - width - 8, screen.x - width / 2));
-    const top = Math.max(this.top + 80, Math.min(this.height - this.bottom - (this.compact ? 90 : 118) - height, screen.y - height / 2));
+    const left = Math.max(area.x, Math.min(area.x + area.w - width, screen.x - width / 2));
+    const top = Math.max(area.y, Math.min(area.y + area.h - height - 4, screen.y - height / 2));
     // Only the floor target cleans a mess. A distant cat never moves or cleans its old mess.
     ctx.beginPath(); ctx.ellipse(left + width / 2, top + height / 2, width / 2 - 7, height / 2 - 5, 0, 0, Math.PI * 2);
     ctx.setLineDash([3, 6]); ctx.lineWidth = 1.5; ctx.strokeStyle = 'rgba(255,249,235,0.85)'; ctx.stroke(); ctx.setLineDash([]);
@@ -324,10 +328,10 @@ export class Hud {
   private upgrade(game: Game) {
     this.ctx.fillStyle = 'rgba(248,240,224,0.96)'; this.ctx.fillRect(0, 0, this.width, this.height); this.brand();
     const ctx = this.ctx, w = this.width, h = this.height, center = w / 2;
-    const top = this.top + (this.compact ? 49 : 69);
+    const top = this.top + (h < 340 ? 10 : this.compact ? 49 : 69);
     text(ctx, 'Choose an upgrade', center, top + 43, this.compact ? 32 : 43, C.ink, 'center', 'serif');
     const width = Math.min(w - 32, 460), x = (w - width) / 2;
-    const y = top + 108;
+    const y = top + (h < 340 ? 75 : 108);
     const rowH = Math.min(76, Math.max(48, (h - y - this.bottom - 39) / 5 - 8));
     if (this.compact) {
       const cell = Math.min((w - 40) / 5, 134), start = (w - cell * 5) / 2;
@@ -357,9 +361,9 @@ export class Hud {
     ctx.fillStyle = 'rgba(66,57,50,0.44)'; ctx.fillRect(0, 0, w, h);
     const width = Math.min(w - 32, 390), height = Math.min(h - 32, 335), x = (w - width) / 2, y = (h - height) / 2;
     round(ctx, x, y, width, height, 25, C.paper, C.line);
-    paw(ctx, w / 2, y + 40, 34, C.green);
-    text(ctx, 'Paused', w / 2, y + 86, Math.min(30, w * 0.075), C.ink, 'center', 'serif');
-    text(ctx, game.pauseReason, w / 2, y + 121, 12, C.muted, 'center');
+    if (height >= 300) paw(ctx, w / 2, y + 40, 34, C.green);
+    text(ctx, 'Paused', w / 2, y + (height < 300 ? 30 : 86), Math.min(30, w * 0.075), C.ink, 'center', 'serif');
+    text(ctx, game.pauseReason, w / 2, y + (height < 300 ? 64 : 121), 12, C.muted, 'center');
     this.button('resume', 'Resume  →', x + 24, y + height - 136, width - 48, 53, true);
     this.button('restart', 'Restart', x + 24, y + height - 72, width - 48, 48);
   }
@@ -367,7 +371,7 @@ export class Hud {
   private ending(game: Game) {
     this.backdrop(); this.brand();
     const ctx = this.ctx, w = this.width, h = this.height, win = game.phase === 'victory';
-    const top = this.compact ? this.top + 55 : h * 0.13;
+    const top = this.compact ? this.top + (h < 340 ? 25 : 55) : h * 0.13;
     this.pill(win ? 'FIVE STAGES. STILL STANDING.' : 'YOUR SHIFT HAS ENDED', w / 2, top, win ? C.green : C.red);
     text(ctx, win ? 'Victory.' : 'Game over.', w / 2, top + 47, Math.min(this.compact ? 39 : 49, w * 0.105), C.ink, 'center', 'serif');
     const width = Math.min(w - 32, 440), x = (w - width) / 2, y = h - this.bottom - (this.compact ? 133 : 199);
@@ -432,7 +436,8 @@ export class Hud {
     this.lastPhase = game.phase; this.elapsed = 0; this.dirty = false;
     const ctx = this.ctx;
     ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0); ctx.clearRect(0, 0, this.width, this.height); this.hits = [];
-    if (game.phase === 'title') this.title();
+    if (this.rotateRequired) this.rotationScreen();
+    else if (game.phase === 'title') this.title();
     else if (game.phase === 'adoption') this.adoption(game);
     else if (game.phase === 'upgrade') this.upgrade(game);
     else if (game.phase === 'game-over' || game.phase === 'victory') this.ending(game);
@@ -440,11 +445,11 @@ export class Hud {
       this.gameplay(game, world);
       if (game.phase === 'paused') { this.hits = []; this.pause(game); }
     }
-    if (this.pointer && game.active && this.pointerTool) {
+    if (!this.rotateRequired && this.pointer && game.active && this.pointerTool) {
       ellipse(ctx, this.pointer.x, this.pointer.y, 22, 22, 'rgba(255,249,235,0.75)');
       toolIcon(ctx, this.pointerTool, this.pointer.x + 8, this.pointer.y - 6, 40);
     }
-    if (this.damageFlash > 0) this.scratches(world.attackAge);
+    if (!this.rotateRequired && this.damageFlash > 0) this.scratches(world.attackAge);
     this.texture.needsUpdate = true; this.syncHits();
   }
 }

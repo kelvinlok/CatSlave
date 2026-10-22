@@ -8,6 +8,7 @@ import { createMess } from './messes';
 import { createFurniture } from './furniture-model';
 import { animateInteraction } from './cat-animation';
 import { BENCH, BED, POST, RUG } from './furniture';
+import { gameLayout, type Rect } from './layout';
 
 const sphere = new THREE.SphereGeometry(1, 16, 10);
 const box = new THREE.BoxGeometry(1, 1, 1);
@@ -73,6 +74,7 @@ export class World {
   private vector = new THREE.Vector3();
   private width = 1;
   private height = 1;
+  viewport: Rect = { x: 0, y: 0, w: 1, h: 1 };
   private previews = new THREE.Group();
   private previewCats: CatModel[] = [];
   private previewKey = '';
@@ -153,26 +155,27 @@ export class World {
     this.scene.add(this.previews);
   }
 
-  resize(width: number, height: number) {
-    this.width = width; this.height = height; this.camera.aspect = width / height;
-    // A lower landscape viewpoint keeps the longer floor from shrinking into
-    // the middle of a short screen. Portrait keeps the foreground below eye level.
-    this.camera.position.set(0, height < 540 ? 3.5 : 5, 9);
-    this.camera.lookAt(0, 0, height < 540 ? 1.5 : -3.5);
+  resize(width: number, height: number, viewport = gameLayout(width, height).room) {
+    this.width = width; this.height = height; this.viewport = viewport;
+    this.camera.aspect = viewport.w / viewport.h;
+    // Keep the 45-degree pitch, but reduce near/far size disparity with a longer lens.
+    // Fitting from farther back uses more portrait height without clipping the near corners.
+    this.camera.position.set(0, 14, 13.2);
+    this.camera.lookAt(0, 0, -0.8);
     this.attackCamera.aspect = width / height; this.attackCamera.updateProjectionMatrix();
     // Keep the entire walkable floor visible from a fixed, downward human perspective.
     const corners = [ROOM.minX - 0.55, ROOM.maxX + 0.55].flatMap(x =>
-      [ROOM.minZ - 0.5, ROOM.maxZ + 0.8].flatMap(z => [0, 1.1].map(y => new THREE.Vector3(x, y, z))));
+      [ROOM.minZ - 0.5, ROOM.maxZ + 0.6].flatMap(z => [0, 1.1].map(y => new THREE.Vector3(x, y, z))));
     this.camera.updateMatrixWorld();
-    for (let fov = 45; fov <= 112; fov++) {
+    for (let fov = 20; fov <= 112; fov++) {
       this.camera.fov = fov; this.camera.updateProjectionMatrix();
-      const verticalLimit = height < 540 ? 0.56 : 0.74;
-      if (corners.every(p => { const clip = p.clone().project(this.camera); return Math.abs(clip.x) < 0.9 && Math.abs(clip.y) < verticalLimit; })) break;
+      if (corners.every(p => { const clip = p.clone().project(this.camera); return Math.abs(clip.x) < 0.94 && Math.abs(clip.y) < 0.88; })) break;
     }
   }
   project(position: THREE.Vector3) {
     this.vector.copy(position).project(this.camera);
-    return { x: (this.vector.x + 1) * this.width / 2, y: (1 - this.vector.y) * this.height / 2, visible: this.vector.z < 1 && this.vector.z > -1 };
+    return { x: this.viewport.x + (this.vector.x + 1) * this.viewport.w / 2,
+      y: this.viewport.y + (1 - this.vector.y) * this.viewport.h / 2, visible: this.vector.z < 1 && this.vector.z > -1 };
   }
   catPosition(id: number) { return this.residents.get(id)?.model.root.position.clone(); }
   catLabelPosition(id: number) {
@@ -183,7 +186,9 @@ export class World {
     return this.messes.get(event.id)?.position.clone() ?? this.catPosition(event.catId) ?? new THREE.Vector3();
   }
   pickCat(x: number, y: number): number | undefined {
-    this.raycaster.setFromCamera(new THREE.Vector2(x / this.width * 2 - 1, 1 - y / this.height * 2), this.camera);
+    const v = this.viewport;
+    if (x < v.x || x > v.x + v.w || y < v.y || y > v.y + v.h) return;
+    this.raycaster.setFromCamera(new THREE.Vector2((x - v.x) / v.w * 2 - 1, 1 - (y - v.y) / v.h * 2), this.camera);
     const roots = [...this.residents.values()].map(r => r.model.root);
     const hit = this.raycaster.intersectObjects(roots, true)[0];
     if (hit) { let object: THREE.Object3D | null = hit.object; while (object) { if (object.userData.catId) return object.userData.catId as number; object = object.parent; } }

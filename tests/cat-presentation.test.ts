@@ -6,9 +6,9 @@ import { World } from '../src/world';
 import { ROOM } from '../src/config';
 
 describe('cat presentation', () => {
-  it('keeps the shared floor in view in portrait and landscape without turning', () => {
+  it('keeps the shared floor in view in portrait without turning', () => {
     const world = new World();
-    for (const [w, h] of [[390, 844], [320, 568], [844, 390]]) {
+    for (const [w, h] of [[390, 844], [320, 568], [390, 664]]) {
       world.resize(w, h);
       for (const x of [ROOM.minX, ROOM.maxX]) for (const z of [ROOM.minZ, ROOM.maxZ]) {
         const p = world.project(new THREE.Vector3(x, 0.07, z));

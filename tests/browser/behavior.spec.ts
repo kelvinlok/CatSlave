@@ -24,11 +24,12 @@ test('wordless needs stay readable while cats roam and leave messes behind', asy
 
 test('an attack fills the screen without moving the fixed camera, and clears after restart', async ({ page }, info) => {
   await page.goto('/'); await page.waitForFunction(() => !!window.__CATSLAVE_TEST__);
+  const camera = await page.evaluate(() => window.__CATSLAVE_TEST__.world.camera.position.toArray());
   await page.evaluate(() => {
     const t = window.__CATSLAVE_TEST__; t.setManualClock(true); t.game.reset();
     t.game.spawn(t.game.cats[0], 'poop'); t.game.tick(23); t.refresh(0.4);
   });
-  expect(await page.evaluate(() => window.__CATSLAVE_TEST__.world.camera.position.toArray())).toEqual([0, 5, 9]);
+  expect(await page.evaluate(() => window.__CATSLAVE_TEST__.world.camera.position.toArray())).toEqual(camera);
   expect(await page.evaluate(() => window.__CATSLAVE_TEST__.hud.damageFlash)).toBeGreaterThan(0);
   await page.screenshot({ path: `test-results/scratch-${info.project.name}.png` });
   await page.evaluate(() => { const t = window.__CATSLAVE_TEST__; t.game.pause(); t.refresh(5); });
