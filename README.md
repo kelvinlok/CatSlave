@@ -20,6 +20,16 @@ npm run build
 npm run preview
 ```
 
+## GitHub Pages
+
+The game is published at https://kelvinlok.github.io/CatSlave/.
+Repository **Settings → Pages → Source** must be **GitHub Actions**.
+The workflow in `.github/workflows/deploy.yml` installs dependencies, runs unit tests,
+builds with Vite, and deploys only `dist` on every push to `main`. It can also be
+run manually from the Actions tab. The relative Vite base keeps asset links valid
+under `/CatSlave/`. Do not publish the source root with Jekyll: its `index.html`
+references TypeScript that must first be compiled and bundled.
+
 ## Play
 
 - **Tutorial** starts five untimed lessons. **Play** starts the survival run immediately.
