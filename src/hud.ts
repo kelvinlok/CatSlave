@@ -1,0 +1,450 @@
+import * as THREE from 'three';
+import { EFFICIENCY, STAGES, TOOLS, TOOL_BY_ID } from './config';
+import { Game } from './simulation';
+import { World } from './world';
+import { needIcon } from './need-icons';
+import type { CareEvent, Point, ToolId } from './types';
+
+const C = { ink: '#493e38', muted: '#8f8072', paper: '#fff9eb', cream: '#f7efdf', line: '#e1d5bf', coral: '#c77355', green: '#72866b', paleGreen: '#e6eadb', red: '#bd5c51' };
+export interface Hit { id: string; x: number; y: number; w: number; h: number; eventId?: number; tool?: ToolId; }
+
+function round(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number, fill: string, stroke?: string) {
+  ctx.beginPath(); ctx.roundRect(x, y, Math.max(0, w), Math.max(0, h), r); ctx.fillStyle = fill; ctx.fill();
+  if (stroke) { ctx.strokeStyle = stroke; ctx.lineWidth = 1; ctx.stroke(); }
+}
+function text(ctx: CanvasRenderingContext2D, value: string, x: number, y: number, size = 14, color = C.ink, align: CanvasTextAlign = 'left', font = 'sans') {
+  ctx.font = font === 'serif' ? `500 ${size}px Georgia, 'Times New Roman', serif` : `${font === 'bold' ? 700 : 500} ${size}px 'Trebuchet MS', Arial, sans-serif`;
+  ctx.textAlign = align; ctx.textBaseline = 'middle'; ctx.fillStyle = color; ctx.fillText(value, x, y);
+}
+function line(ctx: CanvasRenderingContext2D, points: number[][], color: string, width = 3) {
+  ctx.beginPath(); points.forEach(([x, y], i) => i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)); ctx.strokeStyle = color; ctx.lineWidth = width; ctx.lineCap = 'round'; ctx.lineJoin = 'round'; ctx.stroke();
+}
+function ellipse(ctx: CanvasRenderingContext2D, x: number, y: number, rx: number, ry: number, color: string, rotation = 0) {
+  ctx.beginPath(); ctx.ellipse(x, y, rx, ry, rotation, 0, Math.PI * 2); ctx.fillStyle = color; ctx.fill();
+}
+function paw(ctx: CanvasRenderingContext2D, x: number, y: number, size: number, color = C.coral) {
+  ellipse(ctx, x, y + size * 0.15, size * 0.25, size * 0.20, color);
+  [-0.31, -0.11, 0.11, 0.31].forEach((p, i) => ellipse(ctx, x + size * p, y - size * (i === 1 || i === 2 ? 0.21 : 0.08), size * 0.09, size * 0.12, color, p));
+}
+function heart(ctx: CanvasRenderingContext2D, x: number, y: number, size: number, color = C.coral) {
+  ctx.save(); ctx.translate(x, y); ctx.scale(size / 24, size / 24); ctx.beginPath();
+  ctx.moveTo(0, 10); ctx.bezierCurveTo(-21, -3, -8, -15, 0, -6); ctx.bezierCurveTo(8, -15, 21, -3, 0, 10);
+  ctx.fillStyle = color; ctx.fill(); ctx.restore();
+}
+function toolIcon(ctx: CanvasRenderingContext2D, id: ToolId, x: number, y: number, size: number) {
+  ctx.save(); ctx.translate(x, y); ctx.scale(size / 40, size / 40);
+  const wood = '#a7835e', outline = '#67584c';
+  if (id === 'sweeper') {
+    line(ctx, [[8, -16], [-1, 6]], wood, 4);
+    ctx.beginPath(); ctx.moveTo(-6, 2); ctx.lineTo(4, 6); ctx.lineTo(6, 17); ctx.quadraticCurveTo(-5, 23, -17, 12); ctx.closePath(); ctx.fillStyle = '#d6ad69'; ctx.fill();
+    for (let i = 0; i < 4; i++) line(ctx, [[-5 + i * 2, 8], [-12 + i * 5, 16]], '#a7835e', 1.3);
+    line(ctx, [[-7, 3], [4, 7]], outline, 3);
+  } else if (id === 'mop') {
+    line(ctx, [[7, -17], [-2, 5]], wood, 4);
+    for (let i = 0; i < 6; i++) line(ctx, [[-3, 4], [-13 + i * 4, 14 + (i % 2) * 4]], '#91b9bd', 4);
+    line(ctx, [[-9, 4], [3, 8]], '#5d8b94', 4);
+  } else if (id === 'brush') {
+    line(ctx, [[8, -15], [-1, 2]], wood, 6);
+    ctx.save(); ctx.rotate(0.4);
+    round(ctx, -13, -1, 24, 13, 5, '#af98c3');
+    for (let i = 0; i < 6; i++) line(ctx, [[-10 + i * 4, 10], [-10 + i * 4, 16]], '#81718d', 2);
+    ctx.restore();
+  } else if (id === 'food') {
+    round(ctx, -9, -19, 18, 20, 3, '#d9aa7b'); round(ctx, -8, -18, 16, 5, 2, '#a87b55');
+    ellipse(ctx, 0, -8, 4, 3, '#f6e9cf');
+    round(ctx, -17, 4, 34, 14, 6, '#bf806d');
+    ellipse(ctx, 0, 5, 17, 5, '#efc5a1'); ellipse(ctx, 0, 5, 12, 3, '#9d7358');
+  } else {
+    line(ctx, [[-13, 17], [2, -15]], wood, 3);
+    ctx.beginPath(); ctx.moveTo(2, -15); ctx.quadraticCurveTo(19, -22, 15, 1); ctx.strokeStyle = outline; ctx.lineWidth = 1.5; ctx.stroke();
+    ellipse(ctx, 12, 8, 4, 9, '#b6a2c8', 0.4); ellipse(ctx, 18, 7, 3, 8, '#91b9bd', -0.25);
+    ellipse(ctx, 15, 2, 3, 3, '#d6ad69');
+  }
+  ctx.restore();
+}
+
+export class Hud {
+  scene = new THREE.Scene();
+  camera = new THREE.OrthographicCamera(0, 1, 0, 1, -10, 10);
+  canvas = document.createElement('canvas');
+  ctx = this.canvas.getContext('2d')!;
+  texture = new THREE.CanvasTexture(this.canvas);
+  private plane: THREE.Mesh;
+  private hitMaterial = new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, depthTest: false, depthWrite: false });
+  private hitGeometry = new THREE.PlaneGeometry(1, 1);
+  private hitMeshes: THREE.Mesh[] = [];
+  private raycaster = new THREE.Raycaster();
+  hits: Hit[] = [];
+  width = 1;
+  height = 1;
+  top = 12;
+  bottom = 12;
+  left = 0;
+  right = 0;
+  private dpr = 1;
+  pointer?: Point;
+  pointerTool?: ToolId;
+  damageFlash = 0;
+
+  private elapsed = 0;
+  private dirty = true;
+  private lastPhase = '';
+  private selectedTool: ToolId = 'sweeper';
+  private bubbleCenters: Point[] = [];
+
+  constructor() {
+    this.camera.near = 0; this.camera.far = 10; this.camera.position.z = 5;
+    this.hitMaterial.visible = false;
+    this.texture.colorSpace = THREE.SRGBColorSpace; this.texture.minFilter = THREE.LinearFilter; this.texture.magFilter = THREE.LinearFilter;
+    this.texture.generateMipmaps = false;
+    this.plane = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), new THREE.MeshBasicMaterial({ map: this.texture, transparent: true, depthTest: false, depthWrite: false, side: THREE.DoubleSide, toneMapped: false }));
+    this.plane.renderOrder = 1; this.scene.add(this.plane);
+  }
+  resize(width: number, height: number, safeTop: number, safeBottom: number, safeLeft = 0, safeRight = 0) {
+    this.width = width; this.height = height; this.top = Math.max(12, safeTop); this.bottom = Math.max(12, safeBottom);
+    this.left = safeLeft; this.right = safeRight;
+    this.dpr = Math.min(devicePixelRatio || 1, 1.5, 2048 / Math.max(width, height));
+    this.canvas.width = Math.round(width * this.dpr); this.canvas.height = Math.round(height * this.dpr);
+    // A texture's storage dimensions are immutable after upload on some WebGL drivers.
+    this.texture.dispose(); this.texture = new THREE.CanvasTexture(this.canvas);
+    this.texture.colorSpace = THREE.SRGBColorSpace; this.texture.minFilter = THREE.LinearFilter;
+    this.texture.magFilter = THREE.LinearFilter; this.texture.generateMipmaps = false;
+    (this.plane.material as THREE.MeshBasicMaterial).map = this.texture;
+    (this.plane.material as THREE.MeshBasicMaterial).needsUpdate = true;
+    this.camera.left = 0; this.camera.right = width; this.camera.top = 0; this.camera.bottom = height; this.camera.updateProjectionMatrix();
+    this.plane.position.set(width / 2, height / 2, 0); this.plane.scale.set(width, -height, 1);
+    this.dirty = true;
+  }
+  invalidate() { this.dirty = true; }
+  get compact() { return this.height < 540; }
+  get panelWidth() { return Math.min(this.width - 32, 500); }
+  private addHit(hit: Hit) { this.hits.push(hit); }
+  hit(x: number, y: number): Hit | undefined {
+    this.camera.updateMatrixWorld(); this.scene.updateMatrixWorld(true);
+    this.raycaster.setFromCamera(new THREE.Vector2(x / this.width * 2 - 1, 1 - y / this.height * 2), this.camera);
+    const intersections = this.raycaster.intersectObjects(this.hitMeshes.filter(m => m.visible), false);
+    const hits = intersections.map(i => i.object.userData.hit as Hit);
+    const ui = hits.find(h => h.eventId === undefined);
+    if (ui) return ui;
+    // Nearby roaming cats can overlap in perspective. Prefer the selected tool,
+    // then the closest actual target, rather than whichever quad was added last.
+    return hits.sort((a, b) => Number(b.tool === this.selectedTool) - Number(a.tool === this.selectedTool)
+      || Math.hypot(x - a.x - a.w / 2, y - a.y - a.h / 2) - Math.hypot(x - b.x - b.w / 2, y - b.y - b.h / 2))[0];
+  }
+  careHit(eventId: number, point: Point) {
+    return this.hits.filter(h => h.eventId === eventId).some(hit => point.x >= hit.x - 32 && point.x <= hit.x + hit.w + 32 && point.y >= hit.y - 40 && point.y <= hit.y + hit.h + 36);
+  }
+  private syncHits() {
+    this.hits.forEach((hit, i) => {
+      let mesh = this.hitMeshes[i];
+      if (!mesh) { mesh = new THREE.Mesh(this.hitGeometry, this.hitMaterial); this.hitMeshes.push(mesh); this.scene.add(mesh); }
+      mesh.visible = true; mesh.position.set(hit.x + hit.w / 2, hit.y + hit.h / 2, 1 + i * 0.001);
+      mesh.scale.set(hit.w, hit.h, 1); mesh.userData.hit = hit;
+    });
+    this.hitMeshes.slice(this.hits.length).forEach(mesh => { mesh.visible = false; });
+  }
+  private button(id: string, label: string, x: number, y: number, w: number, h = 52, primary = false) {
+    round(this.ctx, x, y + 3, w, h, 15, primary ? '#a45f45' : '#d9cdb9');
+    round(this.ctx, x, y, w, h, 15, primary ? C.coral : C.paper, primary ? undefined : C.line);
+    text(this.ctx, label, x + w / 2, y + h / 2, 15, primary ? '#fffaf0' : C.ink, 'center', 'bold');
+    this.addHit({ id, x, y, w, h });
+  }
+  private pill(label: string, x: number, y: number, color = C.green) {
+    this.ctx.font = '700 10px Arial'; const width = this.ctx.measureText(label).width + 24;
+    round(this.ctx, x - width / 2, y - 12, width, 24, 12, C.paper, C.line);
+    text(this.ctx, label, x, y, 10, color, 'center', 'bold');
+  }
+  private backdrop() {
+    const ctx = this.ctx;
+    const top = ctx.createLinearGradient(0, 0, 0, this.height * 0.55);
+    top.addColorStop(0, 'rgba(248,240,224,0.98)'); top.addColorStop(0.57, 'rgba(248,240,224,0.90)'); top.addColorStop(1, 'rgba(248,240,224,0)');
+    ctx.fillStyle = top; ctx.fillRect(0, 0, this.width, this.height * 0.55);
+    const bottom = ctx.createLinearGradient(0, this.height * 0.6, 0, this.height);
+    bottom.addColorStop(0, 'rgba(248,240,224,0)'); bottom.addColorStop(0.54, 'rgba(248,240,224,0.93)'); bottom.addColorStop(1, 'rgba(248,240,224,1)');
+    ctx.fillStyle = bottom; ctx.fillRect(0, this.height * 0.6, this.width, this.height * 0.4);
+  }
+  private brand() {
+    paw(this.ctx, this.left + 29, this.top + 15, 23);
+    text(this.ctx, 'CATSLAVE', this.left + 48, this.top + 16, 11, C.ink, 'left', 'bold');
+  }
+
+  private title() {
+    const { width: w, height: h, ctx } = this;
+    this.backdrop(); this.brand();
+    const center = w / 2, panel = this.panelWidth, x = (w - panel) / 2;
+    if (this.compact) {
+      // Landscape keeps the cat visible on the right and the introduction on the left.
+      round(ctx, 16, this.top + 45, w * 0.46, h - this.top - this.bottom - 60, 22, 'rgba(255,249,235,0.95)', C.line);
+      const left = 36, cw = w * 0.46 - 40;
+      text(ctx, 'CatSlave.', left, this.top + 91, 43, C.ink, 'left', 'serif');
+      text(ctx, 'At their service. Always.', left, this.top + 130, 15, C.muted);
+      this.button('learn', 'Tutorial  →', left, h - this.bottom - 126, cw, 52, true);
+      this.button('start', 'Play', left, h - this.bottom - 65, cw, 48);
+      return;
+    }
+    this.pill('FIVE-STAGE SURVIVAL', center, Math.max(this.top + 65, h * 0.13));
+    text(ctx, 'CatSlave.', center, h * 0.225, Math.min(78, w * 0.17), C.ink, 'center', 'serif');
+    text(ctx, 'At their service. Always.', center, h * 0.225 + 51, 17, C.muted, 'center');
+    const badgeY = h * 0.59;
+    const bottomY = h - this.bottom - 193;
+    this.button('learn', 'Tutorial  →', x, bottomY + 50, panel, 54, true);
+    this.button('start', 'Play', x, bottomY + 115, panel, 48);
+  }
+
+  private gameplay(game: Game, world: World) {
+    const { ctx, width: w, height: h } = this;
+    const compact = this.compact, top = this.top;
+    const headerGradient = ctx.createLinearGradient(0, 0, 0, compact ? 110 : 175);
+    headerGradient.addColorStop(0, 'rgba(248,240,224,0.98)'); headerGradient.addColorStop(0.8, 'rgba(248,240,224,0.92)'); headerGradient.addColorStop(1, 'rgba(248,240,224,0)');
+    ctx.fillStyle = headerGradient; ctx.fillRect(0, 0, w, compact ? 110 : 175);
+    paw(ctx, this.left + 28, top + 15, 24);
+    text(ctx, 'CatSlave', this.left + 47, top + 16, w < 360 ? 18 : 21, C.ink, 'left', 'serif');
+    text(ctx, game.phase === 'tutorial' ? `LEARN 0${game.tutorialStep + 1} / 05` : `STAGE 0${game.stage + 1} / 05`, w / 2 + (w < 360 ? 12 : 0), top + 16, 10, C.muted, 'center', 'bold');
+    const pauseX = w - this.right - 62;
+    round(ctx, pauseX, top - 3, 48, 45, 14, C.paper, C.line);
+    line(ctx, [[pauseX + 20, top + 12], [pauseX + 20, top + 25]], C.ink, 3); line(ctx, [[pauseX + 29, top + 12], [pauseX + 29, top + 25]], C.ink, 3);
+    this.addHit({ id: 'pause', x: pauseX, y: top - 3, w: 48, h: 48 });
+    const statusY = top + (compact ? 44 : 57);
+    heart(ctx, this.left + 25, statusY, 16, game.hp <= 30 ? C.red : C.coral);
+    text(ctx, `${game.hp}`, this.left + 41, statusY, 14, C.ink, 'left', 'bold');
+    round(ctx, this.left + 74, statusY - 4, Math.min(77, w * 0.17), 8, 4, '#dfd5c3');
+    round(ctx, this.left + 74, statusY - 4, Math.min(77, w * 0.17) * game.hp / 100, 8, 4, game.hp <= 30 ? C.red : C.coral);
+    const seconds = Math.ceil(game.timeLeft);
+    text(ctx, game.phase === 'tutorial' ? 'NO RUSH' : `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`, w - this.right - 18, statusY, 18, C.ink, 'right', 'bold');
+    text(ctx, game.phase === 'tutorial' ? 'PRACTICE' : `${game.cats.length} / 5`, w / 2 + (w < 360 ? 12 : 0), statusY, 11, C.muted, 'center');
+    if (game.phase === 'tutorial') this.tutorialCaption(game, top + (compact ? 83 : 113));
+    this.bubbleCenters = [];
+    game.events.forEach(event => this.eventCard(game, world, event, game.events.length));
+    const trayW = Math.min(w - 24, 540), trayX = (w - trayW) / 2;
+    const trayH = compact ? 65 : 91, trayY = h - this.bottom - trayH - 8;
+    const fade = ctx.createLinearGradient(0, trayY - 100, 0, h);
+    fade.addColorStop(0, 'rgba(248,240,224,0)'); fade.addColorStop(0.40, 'rgba(248,240,224,0.94)'); fade.addColorStop(1, C.cream);
+    ctx.fillStyle = fade; ctx.fillRect(0, trayY - 100, w, h - trayY + 100);
+    round(ctx, trayX, trayY, trayW, trayH, 20, C.paper, C.line);
+    const cell = trayW / 5;
+    TOOLS.forEach((tool, i) => {
+      const x = trayX + i * cell, selected = game.selected === tool.id;
+      if (selected) round(ctx, x + 5, trayY + 5, cell - 10, trayH - 10, 14, C.paleGreen);
+      toolIcon(ctx, tool.id, x + cell / 2, trayY + (compact ? 24 : 31), compact ? 29 : 38);
+      text(ctx, tool.name, x + cell / 2, trayY + (compact ? 48 : 60), compact ? 10 : 11, selected ? C.green : C.ink, 'center', 'bold');
+      if (!compact) for (let level = 0; level < 3; level++) ellipse(ctx, x + cell / 2 + (level - 1) * 9, trayY + 77, 2.5, 2.5, level < game.levels[tool.id] ? C.green : C.line);
+      this.addHit({ id: `tool:${tool.id}`, x, y: trayY, w: cell, h: trayH });
+    });
+    const arrowY = trayY - 45;
+    if (game.phase === 'tutorial') text(ctx, TOOL_BY_ID[game.selected].instruction, w / 2, trayY - 22, 12, C.ink, 'center', 'bold');
+    if (game.phase === 'tutorial' && game.feedback && game.clock < game.feedbackUntil) {
+      const toastWidth = Math.min(w - 32, 350), y = compact ? h * 0.42 : top + 170;
+      round(ctx, (w - toastWidth) / 2, y, toastWidth, 36, 12, C.ink);
+      text(ctx, game.feedback, w / 2, y + 18, 12, C.paper, 'center');
+    }
+    if (game.events.some(e => game.warning(e))) {
+      const pulse = 0.25 + Math.sin(game.clock * 18) * 0.12;
+      ctx.strokeStyle = 'rgba(168,48,40,' + pulse + ')'; ctx.lineWidth = 10;
+      ctx.strokeRect(5, 5, w - 10, h - 10);
+      paw(ctx, w / 2, arrowY + 25, 34, C.red);
+      for (let i = 0; i < 3; i++) line(ctx, [[w / 2 - 12 + i * 9, arrowY + 4], [w / 2 - 8 + i * 9, arrowY - 5]], C.red, 2);
+    }
+  }
+
+  private tutorialCaption(game: Game, y: number) {
+    const tool = TOOLS[game.tutorialStep];
+    const ctx = this.ctx, center = this.width / 2;
+    if (game.tutorialDone) {
+      const bw = Math.min(this.width - 32, 320);
+      this.button('tutorial-next', game.tutorialStep === 4 ? 'You’re hired. Start stage 1  →' : 'Nicely done. Next lesson  →', center - bw / 2, y, bw, 48, true);
+    } else if (this.height >= 720) {
+      text(ctx, `0${game.tutorialStep + 1} / 05  ·  ${tool.label}`, center, y + 5, this.compact ? 15 : 22, C.ink, 'center', 'serif');
+      text(ctx, `${tool.name} selected. ${tool.instruction.toLowerCase()}.`, center, y + (this.compact ? 25 : 33), 11, C.muted, 'center');
+    }
+  }
+  private eventCard(game: Game, world: World, event: CareEvent, count: number) {
+    const ctx = this.ctx, cat = game.cats.find(c => c.id === event.catId)!;
+    const screen = world.project(world.eventPosition(event));
+    const anchor = world.catLabelPosition(cat.id);
+    if (!screen.visible || !anchor) return;
+    const thought = world.project(anchor), radius = 24;
+    let x = Math.max(radius + 10, Math.min(this.width - radius - 10, thought.x));
+    let y = Math.max(this.top + (game.phase === 'tutorial' && !this.compact ? 185 : 90), Math.min(this.height - this.bottom - 155, thought.y - 29));
+    const preferred = { x, y };
+    for (const [dx, dy] of [[0, 0], [-58, 0], [58, 0], [0, -58], [-58, -58], [58, -58], [0, -116]]) {
+      const candidate = { x: Math.max(34, Math.min(this.width - 34, preferred.x + dx)), y: Math.max(this.top + 90, preferred.y + dy) };
+      if (this.bubbleCenters.every(p => Math.hypot(p.x - candidate.x, p.y - candidate.y) > 57)) { x = candidate.x; y = candidate.y; break; }
+    }
+    this.bubbleCenters.push({ x, y });
+    if (Math.abs(x - thought.x) > 30 || Math.abs(y - thought.y) > 65) line(ctx, [[x, y + radius], [thought.x, thought.y + 18]], 'rgba(255,249,235,0.65)', 1.5);
+    const urgency = game.urgency(event), color = urgency === 'calm' ? C.green : C.red;
+    const patience = Number.isFinite(event.deadline) ? Math.max(0, (event.deadline - game.clock) / (event.deadline - event.createdAt)) : 1;
+    // Two trailing dots attach the cloud to the cat. No written need or tool name.
+    ellipse(ctx, x - 8, y + radius + 14, 4, 4, C.paper);
+    ellipse(ctx, x - 4, y + radius + 5, 7, 7, C.paper);
+    ellipse(ctx, x, y, radius + 7, radius, 'rgba(73,62,56,0.12)');
+    ellipse(ctx, x, y - 2, radius + 5, radius, C.paper);
+    needIcon(ctx, event.kind, x, y - 4, radius * 1.18, cat.color);
+    ctx.beginPath(); ctx.arc(x, y - 2, radius + 7, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * patience);
+    ctx.strokeStyle = color; ctx.lineWidth = 3; ctx.stroke();
+    if (urgency === 'angry') {
+      for (let i = 0; i < 3; i++) line(ctx, [[x + radius - 5 + i * 5, y - radius - 1], [x + radius - 8 + i * 5, y - radius + 11]], C.red, 2);
+    }
+    const width = count > 1 ? 84 : 112, height = 52;
+    const left = Math.max(8, Math.min(this.width - width - 8, screen.x - width / 2));
+    const top = Math.max(this.top + 80, Math.min(this.height - this.bottom - (this.compact ? 90 : 118) - height, screen.y - height / 2));
+    // Only the floor target cleans a mess. A distant cat never moves or cleans its old mess.
+    ctx.beginPath(); ctx.ellipse(left + width / 2, top + height / 2, width / 2 - 7, height / 2 - 5, 0, 0, Math.PI * 2);
+    ctx.setLineDash([3, 6]); ctx.lineWidth = 1.5; ctx.strokeStyle = 'rgba(255,249,235,0.85)'; ctx.stroke(); ctx.setLineDash([]);
+    if (event.progress > 0) {
+      round(ctx, left + 14, top + height - 2, width - 28, 4, 2, '#e5d9c1');
+      round(ctx, left + 14, top + height - 2, (width - 28) * event.progress, 4, 2, C.green);
+    }
+    if (game.wrongToolEventId === event.id && game.clock < game.wrongToolUntil && TOOL_BY_ID[game.selected].need !== event.kind) {
+      toolIcon(ctx, TOOLS.find(t => t.need === event.kind)!.id, left + width / 2, top - 18, 27);
+      line(ctx, [[left + width - 22, top + 7], [left + width - 10, top + 19]], C.red, 3);
+      line(ctx, [[left + width - 10, top + 7], [left + width - 22, top + 19]], C.red, 3);
+    }
+    this.addHit({ id: 'event:' + event.id, eventId: event.id, tool: TOOLS.find(t => t.need === event.kind)!.id, x: left, y: top, w: width, h: height });
+    if (event.kind === 'hunger' || event.kind === 'boredom') this.addHit({ id: 'thought:' + event.id, eventId: event.id, tool: TOOLS.find(t => t.need === event.kind)!.id, x: x - radius, y: y - radius, w: radius * 2, h: radius * 2 });
+  }
+
+  private adoption(game: Game) {
+    this.backdrop(); this.brand();
+    const ctx = this.ctx, w = this.width, h = this.height, center = w / 2;
+    const top = this.compact ? this.top + 55 : h * 0.13;
+    this.pill(`STAGE ${game.stage + 1} COMPLETE  ·  +20 HP`, center, top);
+    text(ctx, 'Choose a cat', center, top + (this.compact ? 36 : 49), this.compact ? 31 : Math.min(38, w * 0.085), C.ink, 'center', 'serif');
+    const panel = Math.min(w - 32, 510), x = (w - panel) / 2, gap = 14, cw = (panel - gap) / 2;
+    const y = h - this.bottom - (this.compact ? 111 : 172);
+    game.candidates.forEach((cat, i) => {
+      const cx = x + i * (cw + gap);
+      round(ctx, cx, y, cw, this.compact ? 96 : 141, 18, C.paper, C.line);
+      ellipse(ctx, cx + 21, y + 25, 7, 7, cat.color);
+      text(ctx, cat.name, cx + 35, y + 25, this.compact ? 18 : 23, C.ink, 'left', 'serif');
+      this.button(`adopt:${cat.id}`, `Adopt ${cat.name}`, cx + 10, y + (this.compact ? 39 : 77), cw - 20, 48, true);
+    });
+  }
+
+  private upgrade(game: Game) {
+    this.ctx.fillStyle = 'rgba(248,240,224,0.96)'; this.ctx.fillRect(0, 0, this.width, this.height); this.brand();
+    const ctx = this.ctx, w = this.width, h = this.height, center = w / 2;
+    const top = this.top + (this.compact ? 49 : 69);
+    text(ctx, 'Choose an upgrade', center, top + 43, this.compact ? 32 : 43, C.ink, 'center', 'serif');
+    const width = Math.min(w - 32, 460), x = (w - width) / 2;
+    const y = top + 108;
+    const rowH = Math.min(76, Math.max(48, (h - y - this.bottom - 39) / 5 - 8));
+    if (this.compact) {
+      const cell = Math.min((w - 40) / 5, 134), start = (w - cell * 5) / 2;
+      TOOLS.forEach((tool, i) => {
+        const level = game.levels[tool.id], cx = start + i * cell + 3, cw = cell - 6;
+        const ch = Math.max(104, h - y - this.bottom - 14);
+        round(ctx, cx, y, cw, ch, 15, level < 3 ? C.paper : '#eae3d5', C.line);
+        toolIcon(ctx, tool.id, cx + cw / 2, y + 26, 31);
+        text(ctx, tool.name, cx + cw / 2, y + 54, 12, C.ink, 'center', 'bold');
+        text(ctx, level === 3 ? 'MAX LEVEL' : `LV ${level} → ${level + 1}`, cx + cw / 2, y + 77, 10, C.green, 'center');
+        if (level < 3) this.addHit({ id: `upgrade:${tool.id}`, x: cx, y, w: cw, h: ch });
+      });
+    } else TOOLS.forEach((tool, i) => {
+      const cy = y + i * (rowH + 8), level = game.levels[tool.id];
+      round(ctx, x, cy, width, rowH, 16, level < 3 ? C.paper : '#eae3d5', C.line);
+      toolIcon(ctx, tool.id, x + 32, cy + rowH / 2, 34);
+      text(ctx, tool.name, x + 62, cy + rowH / 2 - 10, 16, C.ink, 'left', 'bold');
+      text(ctx, level === 3 ? 'Already your finest tool' : `${EFFICIENCY[level + 1]}× efficiency · less work per task`, x + 62, cy + rowH / 2 + 12, 11, C.muted);
+      text(ctx, level === 3 ? 'MAX' : `${level} → ${level + 1}`, x + width - 22, cy + rowH / 2, 16, level === 3 ? C.muted : C.green, 'right', 'bold');
+      if (level < 3) this.addHit({ id: `upgrade:${tool.id}`, x, y: cy, w: width, h: rowH });
+    });
+    if (!this.compact) text(ctx, `NEXT: STAGE ${game.stage + 2}  ·  ${game.cats.length} CATS  ·  ${STAGES[game.stage + 1].duration} SECONDS`, center, h - this.bottom - 14, 10, C.muted, 'center');
+  }
+
+  private pause(game: Game) {
+    const ctx = this.ctx, w = this.width, h = this.height;
+    ctx.fillStyle = 'rgba(66,57,50,0.44)'; ctx.fillRect(0, 0, w, h);
+    const width = Math.min(w - 32, 390), height = Math.min(h - 32, 335), x = (w - width) / 2, y = (h - height) / 2;
+    round(ctx, x, y, width, height, 25, C.paper, C.line);
+    paw(ctx, w / 2, y + 40, 34, C.green);
+    text(ctx, 'Paused', w / 2, y + 86, Math.min(30, w * 0.075), C.ink, 'center', 'serif');
+    text(ctx, game.pauseReason, w / 2, y + 121, 12, C.muted, 'center');
+    this.button('resume', 'Resume  →', x + 24, y + height - 136, width - 48, 53, true);
+    this.button('restart', 'Restart', x + 24, y + height - 72, width - 48, 48);
+  }
+
+  private ending(game: Game) {
+    this.backdrop(); this.brand();
+    const ctx = this.ctx, w = this.width, h = this.height, win = game.phase === 'victory';
+    const top = this.compact ? this.top + 55 : h * 0.13;
+    this.pill(win ? 'FIVE STAGES. STILL STANDING.' : 'YOUR SHIFT HAS ENDED', w / 2, top, win ? C.green : C.red);
+    text(ctx, win ? 'Victory.' : 'Game over.', w / 2, top + 47, Math.min(this.compact ? 39 : 49, w * 0.105), C.ink, 'center', 'serif');
+    const width = Math.min(w - 32, 440), x = (w - width) / 2, y = h - this.bottom - (this.compact ? 133 : 199);
+    round(ctx, x, y, width, this.compact ? 58 : 75, 18, C.paper, C.line);
+    text(ctx, `${game.stagesSurvived} / 5`, x + width * 0.25, y + 24, 24, C.ink, 'center', 'serif');
+    text(ctx, String(game.completed), x + width * 0.75, y + 24, 24, C.ink, 'center', 'serif');
+    text(ctx, 'STAGES SURVIVED', x + width * 0.25, y + 48, 9, C.muted, 'center');
+    text(ctx, 'TASKS COMPLETED', x + width * 0.75, y + 48, 9, C.muted, 'center');
+    this.button('restart', 'Play again  →', x, y + (this.compact ? 69 : 88), width, 52, true);
+    if (!this.compact) this.button('home', 'Home', x, y + 150, width, 48);
+  }
+
+  private scratches(age: number) {
+    const ctx = this.ctx, w = this.width, h = this.height;
+    const fade = Math.min(1, (1.15 - age) / 0.45);
+    ctx.save();
+    const vignette = ctx.createRadialGradient(w / 2, h * 0.45, Math.min(w, h) * 0.12, w / 2, h / 2, Math.max(w, h) * 0.7);
+    vignette.addColorStop(0, 'rgba(109,18,21,0)'); vignette.addColorStop(1, 'rgba(109,18,21,' + (0.85 * fade) + ')');
+    ctx.fillStyle = vignette; ctx.fillRect(0, 0, w, h);
+    // Two timed claw swipes cut across most of the screen and fade after impact.
+    for (let swipe = 0; swipe < 2; swipe++) {
+      const progress = Math.min(1, Math.max(0, (age - 0.17 - swipe * 0.19) / 0.12));
+      if (!progress) continue;
+      for (let claw = 0; claw < 4; claw++) {
+        const offset = (claw - 1.5) * w * 0.10;
+        const sx = swipe ? w * 0.08 + offset : w * 0.92 + offset;
+        const sy = h * (0.14 + swipe * 0.10);
+        const ex = swipe ? w * 0.92 + offset : w * 0.08 + offset;
+        const ey = h * (0.83 + swipe * 0.06);
+        const dx = ex - sx, dy = ey - sy;
+        const normalX = -dy / Math.hypot(dx, dy), normalY = dx / Math.hypot(dx, dy);
+        const cut = (width: number, color: string) => {
+          ctx.beginPath();
+          for (const side of [-1, 1]) for (let n = 0; n <= 24; n++) {
+            const u = (side === -1 ? n : 24 - n) / 24;
+            const t = u * progress;
+            const thickness = Math.pow(Math.sin(u * Math.PI), 0.7) * width * (0.85 + Math.sin(u * 67 + claw) * 0.15);
+            const px = sx + dx * t + normalX * Math.sin(t * Math.PI) * 14;
+            const py = sy + dy * t + normalY * Math.sin(t * Math.PI) * 14;
+            if (side === -1 && n === 0) ctx.moveTo(px, py);
+            else ctx.lineTo(px + normalX * side * thickness, py + normalY * side * thickness);
+          }
+          ctx.closePath(); ctx.fillStyle = color; ctx.fill();
+        };
+        ctx.shadowColor = 'rgba(103,28,25,' + fade * 0.5 + ')'; ctx.shadowBlur = 7;
+        cut(5.5, 'rgba(113,33,28,' + fade * 0.92 + ')');
+        ctx.shadowBlur = 0;
+        cut(2.7, 'rgba(226,166,130,' + fade * 0.95 + ')');
+        cut(0.7, 'rgba(255,238,204,' + fade * 0.75 + ')');
+
+      }
+    }
+    if (age > 0.17 && age < 0.23) { ctx.fillStyle = 'rgba(255,234,216,0.24)'; ctx.fillRect(0, 0, w, h); }
+    ctx.restore();
+  }
+
+  draw(game: Game, world: World, dt: number, force = false) {
+    this.selectedTool = game.selected;
+    this.elapsed += dt;
+    this.damageFlash = game.phase === 'paused' ? 0 : Math.max(0, 1.15 - world.attackAge);
+    if (!force && !this.dirty && this.lastPhase === game.phase && this.elapsed < 1 / 30) return;
+    this.lastPhase = game.phase; this.elapsed = 0; this.dirty = false;
+    const ctx = this.ctx;
+    ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0); ctx.clearRect(0, 0, this.width, this.height); this.hits = [];
+    if (game.phase === 'title') this.title();
+    else if (game.phase === 'adoption') this.adoption(game);
+    else if (game.phase === 'upgrade') this.upgrade(game);
+    else if (game.phase === 'game-over' || game.phase === 'victory') this.ending(game);
+    else {
+      this.gameplay(game, world);
+      if (game.phase === 'paused') { this.hits = []; this.pause(game); }
+    }
+    if (this.pointer && game.active && this.pointerTool) {
+      ellipse(ctx, this.pointer.x, this.pointer.y, 22, 22, 'rgba(255,249,235,0.75)');
+      toolIcon(ctx, this.pointerTool, this.pointer.x + 8, this.pointer.y - 6, 40);
+    }
+    if (this.damageFlash > 0) this.scratches(world.attackAge);
+    this.texture.needsUpdate = true; this.syncHits();
+  }
+}

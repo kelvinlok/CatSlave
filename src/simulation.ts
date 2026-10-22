@@ -1,0 +1,238 @@
+import { ATTACK_DAMAGE, ATTACK_INTERVAL, ATTACK_WARNING, EFFICIENCY, PALETTE, ROOM, STAGES, TOOLS, TOOL_BY_ID } from './config';
+import type { CareEvent, CatDefinition, CatState, EventKind, Phase, ToolId } from './types';
+import { FURNITURE } from './furniture';
+import { beginVisit, tickVisit } from './cat-behavior';
+
+export class Random {
+  constructor(private seed: number) {}
+  next() { let t = this.seed += 0x6d2b79f5; t = Math.imul(t ^ t >>> 15, t | 1); t ^= t + Math.imul(t ^ t >>> 7, t | 61); return ((t ^ t >>> 14) >>> 0) / 4294967296; }
+  between(min: number, max: number) { return min + this.next() * (max - min); }
+  choose<T>(items: readonly T[]): T { return items[Math.floor(this.next() * items.length)]; }
+}
+
+export class Game {
+  phase: Phase = 'title';
+  resumePhase: 'playing' | 'tutorial' = 'playing';
+  pauseReason = 'A little breather';
+  hp = 100;
+  stage = 0;
+  clock = 0;
+  stageElapsed = 0;
+  completed = 0;
+  stagesSurvived = 0;
+  selected: ToolId = 'sweeper';
+  levels: Record<ToolId, number> = { sweeper: 1, mop: 1, brush: 1, food: 1, toy: 1 };
+  cats: CatState[] = [];
+  events: CareEvent[] = [];
+  candidates: CatDefinition[] = [];
+  tutorialStep = 0;
+  tutorialDone = false;
+  revision = 0;
+  damageSerial = 0;
+  lastAttackCatId?: number;
+  feedback = '';
+  feedbackUntil = 0;
+  wrongToolEventId?: number;
+  wrongToolUntil = 0;
+  private nextId = 1;
+  private random: Random;
+  private movementRandom: Random;
+  constructor(seed = Date.now()) { this.random = new Random(seed); this.movementRandom = new Random(seed ^ 0x51ca7); this.cats = [this.makeCat(PALETTE[0], 0)]; }
+  get config() { return STAGES[this.stage]; }
+  get active() { return this.phase === 'playing' || this.phase === 'tutorial'; }
+  get timeLeft() { return Math.max(0, this.config.duration - this.stageElapsed); }
+
+  private makeCat(palette: typeof PALETTE[number], index: number): CatState {
+    return { ...palette, id: this.nextId++, appearance: 'primitive', behavior: { needRate: 1, patience: 1 },
+      nextNeedAt: 0, happyUntil: 0, attackUntil: 0,
+      position: { x: 0, z: -1.2 }, destination: { x: 0, z: -1.2 }, yaw: 0.65, stride: 0, activity: 'idle', decisionAt: 0.6, elevation: 0, pose: 0 };
+  }
+
+  reset(tutorial = false) {
+    this.hp = 100; this.stage = 0; this.clock = 0; this.stageElapsed = 0;
+    this.completed = 0; this.stagesSurvived = 0; this.events = []; this.candidates = [];
+    this.selected = 'sweeper'; this.tutorialStep = 0; this.tutorialDone = false;
+    this.levels = { sweeper: 1, mop: 1, brush: 1, food: 1, toy: 1 };
+    this.cats = [this.makeCat(PALETTE[0], 0)]; this.feedback = ''; this.damageSerial = 0; this.lastAttackCatId = undefined;
+    this.wrongToolEventId = undefined; this.wrongToolUntil = 0;
+    if (tutorial) { this.phase = 'tutorial'; this.spawn(this.cats[0], TOOLS[0].need); }
+    else this.startStage();
+    this.revision++;
+  }
+
+  startStage() {
+    this.phase = 'playing'; this.stageElapsed = 0; this.events = []; this.feedback = '';
+    this.cats.forEach((cat, i) => {
+      cat.nextNeedAt = this.clock + 1.5 + i * 1.1; cat.attackUntil = 0;
+      const starts = [{ x: 0, z: 1.2 }, { x: -2.2, z: -3.8 }, { x: 2.2, z: -4.4 }, { x: -2, z: 2.8 }, { x: 2, z: 3.2 }];
+      cat.position = { ...starts[i] };
+      cat.destination = { ...cat.position }; cat.activity = 'idle'; cat.decisionAt = this.clock + 0.6 + i * 0.3;
+      cat.elevation = 0; cat.pose = 0; cat.visit = undefined; cat.lastFurniture = undefined; cat.pendingNeed = undefined;
+    });
+    this.revision++;
+  }
+
+  advanceTutorial() {
+    if (this.phase !== 'tutorial' || !this.tutorialDone) return;
+    if (this.tutorialStep === TOOLS.length - 1) { this.reset(false); return; }
+    this.tutorialStep++; this.tutorialDone = false;
+    this.selected = TOOLS[this.tutorialStep].id; this.spawn(this.cats[0], TOOLS[this.tutorialStep].need); this.revision++;
+  }
+
+  spawn(cat: CatState, kind?: EventKind) {
+    if (this.events.some(e => e.catId === cat.id)) return;
+    // Needs never leave a bowl or mess suspended inside furniture. Finish the
+    // visit and return to the floor before scheduling the next care event.
+    if (cat.visit && cat.elevation === 0 && cat.position.z >= ROOM.minZ && cat.position.x >= ROOM.minX && cat.position.x <= ROOM.maxX) {
+      cat.lastFurniture = cat.visit.id; cat.visit = undefined; cat.pose = 0;
+    }
+    if (cat.visit) { cat.visit.leaveRequested = true; cat.pendingNeed ??= kind; cat.nextNeedAt = Math.min(cat.nextNeedAt, this.clock); return; }
+    const nextKind = kind ?? cat.pendingNeed ?? this.random.choose(TOOLS.filter(t => t.need !== cat.lastKind)).need;
+    cat.pendingNeed = undefined;
+    const deadline = this.phase === 'tutorial' ? Infinity : this.clock + this.config.patience * cat.behavior.patience;
+    this.events.push({ id: this.nextId++, catId: cat.id, kind: nextKind, progress: 0,
+      createdAt: this.clock, deadline, nextAttackAt: deadline + ATTACK_WARNING, attacks: 0,
+      position: { ...cat.position } });
+    cat.activity = 'sniffing'; cat.decisionAt = this.clock + 0.9;
+    cat.lastKind = nextKind; this.revision++;
+  }
+
+  tick(dt: number) {
+    if (!this.active || dt <= 0 || !Number.isFinite(dt)) return;
+    // Substeps keep deadlines, lethal attacks, and stage boundaries deterministic.
+    let remaining = dt;
+    while (remaining > 0.000001 && this.active) {
+      const step = Math.min(remaining, 0.05, this.phase === 'playing' ? this.timeLeft : 0.05);
+      remaining -= step; this.clock += step;
+      this.moveCats(step);
+      for (const cat of this.cats) if (cat.pendingNeed && !cat.visit) this.spawn(cat, cat.pendingNeed);
+      if (this.phase === 'tutorial') continue;
+      this.stageElapsed += step;
+      for (const event of this.events) {
+        if (this.clock + 1e-7 >= event.nextAttackAt) {
+          this.hp = Math.max(0, this.hp - ATTACK_DAMAGE); event.attacks++;
+          event.nextAttackAt += ATTACK_INTERVAL; this.damageSerial++;
+          const cat = this.cats.find(c => c.id === event.catId)!;
+          cat.attackUntil = this.clock + 1.15; this.lastAttackCatId = cat.id;
+          this.say(`${cat.name} scratched you!  −10 HP`); this.revision++;
+          if (this.hp === 0) { this.phase = 'game-over'; return; }
+        }
+      }
+      if (this.timeLeft < 1e-7) { this.finishStage(); break; }
+      for (const cat of this.cats) {
+        if (!this.events.some(e => e.catId === cat.id) && this.clock >= cat.nextNeedAt) this.spawn(cat);
+      }
+    }
+  }
+
+  private moveCats(dt: number) {
+    for (const cat of this.cats) {
+      const need = this.events.find(e => e.catId === cat.id);
+      if (cat.visit) { tickVisit(cat, this.clock, dt, this.cats); continue; }
+      // Bowls and play stay reachable. Cleaning messes remain behind as the cat wanders.
+      const waiting = need && (need.kind === 'hunger' || need.kind === 'boredom');
+      if (waiting || cat.attackUntil > this.clock) {
+        cat.activity = need?.kind === 'hunger' ? (need.progress > 0 ? 'eating' : 'sniffing') : need?.kind === 'boredom' ? 'playing' : 'idle';
+        const turn = Math.atan2(Math.sin(-cat.yaw), Math.cos(-cat.yaw));
+        cat.yaw += turn * Math.min(1, dt * 4);
+        continue;
+      }
+      if (cat.activity !== 'walking' && this.clock >= cat.decisionAt) {
+        if (!need && cat.nextNeedAt > this.clock + 2 && this.movementRandom.next() < 0.8) {
+          const spots = FURNITURE.filter(spot => spot.id !== cat.lastFurniture && !this.cats.some(other => other.visit?.id === spot.id));
+          if (spots.length && this.visitFurniture(cat.id, this.movementRandom.choose(spots).id)) continue;
+        }
+        // Every cat can choose any part of the same room; there are no assigned lanes.
+        for (let attempt = 0; attempt < 12; attempt++) {
+          cat.destination = { x: this.movementRandom.between(ROOM.minX, ROOM.maxX), z: this.movementRandom.between(ROOM.minZ, ROOM.maxZ) };
+          if (this.cats.every(other => other === cat || Math.hypot(other.position.x - cat.destination.x, other.position.z - cat.destination.z) > 0.85)) break;
+        }
+        cat.activity = 'walking';
+      }
+      if (cat.activity !== 'walking') continue;
+      const dx = cat.destination.x - cat.position.x, dz = cat.destination.z - cat.position.z;
+      const distance = Math.hypot(dx, dz), desired = Math.atan2(dx, dz);
+      const turn = Math.atan2(Math.sin(desired - cat.yaw), Math.cos(desired - cat.yaw));
+      cat.yaw += turn * Math.min(1, dt * 5);
+      // Turn before stepping; this avoids sliding sideways when choosing a new destination.
+      const travel = Math.min(distance, dt * ROOM.walkSpeed * Math.max(0, Math.cos(turn)));
+      if (distance > 0.001) {
+        const next = { x: cat.position.x + dx / distance * travel, z: cat.position.z + dz / distance * travel };
+        const blocked = this.cats.some(other => other !== cat && other.elevation < 0.3 && Math.hypot(other.position.x - next.x, other.position.z - next.z) < 0.60);
+        if (blocked) { cat.activity = 'idle'; cat.decisionAt = this.clock + 0.3 + (cat.id % 3) * 0.1; }
+        else { cat.position = next; cat.stride += travel * 10; }
+      }
+      if (distance < 0.025) {
+        cat.activity = this.movementRandom.next() < 0.45 ? 'sniffing' : 'idle';
+        cat.decisionAt = this.clock + this.movementRandom.between(1.2, 3.8);
+      }
+    }
+  }
+
+  visitFurniture(catId: number, id: string) {
+    const cat = this.cats.find(c => c.id === catId);
+    if (!this.active || !cat || this.events.some(e => e.catId === catId)) return false;
+    return beginVisit(cat, id, this.cats);
+  }
+
+  work(eventId: number, amount: number): boolean {
+    if (!this.active || amount <= 0 || !Number.isFinite(amount)) return false;
+    const event = this.events.find(e => e.id === eventId);
+    if (!event) return false;
+    const tool = TOOL_BY_ID[this.selected];
+    if (tool.need !== event.kind) { this.rejectTool(event); return false; }
+    event.progress = Math.min(1, event.progress + amount * EFFICIENCY[this.levels[this.selected]] / tool.work);
+    if (event.progress >= 1 - 1e-7) {
+      const cat = this.cats.find(c => c.id === event.catId)!;
+      cat.happyUntil = this.clock + 1.8; cat.attackUntil = 0;
+      cat.nextNeedAt = this.clock + this.random.between(...this.config.delay) / cat.behavior.needRate;
+      this.events = this.events.filter(e => e.id !== eventId);
+      if (this.phase === 'tutorial') this.tutorialDone = true;
+      else this.completed++;
+      this.say(`${cat.name} approves. For now.`); this.revision++;
+    }
+    return true;
+  }
+
+  select(tool: ToolId) { if (this.active) { this.selected = tool; this.revision++; } }
+  rejectTool(event: CareEvent) {
+    this.wrongToolEventId = event.id; this.wrongToolUntil = this.clock + 1.5;
+    this.say(`Use the ${TOOLS.find(t => t.need === event.kind)!.name.toLowerCase()} for this`);
+  }
+  say(message: string) { this.feedback = message; this.feedbackUntil = this.clock + 2; }
+  pause(reason = 'A little breather') {
+    if (!this.active) return;
+    this.resumePhase = this.phase as 'playing' | 'tutorial'; this.phase = 'paused'; this.pauseReason = reason; this.revision++;
+  }
+  resume() { if (this.phase === 'paused') { this.phase = this.resumePhase; this.revision++; } }
+
+  private finishStage() {
+    this.events = []; this.stagesSurvived++; this.feedback = '';
+    if (this.stage === STAGES.length - 1) { this.phase = 'victory'; this.revision++; return; }
+    this.hp = Math.min(100, this.hp + 20);
+    const available = PALETTE.filter(p => !this.cats.some(c => c.color === p.color));
+    const first = this.random.choose(available);
+    const second = this.random.choose(available.filter(p => p !== first));
+    this.candidates = [first, second].map(p => this.makeCat(p, this.cats.length));
+    this.phase = 'adoption'; this.revision++;
+  }
+
+  adopt(id: number) {
+    if (this.phase !== 'adoption') return;
+    const candidate = this.candidates.find(c => c.id === id);
+    if (!candidate) return;
+    this.cats.push({ ...candidate, nextNeedAt: 0, happyUntil: 0, attackUntil: 0,
+      position: { x: 0, z: -1.2 }, destination: { x: 0, z: -1.2 }, yaw: 0.65, stride: 0, activity: 'idle', decisionAt: this.clock + 1, elevation: 0, pose: 0 });
+    this.candidates = []; this.phase = 'upgrade'; this.revision++;
+  }
+  upgrade(tool: ToolId) {
+    if (this.phase !== 'upgrade' || this.levels[tool] >= 3) return;
+    this.levels[tool]++; this.stage++; this.startStage();
+  }
+  urgency(event: CareEvent) {
+    if (this.phase === 'tutorial' || (this.phase === 'paused' && this.resumePhase === 'tutorial')) return 'calm';
+    if (this.clock >= event.deadline) return 'angry';
+    return event.deadline - this.clock <= 4 ? 'urgent' : 'calm';
+  }
+  warning(event: CareEvent) { return event.nextAttackAt - this.clock <= ATTACK_WARNING && this.clock >= event.deadline; }
+}
