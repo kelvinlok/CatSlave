@@ -13,6 +13,7 @@ test('cats use the tree, hideout and existing furnishings in the rendered room',
       for (let i = 0; i < 800 && cat.visit?.phase !== 'use'; i++) t.game.tick(0.05);
       // Let the cat settle into its facing without starting the departure.
       t.game.tick(0.6); t.game.phase = 'playing'; t.refresh();
+      t.world.focusOn(t.world.catPosition(cat.id)!); t.refresh();
       return { phase: cat.visit?.phase, activity: cat.activity, elevation: cat.elevation,
         screen: t.world.project(t.world.catPosition(cat.id)!) };
     }, id);

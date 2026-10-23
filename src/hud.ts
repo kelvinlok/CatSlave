@@ -1,13 +1,13 @@
 import * as THREE from 'three';
 import { EFFICIENCY, STAGES, TOOLS, TOOL_BY_ID } from './config';
 import { Game } from './simulation';
-import { World } from './world';
+import { World, inPlayArea, type PlayArea } from './world';
 import { needIcon } from './need-icons';
 import type { CareEvent, Point, ToolId } from './types';
 import { gameLayout, type GameLayout } from './layout';
 
 const C = { ink: '#493e38', muted: '#8f8072', paper: '#fff9eb', cream: '#f7efdf', line: '#e1d5bf', coral: '#c77355', green: '#72866b', paleGreen: '#e6eadb', red: '#bd5c51' };
-export interface Hit { id: string; x: number; y: number; w: number; h: number; eventId?: number; tool?: ToolId; }
+export interface Hit { id: string; x: number; y: number; w: number; h: number; eventId?: number; tool?: ToolId; arch?: PlayArea; }
 
 function round(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number, fill: string, stroke?: string) {
   ctx.beginPath(); ctx.roundRect(x, y, Math.max(0, w), Math.max(0, h), r); ctx.fillStyle = fill; ctx.fill();
@@ -80,6 +80,7 @@ export class Hud {
   height = 1;
   layout: GameLayout = gameLayout(390, 844);
   rotateRequired = false;
+  gyroStatus = 'off';
   top = 12;
   bottom = 12;
   left = 0;
@@ -127,7 +128,7 @@ export class Hud {
     this.camera.updateMatrixWorld(); this.scene.updateMatrixWorld(true);
     this.raycaster.setFromCamera(new THREE.Vector2(x / this.width * 2 - 1, 1 - y / this.height * 2), this.camera);
     const intersections = this.raycaster.intersectObjects(this.hitMeshes.filter(m => m.visible), false);
-    const hits = intersections.map(i => i.object.userData.hit as Hit);
+    const hits = intersections.map(i => i.object.userData.hit as Hit).filter(h => !h.arch || inPlayArea(h.arch, { x, y }));
     const ui = hits.find(h => h.eventId === undefined);
     if (ui) return ui;
     // Nearby roaming cats can overlap in perspective. Prefer the selected tool,
@@ -136,7 +137,8 @@ export class Hud {
       || Math.hypot(x - a.x - a.w / 2, y - a.y - a.h / 2) - Math.hypot(x - b.x - b.w / 2, y - b.y - b.h / 2))[0];
   }
   careHit(eventId: number, point: Point) {
-    return this.hits.filter(h => h.eventId === eventId).some(hit => point.x >= hit.x - 32 && point.x <= hit.x + hit.w + 32 && point.y >= hit.y - 40 && point.y <= hit.y + hit.h + 36);
+    return this.hits.filter(h => h.eventId === eventId).some(hit => hit.arch ? inPlayArea(hit.arch, point)
+      : point.x >= hit.x - 32 && point.x <= hit.x + hit.w + 32 && point.y >= hit.y - 40 && point.y <= hit.y + hit.h + 36);
   }
   private syncHits() {
     this.hits.forEach((hit, i) => {
@@ -203,6 +205,7 @@ export class Hud {
     text(ctx, 'At their service. Always.', center, h * 0.225 + 51, 17, C.muted, 'center');
     const badgeY = h * 0.59;
     const bottomY = h - this.bottom - 193;
+    text(ctx, 'Swipe to look left, right, up or down · + / − to zoom', center, bottomY + 24, 11, C.muted, 'center');
     this.button('learn', 'Tutorial  →', x, bottomY + 50, panel, 54, true);
     this.button('start', 'Play', x, bottomY + 115, panel, 48);
   }
@@ -219,7 +222,34 @@ export class Hud {
     text(ctx, timer, header.x + header.w - 10, header.y + header.h / 2, 13, C.ink, 'right', 'bold');
 
     this.bubbleCenters = [];
-    game.events.forEach(event => this.eventCard(game, world, event, game.events.length));
+    ctx.save(); ctx.beginPath(); ctx.rect(room.x, room.y, room.w, room.h); ctx.clip();
+    const inView = (event: CareEvent) => {
+      const p = world.project(world.eventPosition(event));
+      return p.visible && p.x >= room.x + 32 && p.x <= room.x + room.w - 32 && p.y >= room.y + 32 && p.y <= room.y + room.h - 32;
+    };
+    // Reserve visible care targets before placing edge navigation markers.
+    [...game.events].sort((a, b) => Number(inView(b)) - Number(inView(a)))
+      .forEach(event => this.eventCard(game, world, event, game.events.length));
+    for (const cat of game.cats) if (cat.happyUntil > game.clock) {
+      const anchor = world.catLabelPosition(cat.id);
+      if (!anchor) continue;
+      const p = world.project(anchor), age = 1.8 - (cat.happyUntil - game.clock);
+      if (p.visible) {
+        ctx.save(); ctx.globalAlpha = Math.min(1, (1.8 - age) * 2);
+        heart(ctx, p.x + 19, p.y - 12 - age * 22, 15 + Math.sin(Math.min(1, age * 3) * Math.PI) * 5);
+        if (age > 0.2) heart(ctx, p.x - 13, p.y - age * 16, 10);
+        ctx.restore();
+      }
+    }
+    ctx.restore();
+    const gyroLabel = ({ off: 'Gyro off', on: 'Gyro on', waiting: 'Gyro…', denied: 'Gyro denied', unavailable: 'No gyro' } as Record<string, string>)[this.gyroStatus];
+    const controls = [['out', '−'], ['in', '+'], ['reset', 'Reset'], ['gyro', gyroLabel]];
+    controls.forEach(([id, label], i) => {
+      const r = layout.viewControls[i];
+      round(ctx, r.x + 2, r.y, r.w - 4, r.h, 12, C.paper, C.line);
+      text(ctx, label, r.x + r.w / 2, r.y + r.h / 2, i < 2 ? 24 : 11, C.ink, 'center', 'bold');
+      this.addHit({ id: 'view:' + id, x: r.x + 2, y: r.y, w: r.w - 4, h: r.h });
+    });
     TOOLS.forEach((tool, i) => {
       const r = layout.tools[i], selected = game.selected === tool.id;
       round(ctx, r.x + 1, r.y, r.w - 2, r.h, 12, selected ? C.paleGreen : C.paper, selected ? C.green : C.line);
@@ -262,20 +292,43 @@ export class Hud {
     const ctx = this.ctx, cat = game.cats.find(c => c.id === event.catId)!;
     const screen = world.project(world.eventPosition(event));
     const anchor = world.catLabelPosition(cat.id);
-    if (!screen.visible || !anchor) return;
+    if (!anchor) return;
     const thought = world.project(anchor), radius = 24;
     const area = this.layout.room;
     const minX = area.x + 32, maxX = area.x + area.w - 32;
     const minY = area.y + 32, maxY = area.y + area.h - 32;
+    if (!screen.visible || screen.x < minX || screen.x > maxX || screen.y < minY || screen.y > maxY) {
+      // An edge marker brings the actual target into view; it never performs care remotely.
+      let x = Math.max(minX, Math.min(maxX, screen.x));
+      let y = Math.max(minY, Math.min(maxY, screen.y));
+      const candidates = [{ x, y }];
+      for (let cy = minY; cy <= maxY; cy += 58) for (const cx of [minX, maxX]) candidates.push({ x: cx, y: cy });
+      for (let cx = minX; cx <= maxX; cx += 58) for (const cy of [minY, maxY]) candidates.push({ x: cx, y: cy });
+      candidates.sort((a, b) => Math.hypot(a.x - x, a.y - y) - Math.hypot(b.x - x, b.y - y));
+      for (const candidate of candidates) {
+        const clearTargets = this.hits.every(hit => candidate.x + 32 <= hit.x || candidate.x - 32 >= hit.x + hit.w
+          || candidate.y + 32 <= hit.y || candidate.y - 32 >= hit.y + hit.h);
+        if (clearTargets && this.bubbleCenters.every(p => Math.hypot(p.x - candidate.x, p.y - candidate.y) > 57)) {
+          x = candidate.x; y = candidate.y; break;
+        }
+      }
+      this.bubbleCenters.push({ x, y });
+      round(ctx, x - 26, y - 26, 52, 52, 14, C.paper, game.urgency(event) === 'calm' ? C.green : C.red);
+      needIcon(ctx, event.kind, x, y - 4, 25, cat.color);
+      text(ctx, '↗', x + 17, y + 17, 13, C.ink, 'center');
+      this.addHit({ id: 'focus:' + event.id, x: x - 26, y: y - 26, w: 52, h: 52 });
+      return;
+    }
     let x = Math.max(minX, Math.min(maxX, thought.x));
-    let y = Math.max(minY, Math.min(maxY, thought.y - 29));
+    const playArea = event.kind === 'boredom' ? world.playArea(event) : undefined;
+    let y = Math.max(minY, Math.min(maxY, playArea ? playArea.y - playArea.outerY - 35 : thought.y - 29));
     const preferred = { x, y };
     for (const [dx, dy] of [[0, 0], [-58, 0], [58, 0], [0, -58], [-58, -58], [58, -58], [0, -116]]) {
       const candidate = { x: Math.max(minX, Math.min(maxX, preferred.x + dx)), y: Math.max(minY, Math.min(maxY, preferred.y + dy)) };
       if (this.bubbleCenters.every(p => Math.hypot(p.x - candidate.x, p.y - candidate.y) > 57)) { x = candidate.x; y = candidate.y; break; }
     }
     this.bubbleCenters.push({ x, y });
-    if (Math.abs(x - thought.x) > 30 || Math.abs(y - thought.y) > 65) line(ctx, [[x, y + radius], [thought.x, thought.y + 18]], 'rgba(255,249,235,0.65)', 1.5);
+    if (thought.visible && (Math.abs(x - thought.x) > 30 || Math.abs(y - thought.y) > 65)) line(ctx, [[x, y + radius], [thought.x, thought.y + 18]], 'rgba(255,249,235,0.65)', 1.5);
     const urgency = game.urgency(event), color = urgency === 'calm' ? C.green : C.red;
     const patience = Number.isFinite(event.deadline) ? Math.max(0, (event.deadline - game.clock) / (event.deadline - event.createdAt)) : 1;
     // Two trailing dots attach the cloud to the cat. No written need or tool name.
@@ -289,12 +342,37 @@ export class Hud {
     if (urgency === 'angry') {
       for (let i = 0; i < 3; i++) line(ctx, [[x + radius - 5 + i * 5, y - radius - 1], [x + radius - 8 + i * 5, y - radius + 11]], C.red, 2);
     }
+    if (playArea) {
+      const a = playArea, active = world.carePointer?.eventId === event.id && world.carePointer.working;
+      // A hollow arch keeps the cat's face clear and offers a generous hold area.
+      ctx.beginPath(); ctx.ellipse(a.x, a.y, a.outerX, a.outerY, 0, Math.PI, Math.PI * 2);
+      ctx.lineTo(a.x + a.innerX, a.y);
+      ctx.ellipse(a.x, a.y, a.innerX, a.innerY, 0, 0, -Math.PI, true); ctx.closePath();
+      ctx.fillStyle = active ? 'rgba(165,185,154,0.32)' : 'rgba(255,249,235,0.22)'; ctx.fill();
+      ctx.lineWidth = 5; ctx.strokeStyle = 'rgba(255,249,235,0.9)'; ctx.stroke();
+      ctx.setLineDash([6, 5]); ctx.lineWidth = 2; ctx.strokeStyle = active ? C.green : '#97412a'; ctx.stroke(); ctx.setLineDash([]);
+      if (event.progress > 0) {
+        ctx.beginPath(); ctx.ellipse(a.x, a.y, a.outerX + 5, a.outerY + 5, 0, Math.PI, Math.PI + Math.PI * event.progress);
+        ctx.lineWidth = 4; ctx.strokeStyle = C.green; ctx.stroke();
+      }
+      if (!active) toolIcon(ctx, 'toy', a.x + a.outerX * 0.67, a.y - a.outerY * 0.48, 30);
+      if (game.wrongToolEventId === event.id && game.clock < game.wrongToolUntil && game.selected !== 'toy') {
+        toolIcon(ctx, 'toy', a.x, a.y - (a.outerY + a.innerY) / 2, 38);
+      }
+      this.addHit({ id: 'event:' + event.id, eventId: event.id, tool: 'toy', arch: a,
+        x: a.x - a.outerX, y: a.y - a.outerY, w: a.outerX * 2, h: a.outerY });
+      return;
+    }
     const width = count > 1 ? 84 : 112, height = 52;
     const left = Math.max(area.x, Math.min(area.x + area.w - width, screen.x - width / 2));
     const top = Math.max(area.y, Math.min(area.y + area.h - height - 4, screen.y - height / 2));
     // Only the floor target cleans a mess. A distant cat never moves or cleans its old mess.
     ctx.beginPath(); ctx.ellipse(left + width / 2, top + height / 2, width / 2 - 7, height / 2 - 5, 0, 0, Math.PI * 2);
-    ctx.setLineDash([3, 6]); ctx.lineWidth = 1.5; ctx.strokeStyle = 'rgba(255,249,235,0.85)'; ctx.stroke(); ctx.setLineDash([]);
+    // Deep terracotta echoes the room's warm wood; a pale keyline separates it
+    // from dark coats and furniture as well as the light floor and sage rug.
+    ctx.fillStyle = 'rgba(151,65,42,0.10)'; ctx.fill();
+    ctx.lineWidth = 6; ctx.strokeStyle = 'rgba(255,239,214,0.95)'; ctx.stroke();
+    ctx.setLineDash([7, 5]); ctx.lineWidth = 3; ctx.strokeStyle = '#97412a'; ctx.stroke(); ctx.setLineDash([]);
     if (event.progress > 0) {
       round(ctx, left + 14, top + height - 2, width - 28, 4, 2, '#e5d9c1');
       round(ctx, left + 14, top + height - 2, (width - 28) * event.progress, 4, 2, C.green);
@@ -305,7 +383,7 @@ export class Hud {
       line(ctx, [[left + width - 10, top + 7], [left + width - 22, top + 19]], C.red, 3);
     }
     this.addHit({ id: 'event:' + event.id, eventId: event.id, tool: TOOLS.find(t => t.need === event.kind)!.id, x: left, y: top, w: width, h: height });
-    if (event.kind === 'hunger' || event.kind === 'boredom') this.addHit({ id: 'thought:' + event.id, eventId: event.id, tool: TOOLS.find(t => t.need === event.kind)!.id, x: x - radius, y: y - radius, w: radius * 2, h: radius * 2 });
+    if (event.kind === 'hunger') this.addHit({ id: 'thought:' + event.id, eventId: event.id, tool: TOOLS.find(t => t.need === event.kind)!.id, x: x - radius, y: y - radius, w: radius * 2, h: radius * 2 });
   }
 
   private adoption(game: Game) {
@@ -446,8 +524,43 @@ export class Hud {
       if (game.phase === 'paused') { this.hits = []; this.pause(game); }
     }
     if (!this.rotateRequired && this.pointer && game.active && this.pointerTool) {
-      ellipse(ctx, this.pointer.x, this.pointer.y, 22, 22, 'rgba(255,249,235,0.75)');
-      toolIcon(ctx, this.pointerTool, this.pointer.x + 8, this.pointer.y - 6, 40);
+      const contact = world.carePointer;
+      const care = game.events.find(e => e.id === contact?.eventId);
+      const active = !!care && !!contact?.working;
+      const p = this.pointer;
+      ctx.save(); const room = this.layout.room; ctx.beginPath(); ctx.rect(room.x, room.y, room.w, room.h); ctx.clip();
+      if (this.pointerTool === 'toy' && contact) {
+        const lure = p, grip = { x: p.x + 38, y: p.y - 58 };
+        line(ctx, [[grip.x + 15, grip.y + 36], [grip.x, grip.y]], '#a7835e', 5);
+        ctx.beginPath(); ctx.moveTo(grip.x, grip.y);
+        ctx.quadraticCurveTo(lure.x + 26, lure.y - 12, lure.x, lure.y);
+        ctx.strokeStyle = '#67584c'; ctx.lineWidth = 1.5; ctx.stroke();
+        const flutter = active ? Math.sin(game.clock * 16) * 0.25 : 0;
+        ellipse(ctx, lure.x - 3, lure.y + 3, 4, 11, '#b6a2c8', 0.35 + flutter);
+        ellipse(ctx, lure.x + 4, lure.y + 2, 3, 10, '#91b9bd', -0.35 + flutter);
+        line(ctx, [[lure.x, lure.y - 5], [lure.x - 5, lure.y + 12]], '#81718d', 1);
+      } else if (this.pointerTool === 'food' && care) {
+        const spout = world.project(world.eventPosition(care).add(new THREE.Vector3(0, (0.073 + care.progress * 0.11 + 0.65) * 0.8, 0)));
+        ctx.save(); ctx.translate(spout.x, spout.y); ctx.rotate(active ? 0.6 : 0.15);
+        round(ctx, -14, -42, 28, 39, 5, '#d9aa7b', '#a87b55');
+        round(ctx, -14, -42, 28, 7, 3, '#a87b55'); paw(ctx, 0, -22, 19, '#fff1d6');
+        ellipse(ctx, 0, -3, 7, 2.5, '#7e5b42'); ctx.restore();
+      } else {
+        // Keep the contact point clear so the material changing underneath remains visible.
+        ctx.save(); ctx.translate(p.x + 9, p.y - 18);
+        ctx.rotate(active ? Math.sin(game.clock * 24) * contact!.energy * 0.16 : 0);
+        toolIcon(ctx, this.pointerTool, 0, 0, 54); ctx.restore();
+        if (active && contact!.energy > 0.05) {
+          for (let i = 0; i < 6; i++) {
+            const phase = (game.clock * 2 + i / 6) % 1;
+            const x = p.x + Math.cos(i * 2.4) * (7 + phase * 24), y = p.y + 5 - phase * 16;
+            ctx.globalAlpha = (1 - phase) * contact!.energy * 0.7;
+            if (this.pointerTool === 'mop') ellipse(ctx, x, y, 2 + phase * 2, 1.7 + phase, '#f9ffff');
+            else line(ctx, [[x, y], [x + 4, y - 2]], this.pointerTool === 'brush' ? '#aa97b8' : '#a7835e', 1.5);
+          }
+        }
+      }
+      ctx.restore();
     }
     if (!this.rotateRequired && this.damageFlash > 0) this.scratches(world.attackAge);
     this.texture.needsUpdate = true; this.syncHits();

@@ -1,4 +1,4 @@
-import type { StageConfig, ToolDefinition, ToolId } from './types';
+import type { CatDefinition, StageConfig, ToolDefinition, ToolId } from './types';
 
 export const STAGES: readonly StageConfig[] = [
   { duration: 45, cats: 1, delay: [8, 12], patience: 22 },
@@ -9,15 +9,15 @@ export const STAGES: readonly StageConfig[] = [
 ];
 // Movement work is measured in fractions of the short viewport edge.
 export const TOOLS: readonly ToolDefinition[] = [
-  { id: 'sweeper', name: 'Sweeper', need: 'poop', label: 'Poop patrol', instruction: 'Sweep across the mess', gesture: 'sweep', color: '#d6a36e', work: 0.9 },
+  { id: 'sweeper', name: 'Sweeper', need: 'poop', label: 'Poop patrol', instruction: 'Sweep away all three layers', gesture: 'sweep', color: '#d6a36e', work: 0.9 },
   { id: 'mop', name: 'Mop', need: 'vomit', label: 'A little accident', instruction: 'Rub back and forth', gesture: 'rub', color: '#91b9bd', work: 0.9 },
-  { id: 'brush', name: 'Brush', need: 'fur', label: 'Fluff everywhere', instruction: 'Brush across the fur', gesture: 'sweep', color: '#c0acd6', work: 0.9 },
-  { id: 'food', name: 'Food', need: 'hunger', label: 'Dinner, please', instruction: 'Tap the bowl to pour', gesture: 'tap', color: '#dda079', work: 4 },
-  { id: 'toy', name: 'Wand', need: 'boredom', label: 'Play with me', instruction: 'Drag the toy around me', gesture: 'drag', color: '#a5b99a', work: 2 },
+  { id: 'brush', name: 'Brush', need: 'fur', label: 'Fluff everywhere', instruction: 'Gather the fluff, then sweep away', gesture: 'sweep', color: '#c0acd6', work: 0.9 },
+  { id: 'food', name: 'Food', need: 'hunger', label: 'Dinner, please', instruction: 'Hold over the bowl to pour', gesture: 'pour', color: '#dda079', work: 2 },
+  { id: 'toy', name: 'Wand', need: 'boredom', label: 'Play with me', instruction: 'Hold the wand in the arch above me', gesture: 'hold', color: '#a5b99a', work: 3 },
 ];
 export const TOOL_BY_ID = Object.fromEntries(TOOLS.map(t => [t.id, t])) as Record<ToolId, ToolDefinition>;
-export const PALETTE = [
-  { name: 'Mochi', color: '#e7b77d', accent: '#b97d4c' },
+export const PALETTE: readonly (Pick<CatDefinition, 'name' | 'color' | 'accent'> & Partial<Pick<CatDefinition, 'appearance'>>)[] = [
+  { name: 'Choco', color: '#604239', accent: '#49312c', appearance: 'choco' },
   { name: 'Miso', color: '#9caeb7', accent: '#657e8b' },
   { name: 'Peaches', color: '#e7a59b', accent: '#bd7774' },
   { name: 'Tofu', color: '#e9e2d0', accent: '#b9b0a1' },

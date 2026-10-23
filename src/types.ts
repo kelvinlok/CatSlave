@@ -4,7 +4,7 @@ export type Phase = 'title' | 'tutorial' | 'playing' | 'paused' | 'adoption' | '
 export interface BehaviorProfile { needRate: number; patience: number; }
 export interface CatDefinition {
   id: number; name: string; color: string; accent: string;
-  appearance: 'primitive'; behavior: BehaviorProfile;
+  appearance: 'primitive' | 'choco'; behavior: BehaviorProfile;
 }
 export interface FloorPoint { x: number; z: number; }
 export type CatActivity = 'idle' | 'walking' | 'sniffing' | 'jumping' | 'crawling' | 'perching' | 'hiding' | 'watching' | 'sleeping' | 'grooming' | 'scratching' | 'eating' | 'playing';
@@ -23,7 +23,7 @@ export interface CareEvent {
 }
 export interface ToolDefinition {
   id: ToolId; name: string; need: EventKind; label: string; instruction: string;
-  gesture: 'sweep' | 'rub' | 'tap' | 'drag'; color: string; work: number;
+  gesture: 'sweep' | 'rub' | 'tap' | 'pour' | 'hold' | 'drag'; color: string; work: number;
 }
 export interface StageConfig { duration: number; cats: number; delay: readonly [number, number]; patience: number; }
 export interface Point { x: number; y: number; }

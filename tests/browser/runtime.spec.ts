@@ -65,7 +65,7 @@ test('keeps controls in bounds, care targets separate, and resources bounded', a
       expect(h.w, h.id).toBeGreaterThanOrEqual(48); expect(h.h, h.id).toBeGreaterThanOrEqual(48);
     }
     const room = await page.evaluate(() => window.__CATSLAVE_TEST__.hud.layout.room);
-    const controls = hits.filter(hit => hit.id === 'pause' || hit.id.startsWith('tool:'));
+    const controls = hits.filter(hit => hit.id === 'pause' || hit.id.startsWith('tool:') || hit.id.startsWith('view:'));
     for (const control of controls) expect(control.x + control.w <= room.x || control.x >= room.x + room.w || control.y + control.h <= room.y || control.y >= room.y + room.h).toBe(true);
     await page.screenshot({ path: `test-results/layout-${viewport.width}x${viewport.height}-${info.project.name}.png` });
   }
@@ -84,7 +84,7 @@ test('keeps controls in bounds, care targets separate, and resources bounded', a
     t.game.cats.forEach((cat, i) => t.game.spawn(cat, (['poop', 'vomit', 'fur', 'hunger', 'boredom'] as const)[i])); t.game.tick(2); t.refresh();
   });
   await page.waitForTimeout(1200);
-  const cards = await page.evaluate(() => window.__CATSLAVE_TEST__.hud.hits.filter(h => h.id.startsWith('event:')));
+  const cards = await page.evaluate(() => window.__CATSLAVE_TEST__.hud.hits.filter(h => h.id.startsWith('event:') || h.id.startsWith('focus:')));
   expect(cards).toHaveLength(5);
   for (const card of cards) { expect(card.x).toBeGreaterThanOrEqual(0); expect(card.x + card.w).toBeLessThanOrEqual(390); }
   await page.screenshot({ path: `test-results/five-cats-${info.project.name}.png` });

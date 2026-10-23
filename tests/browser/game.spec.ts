@@ -4,7 +4,7 @@ import type { World } from '../../src/world';
 import type { Hud } from '../../src/hud';
 
 declare global { interface Window { __CATSLAVE_TEST__: { game: Game; world: World; hud: Hud; refresh(effectsDt?: number): void; setManualClock(value: boolean): void; stats(): object; }; } }
-type Hit = { x: number; y: number; w: number; h: number; id: string; eventId?: number };
+type Hit = { x: number; y: number; w: number; h: number; id: string; eventId?: number; arch?: { x: number; y: number; outerY: number; innerY: number } };
 async function hit(page: Page, id: string): Promise<Hit> {
   await expect.poll(() => page.evaluate(id => !!window.__CATSLAVE_TEST__?.hud.hits.find(h => h.id === id), id)).toBe(true);
   return page.evaluate(id => window.__CATSLAVE_TEST__.hud.hits.find(h => h.id === id)!, id);
@@ -31,9 +31,15 @@ async function care(page: Page) {
   const tool = tools[event.kind];
   await page.evaluate(id => { const t = window.__CATSLAVE_TEST__; const e = t.game.events.find(e => e.id === id)!; t.refresh(); }, event.id);
   await tap(page, `tool:${tool}`);
+  if (await page.evaluate(id => window.__CATSLAVE_TEST__.hud.hits.some(h => h.id === `focus:${id}`), event.id)) await tap(page, `focus:${event.id}`);
   const h = await hit(page, `event:${event.id}`);
-  if (tool === 'food') for (let i = 0; i < 4; i++) { if ((await state(page)).events.some(e => e.id === event.id)) await page.touchscreen.tap(h.x + h.w / 2, h.y + h.h * 0.6); }
-  else await stroke(page, h, 12, tool === 'toy' ? 2600 : 0);
+  if (tool === 'food' || tool === 'toy') {
+    const p = h.arch ? { x: h.arch.x, y: h.arch.y - (h.arch.outerY + h.arch.innerY) / 2 } : { x: h.x + h.w / 2, y: h.y + h.h * 0.6 };
+    await page.mouse.move(p.x, p.y); await page.mouse.down();
+    await expect.poll(async () => (await state(page)).events.some(e => e.id === event.id), { timeout: 15_000 }).toBe(false);
+    await page.mouse.up();
+  }
+  else await stroke(page, h, 12);
   await expect.poll(async () => {
     const current = await state(page);
     return current.events.some(e => e.id === event.id) ? JSON.stringify(current) : 'complete';
@@ -98,17 +104,19 @@ test('plays an accelerated five-stage run through real care, adoption, and upgra
   await tap(page, 'restart'); expect((await state(page)).count).toBe(1); expect((await state(page)).hp).toBe(100);
 });
 
-test('keeps a fixed room view, retains work, pauses, resizes, and loses a run', async ({ page }, info) => {
+test('turns the view without moving, retains work, pauses, resizes, and loses a run', async ({ page }, info) => {
   await tap(page, 'learn');
   const event = (await state(page)).events[0], h = await hit(page, `event:${event.id}`);
   await stroke(page, h, 1); const partial = (await state(page)).events[0].progress;
   expect(partial).toBeGreaterThan(0); expect(partial).toBeLessThan(1);
   const camera = await page.evaluate(() => window.__CATSLAVE_TEST__.world.camera.quaternion.toArray());
+  const cameraPosition = await page.evaluate(() => window.__CATSLAVE_TEST__.world.camera.position.toArray());
   const viewport = page.viewportSize()!;
   await page.mouse.move(8, viewport.height * 0.35); await page.mouse.down();
   await page.mouse.move(150, viewport.height * 0.35, { steps: 8 }); await page.mouse.up();
   await page.keyboard.press('ArrowRight');
-  expect(await page.evaluate(() => window.__CATSLAVE_TEST__.world.camera.quaternion.toArray())).toEqual(camera);
+  expect(await page.evaluate(() => window.__CATSLAVE_TEST__.world.camera.quaternion.toArray())).not.toEqual(camera);
+  expect(await page.evaluate(() => window.__CATSLAVE_TEST__.world.camera.position.toArray())).toEqual(cameraPosition);
   expect((await state(page)).events[0].progress).toBe(partial);
   expect(await page.evaluate(() => window.__CATSLAVE_TEST__.hud.hits.some(h => h.id === 'left' || h.id === 'right'))).toBe(false);
   await page.evaluate(() => window.dispatchEvent(new Event('blur')));

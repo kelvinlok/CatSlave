@@ -43,7 +43,7 @@ export class Game {
   get timeLeft() { return Math.max(0, this.config.duration - this.stageElapsed); }
 
   private makeCat(palette: typeof PALETTE[number], index: number): CatState {
-    return { ...palette, id: this.nextId++, appearance: 'primitive', behavior: { needRate: 1, patience: 1 },
+    return { ...palette, id: this.nextId++, appearance: palette.appearance ?? 'primitive', behavior: { needRate: 1, patience: 1 },
       nextNeedAt: 0, happyUntil: 0, attackUntil: 0,
       position: { x: 0, z: -1.2 }, destination: { x: 0, z: -1.2 }, yaw: 0.65, stride: 0, activity: 'idle', decisionAt: 0.6, elevation: 0, pose: 0 };
   }
@@ -90,9 +90,13 @@ export class Game {
     const nextKind = kind ?? cat.pendingNeed ?? this.random.choose(TOOLS.filter(t => t.need !== cat.lastKind)).need;
     cat.pendingNeed = undefined;
     const deadline = this.phase === 'tutorial' ? Infinity : this.clock + this.config.patience * cat.behavior.patience;
+    const cleaning = nextKind === 'poop' || nextKind === 'vomit' || nextKind === 'fur';
+    // Put fresh messes beside the paws so the player can see their first stroke.
+    const position = cleaning ? { x: cat.position.x + (cat.position.x > 0 ? -0.58 : 0.58),
+      z: Math.min(ROOM.maxZ, cat.position.z + 0.25) } : { ...cat.position };
     this.events.push({ id: this.nextId++, catId: cat.id, kind: nextKind, progress: 0,
       createdAt: this.clock, deadline, nextAttackAt: deadline + ATTACK_WARNING, attacks: 0,
-      position: { ...cat.position } });
+      position });
     cat.activity = 'sniffing'; cat.decisionAt = this.clock + 0.9;
     cat.lastKind = nextKind; this.revision++;
   }
@@ -185,6 +189,8 @@ export class Game {
     if (event.progress >= 1 - 1e-7) {
       const cat = this.cats.find(c => c.id === event.catId)!;
       cat.happyUntil = this.clock + 1.8; cat.attackUntil = 0;
+      cat.activity = event.kind === 'hunger' ? 'eating' : 'idle';
+      cat.decisionAt = this.clock + 1.8;
       cat.nextNeedAt = this.clock + this.random.between(...this.config.delay) / cat.behavior.needRate;
       this.events = this.events.filter(e => e.id !== eventId);
       if (this.phase === 'tutorial') this.tutorialDone = true;

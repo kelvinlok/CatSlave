@@ -7,8 +7,8 @@ import * as THREE from 'three';
 it('keeps thumb targets outside the portrait room and clear of phone safe areas', () => {
   const safe = { left: 0, right: 0, top: 47, bottom: 34 };
   const l = gameLayout(390, 664, safe);
-  expect(l.room.h).toBeGreaterThan(440);
-  for (const r of [...l.tools, l.pause]) {
+  expect(l.room.h).toBeGreaterThan(390);
+  for (const r of [...l.tools, ...l.viewControls, l.pause]) {
     expect(r.w).toBeGreaterThanOrEqual(48); expect(r.h).toBeGreaterThanOrEqual(48);
     expect(r.y + r.h <= l.room.y || r.y >= l.room.y + l.room.h).toBe(true);
     expect(r.x + r.w).toBeLessThanOrEqual(390 - safe.right);
@@ -27,10 +27,10 @@ it('blocks sideways phones and centers a portrait frame for desktop', () => {
 it('uses portrait height for the room and keeps camera projection and picking aligned', () => {
   const w = new World(), l = gameLayout(390, 664);
   w.resize(390, 664, l.room);
-  const front = w.project(new THREE.Vector3(0, 0, 4));
-  const back = w.project(new THREE.Vector3(0, 0, -5.7));
-  expect(front.y - back.y).toBeGreaterThan(250);
-  expect(front.y).toBeLessThan(l.tools[0].y);
+  const nearFloor = new THREE.Vector3(0, 0, 4); w.focusOn(nearFloor);
+  const front = w.project(nearFloor);
+  expect(front.y).toBeCloseTo(l.room.y + l.room.h / 2);
+  expect(front.y).toBeLessThan(l.tools[0].y); w.resetView();
   const game = new Game(1); game.reset(); w.update(game, 0, 0); w.scene.updateMatrixWorld(true);
   const cat = game.cats[0], p = w.project(new THREE.Vector3(cat.position.x, 0.4, cat.position.z));
   expect(w.pickCat(p.x, p.y)).toBe(cat.id);

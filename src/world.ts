@@ -1,12 +1,12 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { Game } from './simulation';
-import type { CareEvent } from './types';
+import type { CareEvent, Point } from './types';
 import { ROOM } from './config';
-import { createCat, type CatModel } from './cat-model';
-import { createMess } from './messes';
+import { createCat, disposeCat, type CatModel } from './cat-model';
+import { createMess, updateMess, disposeMess } from './messes';
 import { createFurniture } from './furniture-model';
-import { animateInteraction } from './cat-animation';
+import { animateCat } from './cat-animation';
 import { BENCH, BED, POST, RUG } from './furniture';
 import { gameLayout, type Rect } from './layout';
 
@@ -38,7 +38,7 @@ function batchMeshes(root: THREE.Object3D, deep = false, exclude: THREE.Object3D
   const inverse = root.matrixWorld.clone().invert();
   const batches = new Map<THREE.Material, THREE.Mesh[]>();
   const collect = (object: THREE.Object3D) => {
-    if (!(object instanceof THREE.Mesh) || exclude.includes(object) || Array.isArray(object.material)) return;
+    if (!(object instanceof THREE.Mesh) || object instanceof THREE.SkinnedMesh || exclude.includes(object) || Array.isArray(object.material)) return;
     for (let parent: THREE.Object3D | null = object; parent && parent !== root; parent = parent.parent) if (!parent.visible) return;
     const list = batches.get(object.material) ?? []; list.push(object); batches.set(object.material, list);
   };
@@ -60,6 +60,12 @@ function batchMeshes(root: THREE.Object3D, deep = false, exclude: THREE.Object3D
 }
 
 interface Resident { model: CatModel; base: THREE.Vector3; }
+export interface PlayArea { x: number; y: number; outerX: number; outerY: number; innerX: number; innerY: number; }
+export function inPlayArea(area: PlayArea, point: Point) {
+  const dx = point.x - area.x, dy = point.y - area.y;
+  return dy <= 8 && (dx / area.outerX) ** 2 + (dy / area.outerY) ** 2 <= 1
+    && (dx / area.innerX) ** 2 + (dy / area.innerY) ** 2 >= 1;
+}
 export class World {
   scene = new THREE.Scene();
   attackScene = new THREE.Scene();
@@ -68,8 +74,15 @@ export class World {
   private lastDamage = 0;
   private attackModel?: CatModel;
   camera = new THREE.PerspectiveCamera(58, 1, 0.1, 60);
+  viewZoom = 1.65;
+  private viewYaw = 0;
+  private viewPitch = Math.atan2(1.2, 7);
+  private viewReady = false;
   private residents = new Map<number, Resident>();
   private messes = new Map<number, THREE.Group>();
+  private completedMesses = new Map<number, { mesh: THREE.Group; age: number; kind: CareEvent['kind'] }>();
+  carePointer?: { eventId: number; point: Point; focus: THREE.Vector3; working: boolean; energy: number };
+  private lastCareClock = 0;
   private raycaster = new THREE.Raycaster();
   private vector = new THREE.Vector3();
   private width = 1;
@@ -87,7 +100,7 @@ export class World {
     this.scene.add(new THREE.HemisphereLight('#fffaf0', '#b4a695', 2.6));
     const sun = new THREE.DirectionalLight('#fff1db', 3.2); sun.position.set(-3, 8, 4); this.scene.add(sun);
     const fill = new THREE.DirectionalLight('#d4e9ed', 1.2); fill.position.set(5, 3, -4); this.scene.add(fill);
-    this.camera.position.set(0, 5, 9); this.camera.lookAt(0, 0, -3.5);
+    this.camera.position.set(0, 1.65, 5.8); this.camera.lookAt(0, 0.45, -1.2);
     block(this.scene, '#d6bea1', [0, -0.10, 0], [16, 0.2, 16]);
     for (let i = -8; i <= 8; i++) block(this.scene, '#c7ae92', [i, 0.006, 0], [0.016, 0.008, 16]);
     for (let x = -8; x < 8; x++) for (let z = -8; z < 8; z += 3) block(this.scene, '#c7ae92', [x + 0.5, 0.006, z + (x % 2 ? 1.5 : 0)], [1, 0.008, 0.012]);
@@ -158,21 +171,43 @@ export class World {
   resize(width: number, height: number, viewport = gameLayout(width, height).room) {
     this.width = width; this.height = height; this.viewport = viewport;
     this.camera.aspect = viewport.w / viewport.h;
-    // Keep the 45-degree pitch, but reduce near/far size disparity with a longer lens.
-    // Fitting from farther back uses more portrait height without clipping the near corners.
-    this.camera.position.set(0, 14, 13.2);
-    this.camera.lookAt(0, 0, -0.8);
+    // A fixed eye position at the front of the room: swipes turn your head.
+    this.camera.position.set(0, 1.65, 5.8);
+    this.camera.fov = 65;
     this.attackCamera.aspect = width / height; this.attackCamera.updateProjectionMatrix();
-    // Keep the entire walkable floor visible from a fixed, downward human perspective.
-    const corners = [ROOM.minX - 0.55, ROOM.maxX + 0.55].flatMap(x =>
-      [ROOM.minZ - 0.5, ROOM.maxZ + 0.6].flatMap(z => [0, 1.1].map(y => new THREE.Vector3(x, y, z))));
-    this.camera.updateMatrixWorld();
-    for (let fov = 20; fov <= 112; fov++) {
-      this.camera.fov = fov; this.camera.updateProjectionMatrix();
-      if (corners.every(p => { const clip = p.clone().project(this.camera); return Math.abs(clip.x) < 0.94 && Math.abs(clip.y) < 0.88; })) break;
-    }
+    this.viewReady = true;
+    this.applyView();
+  }
+  private applyView() {
+    if (!this.viewReady) return;
+    this.viewYaw = THREE.MathUtils.clamp(this.viewYaw, -Math.PI * 5 / 12, Math.PI * 5 / 12);
+    this.viewPitch = THREE.MathUtils.clamp(this.viewPitch, -Math.PI / 9, Math.PI * 13 / 36);
+    this.camera.rotation.set(-this.viewPitch, -this.viewYaw, 0, 'YXZ');
+    this.camera.zoom = this.viewZoom;
+    this.camera.updateProjectionMatrix(); this.camera.updateMatrixWorld();
+  }
+  lookView(dx: number, dy: number) {
+    const radians = THREE.MathUtils.degToRad(100) / Math.max(1, Math.min(this.viewport.w, this.viewport.h)) / this.viewZoom;
+    this.viewYaw += dx * radians; this.viewPitch += dy * radians;
+    this.applyView();
+  }
+  zoomView(delta: number) {
+    this.viewZoom = THREE.MathUtils.clamp(this.viewZoom + delta, 1, 2.5); this.applyView();
+  }
+  resetView(zoom = 1.65) { this.viewYaw = 0; this.viewPitch = Math.atan2(1.2, 7); this.viewZoom = zoom; this.applyView(); }
+  focusOn(position: THREE.Vector3) {
+    const dx = position.x - this.camera.position.x, dz = this.camera.position.z - position.z;
+    this.viewYaw = Math.atan2(dx, dz);
+    this.viewPitch = Math.atan2(this.camera.position.y - position.y, Math.hypot(dx, dz));
+    this.applyView();
   }
   project(position: THREE.Vector3) {
+    this.vector.copy(position).applyMatrix4(this.camera.matrixWorldInverse);
+    if (this.vector.z >= -this.camera.near) {
+      // Keep a usable edge cue even when a need is behind the current gaze.
+      return { x: this.viewport.x + this.viewport.w / 2 + Math.sign(this.vector.x || 1) * this.viewport.w,
+        y: this.viewport.y + this.viewport.h / 2 - THREE.MathUtils.clamp(this.vector.y, -1, 1) * this.viewport.h / 2, visible: false };
+    }
     this.vector.copy(position).project(this.camera);
     return { x: this.viewport.x + (this.vector.x + 1) * this.viewport.w / 2,
       y: this.viewport.y + (1 - this.vector.y) * this.viewport.h / 2, visible: this.vector.z < 1 && this.vector.z > -1 };
@@ -183,7 +218,35 @@ export class World {
     return model ? model.root.position.clone().add(new THREE.Vector3(0, 1.85 * model.root.scale.y, 0)) : undefined;
   }
   eventPosition(event: CareEvent) {
+    if (event.kind === 'boredom') return new THREE.Vector3(event.position.x, this.floorHeight(event.position.x, event.position.z) + 0.65, event.position.z + 0.35);
     return this.messes.get(event.id)?.position.clone() ?? this.catPosition(event.catId) ?? new THREE.Vector3();
+  }
+  playArea(event: CareEvent): PlayArea {
+    const center = this.eventPosition(event); center.y -= 0.10;
+    const screen = this.project(center);
+    const edge = this.project(center.clone().add(new THREE.Vector3(0.55, 0, 0)));
+    const outerX = THREE.MathUtils.clamp(Math.abs(edge.x - screen.x), 72, Math.min(120, this.viewport.w * 0.3));
+    return { x: screen.x, y: screen.y + 8, outerX, outerY: outerX * 1.25, innerX: outerX * 0.44, innerY: outerX * 0.56 };
+  }
+  toyHit(event: CareEvent, point: Point) {
+    const v = this.viewport;
+    return point.x >= v.x && point.x <= v.x + v.w && point.y >= v.y && point.y <= v.y + v.h
+      && inPlayArea(this.playArea(event), point);
+  }
+  setCarePointer(event: CareEvent, point: Point, working: boolean, movement = 0) {
+    const v = this.viewport, origin = this.eventPosition(event);
+    this.raycaster.setFromCamera(new THREE.Vector2((point.x - v.x) / v.w * 2 - 1, 1 - (point.y - v.y) / v.h * 2), this.camera);
+    const normal = this.camera.getWorldDirection(new THREE.Vector3()); normal.y = 0; normal.normalize();
+    // A vertical play plane keeps an overhead feather in front of the cat,
+    // rather than pushing it behind the head as the camera tilts downward.
+    const plane = new THREE.Plane().setFromNormalAndCoplanarPoint(normal, origin);
+    const focus = this.raycaster.ray.intersectPlane(plane, new THREE.Vector3()) ?? origin.clone();
+    // Keep this exact ray-plane point: the standalone feathers are drawn at
+    // the pointer. The animator bounds joints, not the target's screen position.
+    // Accumulate travel and decay per simulation second: high-frequency devices
+    // must feel as lively as the same stroke sampled at a lower rate.
+    const energy = Math.min(1, (this.carePointer?.eventId === event.id ? this.carePointer.energy : 0) + movement / 35);
+    this.carePointer = { eventId: event.id, point: { ...point }, focus, working, energy };
   }
   pickCat(x: number, y: number): number | undefined {
     const v = this.viewport;
@@ -196,10 +259,20 @@ export class World {
   }
 
   update(game: Game, dt: number, time: number, effectsDt = dt) {
+    const careDt = Math.max(0, Math.min(0.1, game.clock - this.lastCareClock));
+    if (game.clock < this.lastCareClock || ['title', 'adoption', 'upgrade'].includes(game.phase)) {
+      for (const { mesh } of this.completedMesses.values()) { mesh.removeFromParent(); disposeMess(mesh); }
+      this.completedMesses.clear();
+    }
+    this.lastCareClock = game.clock;
+    if (!game.active || !game.events.some(e => e.id === this.carePointer?.eventId)) this.carePointer = undefined;
+    if (this.carePointer) this.carePointer.energy *= Math.exp(-careDt * 7);
     this.camera.updateMatrixWorld();
     const isPreview = ['title', 'adoption', 'game-over', 'victory'].includes(game.phase);
     this.camera.updateMatrixWorld();
-    for (const [id, resident] of this.residents) if (!game.cats.some(cat => cat.id === id)) { this.scene.remove(resident.model.root); this.residents.delete(id); }
+    for (const [id, resident] of this.residents) if (!game.cats.some(cat => cat.id === id)) {
+      this.scene.remove(resident.model.root); disposeCat(resident.model); this.residents.delete(id);
+    }
     for (const cat of game.cats) {
       let resident = this.residents.get(cat.id);
       if (!resident) {
@@ -211,35 +284,43 @@ export class World {
       model.root.position.copy(base); model.root.rotation.y = cat.yaw; model.root.visible = !isPreview;
       const event = game.events.find(e => e.catId === cat.id);
       const angry = !!event && game.urgency(event) === 'angry';
-      model.anger.visible = angry;
-      const happy = cat.happyUntil > game.clock, walking = cat.activity === 'walking';
-      const t = game.clock;
+      const happy = cat.happyUntil > game.clock;
       model.root.scale.setScalar(ROOM.catScale);
-      model.head.rotation.z = Math.sin(t * 1.5 + cat.id) * 0.035;
-      model.head.rotation.x = cat.activity === 'sniffing' ? 0.48 + Math.sin(t * 5) * 0.04 : angry ? 0.18 : happy ? -0.12 : 0;
-      model.tail.rotation.z = Math.sin(t * (angry ? 10 : 1.8) + cat.id) * (angry ? 0.38 : 0.14);
-      model.tail.rotation.x = walking ? -0.25 : 0.1;
-      const blink = Math.sin(t * 1.1 + cat.id * 2) > 0.995;
-      for (const eye of model.eyes) eye.scale.y = happy || blink ? 0.013 : angry ? 0.033 : 0.062;
-      // Alternating diagonal pairs keep the body supported while the feet step.
-      model.legs.forEach((leg, i) => {
-        const gait = cat.stride + ([0, Math.PI, Math.PI, 0][i]);
-        leg.rotation.x = walking ? Math.sin(gait) * 0.28 : 0;
-        leg.position.y = 0.57 + (walking ? Math.max(0, Math.cos(gait)) * 0.035 : 0);
-      });
-      if (walking) model.root.position.y += Math.sin(cat.stride * 2) * 0.008;
-      animateInteraction(model, cat, t);
+      const attention = event?.kind === 'boredom' && this.carePointer?.eventId === event.id ? this.carePointer : undefined;
+      animateCat(model, cat, game.clock, { angry, happy, focus: attention?.working ? attention.focus : undefined, engagement: attention?.working ? 1 : 0 });
 
     }
-    for (const [id, mesh] of this.messes) if (!game.events.some(e => e.id === id)) { this.scene.remove(mesh); this.messes.delete(id); }
+    for (const [id, mesh] of this.messes) if (!game.events.some(e => e.id === id)) {
+      const previous = mesh.userData.careEvent as CareEvent | undefined;
+      if (previous && game.cats.find(c => c.id === previous.catId)?.happyUntil! > game.clock && game.active) {
+        updateMess(mesh, { ...previous, progress: 1 }, game.clock, false);
+        this.completedMesses.set(id, { mesh, age: 0, kind: previous.kind });
+      } else { mesh.removeFromParent(); disposeMess(mesh); }
+      this.messes.delete(id);
+    }
     for (const event of game.events) {
+      if (event.kind === 'boredom') continue;
       const cat = game.cats.find(c => c.id === event.catId)!;
       let mesh = this.messes.get(event.id);
       if (!mesh) { mesh = createMess(event, cat); this.scene.add(mesh); this.messes.set(event.id, mesh); }
       mesh.position.set(event.position.x, this.floorHeight(event.position.x, event.position.z) + 0.005, event.position.z);
-      if (event.kind === 'hunger' || event.kind === 'boredom') mesh.position.z += 0.5;
-      mesh.scale.setScalar((event.kind === 'hunger' || event.kind === 'boredom' ? 1 : 1 - event.progress * 0.65) * 0.8);
+      if (event.kind === 'hunger') mesh.position.z += 0.5;
+      mesh.scale.setScalar(0.8);
+      const contact = this.carePointer?.eventId === event.id ? this.carePointer : undefined;
+      updateMess(mesh, event, game.clock, !!contact?.working && (event.kind === 'hunger' || contact.energy > 0.08));
+      mesh.userData.careEvent = { ...event };
       mesh.visible = !isPreview;
+    }
+    for (const [id, done] of this.completedMesses) {
+      if (!game.cats.some(c => c.id === done.mesh.userData.careEvent?.catId)) {
+        done.mesh.removeFromParent(); disposeMess(done.mesh); this.completedMesses.delete(id); continue;
+      }
+      done.age += careDt;
+      done.mesh.visible = !isPreview;
+      const duration = done.kind === 'hunger' ? 1.8 : 0.55;
+      const fade = Math.max(0, 1 - Math.max(0, done.age - duration + 0.25) / 0.25);
+      done.mesh.scale.setScalar(0.8 * fade);
+      if (done.age >= duration) { done.mesh.removeFromParent(); disposeMess(done.mesh); this.completedMesses.delete(id); }
     }
     this.updatePreview(game, time);
     this.updateAttack(game, effectsDt);
@@ -253,7 +334,7 @@ export class World {
     if (game.damageSerial < this.lastDamage || game.phase === 'title') this.attackAge = 2;
     if (game.damageSerial > this.lastDamage && game.lastAttackCatId !== undefined) {
       this.attackAge = 0;
-      this.attackModel?.root.removeFromParent();
+      if (this.attackModel) { this.attackModel.root.removeFromParent(); disposeCat(this.attackModel); }
       const cat = game.cats.find(c => c.id === game.lastAttackCatId);
       if (cat) { this.attackModel = createCat(cat); this.attackScene.add(this.attackModel.root); }
     }
@@ -262,6 +343,8 @@ export class World {
     if (!this.attackModel) return;
     const t = this.attackAge, model = this.attackModel;
     model.root.visible = t < 0.76 && game.phase !== 'paused';
+    const attacker = game.cats.find(cat => cat.id === game.lastAttackCatId);
+    if (attacker) animateCat(model, { ...attacker, activity: 'jumping', pose: Math.min(1, t / 0.76) }, t, { angry: true });
     // A dedicated foreground camera makes attacks equally legible from every direction.
     const leap = Math.min(1, t / 0.23), retreat = Math.max(0, (t - 0.50) / 0.26);
     model.root.position.set(Math.sin(t * 18) * 0.035, -0.78 - retreat * 2, -5 + leap * 3.55 - retreat * 1.5);
@@ -269,15 +352,16 @@ export class World {
     model.root.scale.setScalar(Math.min(1, this.attackCamera.aspect / 0.65));
     model.legs[0].rotation.x = -1.4 + Math.sin(t * 18) * 0.6;
     model.legs[1].rotation.x = -1.4 + Math.sin(t * 18 + 2) * 0.6;
+    for (let i = 0; i < 2; i++) { model.lowerLegs[i].rotation.x = 0.3; model.paws[i].rotation.x = 0.5; }
     model.head.rotation.x = 0.12;
     model.anger.visible = true;
-    model.eyes.forEach(eye => { eye.scale.y = 0.03; });
+    model.eyes.forEach(eye => { eye.scale.y = model.eyeHeight * 0.03 / 0.062; });
   }
 
   private updatePreview(game: Game, time: number) {
     const key = `${game.phase}:${game.candidates.map(c => c.id).join(',')}`;
     if (key !== this.previewKey) {
-      this.previews.clear(); this.previewCats = []; this.previewKey = key;
+      this.previewCats.forEach(disposeCat); this.previews.clear(); this.previewCats = []; this.previewKey = key;
       const cats = game.phase === 'adoption' ? game.candidates : [game.cats[0]];
       if (['title', 'adoption', 'game-over', 'victory'].includes(game.phase)) cats.forEach((cat, i) => {
         const model = createCat(cat); const adoption = game.phase === 'adoption';
@@ -287,9 +371,10 @@ export class World {
     }
     this.previews.visible = ['title', 'adoption', 'game-over', 'victory'].includes(game.phase);
     this.previewCats.forEach((model, i) => {
+      const definition = game.phase === 'adoption' ? game.candidates[i] : game.cats[0];
+      animateCat(model, { ...game.cats[0], ...definition, activity: 'idle', stride: 0 }, time);
       model.root.rotation.y = -0.65 + Math.sin(time * 0.35 + i) * 0.12;
       model.head.rotation.y = 0.35;
-      model.head.rotation.z = Math.sin(time * 1.3 + i) * 0.06; model.tail.rotation.z = Math.sin(time * 2 + i) * 0.14;
     });
   }
 }

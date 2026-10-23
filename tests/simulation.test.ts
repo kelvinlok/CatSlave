@@ -30,8 +30,8 @@ describe('simulation', () => {
   it('rejects wrong tools and preserves partial work across tools and pause', () => {
     const game = active(); game.spawn(game.cats[0], 'hunger'); const event = game.events[0];
     expect(game.work(event.id, 1)).toBe(false); expect(event.progress).toBe(0);
-    game.select('food'); game.work(event.id, 1); expect(event.progress).toBe(0.25);
-    game.select('brush'); game.pause(); game.tick(10); game.resume(); expect(event.progress).toBe(0.25);
+    game.select('food'); game.work(event.id, 1); expect(event.progress).toBe(0.5);
+    game.select('brush'); game.pause(); game.tick(10); game.resume(); expect(event.progress).toBe(0.5);
     game.select('food'); game.work(event.id, 3); expect(game.events).toHaveLength(0); expect(game.completed).toBe(1);
   });
   it('applies a 1-second warning and repeats damage every 4 seconds', () => {
@@ -66,7 +66,7 @@ describe('simulation', () => {
     game.upgrade('food'); expect(game.levels.food).toBe(2); expect(game.stage).toBe(1);
     game.upgrade('food'); expect(game.levels.food).toBe(2);
     game.spawn(game.cats[0], 'hunger'); game.select('food'); game.work(game.events[0].id, 1);
-    expect(game.events[0].progress).toBe(0.375);
+    expect(game.events[0].progress).toBe(0.75);
   });
   it('limits upgrades to level 3', () => {
     const game = active(); game.phase = 'upgrade'; game.levels.food = 3;
@@ -102,8 +102,8 @@ describe('simulation', () => {
   it('wanders deterministically, leaving each cleaning mess at its birth location', () => {
     const a = active(17), b = active(17);
     for (const g of [a, b]) { g.cats[0].position = { x: 1.2, z: -0.5 }; g.spawn(g.cats[0], 'fur'); }
-    const origin = { ...a.cats[0].position };
-    expect(a.events[0].position).toEqual(origin);
+    const origin = { ...a.events[0].position };
+    expect(Math.hypot(origin.x - a.cats[0].position.x, origin.z - a.cats[0].position.z)).toBeLessThan(0.7);
     a.tick(8); b.tick(8);
     expect(a.cats[0].position).toEqual(b.cats[0].position);
     expect(a.cats[0].position).not.toEqual(origin);

@@ -1,7 +1,7 @@
 import type { Point, ToolDefinition } from './types';
 
 export type GestureRoute = { kind: 'ui'; id: string } | { kind: 'care'; eventId: number; tool: ToolDefinition } | { kind: 'empty' };
-export interface GestureResult { work: number; click?: string; eventId?: number; }
+export interface GestureResult { work: number; click?: string; eventId?: number; look?: Point; }
 const empty = (): GestureResult => ({ work: 0 });
 
 /** Pure gesture recognizer. The start route is immutable until release/cancel. */
@@ -27,6 +27,7 @@ export class Gesture {
     const seconds = Math.min(0.05, Math.max(0, (time - this.lastTime) / 1000));
     this.travel += distance;
     const route = this.route;
+    if (route.kind === 'empty' && this.travel >= 8) result.look = { x: dx, y: dy };
     if (route.kind === 'care' && inTarget && distance >= 0.5) {
       result.eventId = route.eventId;
       if (route.tool.gesture === 'sweep' || route.tool.gesture === 'rub') {
@@ -47,6 +48,12 @@ export class Gesture {
     if (route.kind === 'ui' && route.id === targetId && this.travel < 18) result.click = route.id;
     else if (route.kind === 'care' && route.tool.gesture === 'tap' && this.travel < 18 && inTarget) { result.eventId = route.eventId; result.work = 1; }
     this.cancel(); return result;
+  }
+  /** Held care stops immediately outside its area or on release. */
+  hold(seconds: number, inTarget: boolean): GestureResult {
+    const route = this.route;
+    if (route?.kind !== 'care' || !['pour', 'hold'].includes(route.tool.gesture) || !inTarget || !Number.isFinite(seconds) || seconds <= 0) return empty();
+    return { eventId: route.eventId, work: Math.min(seconds, 0.1) };
   }
   cancel() { this.route = undefined; this.start = undefined; this.previous = undefined; }
 }

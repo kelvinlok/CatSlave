@@ -7,6 +7,7 @@ import { Gesture, type GestureResult } from './gestures';
 import { TOOLS, TOOL_BY_ID } from './config';
 import type { Point, ToolId } from './types';
 import { portraitViewport } from './layout';
+import { GyroLook } from './gyro';
 
 const canvas = document.querySelector<HTMLCanvasElement>('#game')!;
 let renderer: THREE.WebGLRenderer;
@@ -35,6 +36,7 @@ const game = new Game(import.meta.env.MODE === 'test' ? 42 : undefined);
 const world = new World();
 const hud = new Hud();
 const gesture = new Gesture();
+const gyro = new GyroLook(() => { hud.gyroStatus = gyro.status; hud.invalidate(); });
 let pointerId: number | undefined;
 let contextLost = false;
 let previousPhase = game.phase;
@@ -46,6 +48,7 @@ let manualClock = false;
 
 function cancelGesture() {
   gesture.cancel(); hud.pointer = undefined; hud.pointerTool = undefined;
+  world.carePointer = undefined;
   if (pointerId !== undefined && canvas.hasPointerCapture(pointerId)) canvas.releasePointerCapture(pointerId);
   pointerId = undefined; hud.invalidate();
 }
@@ -63,6 +66,7 @@ function safeInsets() {
 }
 function resize() {
   cancelGesture();
+  gyro.recenter();
   const visible = window.visualViewport;
   const viewport = portraitViewport({ x: visible?.offsetLeft ?? 0, y: visible?.offsetTop ?? 0,
     w: Math.round(Math.min(innerWidth, visible?.width ?? innerWidth)), h: Math.round(Math.min(innerHeight, visible?.height ?? innerHeight)) }, matchMedia('(pointer: coarse)').matches);
@@ -89,6 +93,7 @@ function renderFrame() {
 }
 function action(id: string) {
   cancelGesture();
+  if (['learn', 'start', 'restart', 'home'].includes(id)) { world.resetView(); gyro.recenter(); }
   if (id === 'learn') { game.reset(true); }
   else if (id === 'start' || id === 'restart') { game.reset(); }
   else if (id === 'home') { game.reset(); game.phase = 'title'; }
@@ -98,12 +103,38 @@ function action(id: string) {
   else if (id.startsWith('tool:')) game.select(id.slice(5) as ToolId);
   else if (id.startsWith('adopt:')) game.adopt(Number(id.slice(6)));
   else if (id.startsWith('upgrade:')) { game.upgrade(id.slice(8) as ToolId); }
+  else if (game.active && id === 'view:in') world.zoomView(0.2);
+  else if (game.active && id === 'view:out') world.zoomView(-0.2);
+  else if (game.active && id === 'view:reset') { world.resetView(); gyro.recenter(); }
+  else if (game.active && id === 'view:gyro') void gyro.toggle();
+  else if (game.active && id.startsWith('focus:')) {
+    const care = game.events.find(e => e.id === Number(id.slice(6)));
+    if (care) { world.focusOn(world.eventPosition(care)); gyro.recenter(); }
+  }
   hud.invalidate();
 }
 function applyGesture(result: GestureResult) {
-  if (result.eventId !== undefined && result.work) game.work(result.eventId, result.work);
+  if (result.look && game.active) world.lookView(result.look.x, result.look.y);
+  if (result.eventId !== undefined && result.work) {
+    game.work(result.eventId, result.work);
+    if (!game.events.some(e => e.id === result.eventId)) cancelGesture();
+  }
   if (result.click) action(result.click);
   hud.invalidate();
+}
+function careTarget(eventId: number, p: Point) {
+  const care = game.events.find(e => e.id === eventId);
+  if (!care) return false;
+  const hit = hud.hit(p.x, p.y);
+  if (hit && hit.eventId === undefined) return false;
+  return care.kind === 'boredom' ? world.toyHit(care, p) : hud.careHit(eventId, p);
+}
+function updateCarePointer(p: Point, movement = 0) {
+  const route = gesture.route;
+  if (route?.kind !== 'care') return;
+  const care = game.events.find(e => e.id === route.eventId);
+  if (!care || route.tool.need !== care.kind) { world.carePointer = undefined; return; }
+  world.setCarePointer(care, p, careTarget(care.id, p), movement);
 }
 function point(event: PointerEvent): Point { const rect = canvas.getBoundingClientRect(); return { x: event.clientX - rect.left, y: event.clientY - rect.top }; }
 canvas.addEventListener('pointerdown', event => {
@@ -113,7 +144,7 @@ canvas.addEventListener('pointerdown', event => {
   pointerId = event.pointerId; canvas.setPointerCapture(event.pointerId);
   let eventId = hit?.eventId;
   if (!hit && game.active) {
-    const catId = world.pickCat(p.x, p.y); eventId = game.events.find(e => e.catId === catId && e.kind === 'boredom')?.id;
+    eventId = game.events.find(e => e.kind === 'boredom' && world.toyHit(e, p))?.id;
   }
   if (hit && eventId === undefined) gesture.begin(p, event.timeStamp, Math.min(width, height), { kind: 'ui', id: hit.id });
   else if (game.active && eventId !== undefined) {
@@ -121,20 +152,24 @@ canvas.addEventListener('pointerdown', event => {
     hud.pointer = p; hud.pointerTool = game.selected;
     const care = game.events.find(e => e.id === eventId);
     if (care && TOOL_BY_ID[game.selected].need !== care.kind) game.rejectTool(care);
-  } else if (game.active) gesture.begin(p, event.timeStamp, Math.min(width, height), { kind: 'empty' });
+    updateCarePointer(p);
+  } else if (game.active && p.x >= world.viewport.x && p.x <= world.viewport.x + world.viewport.w && p.y >= world.viewport.y && p.y <= world.viewport.y + world.viewport.h) {
+    gesture.begin(p, event.timeStamp, Math.min(width, height), { kind: 'empty' });
+  }
   hud.invalidate();
 });
 canvas.addEventListener('pointermove', event => {
   if (event.pointerId !== pointerId) return;
   const p = point(event), route = gesture.route;
-  const inTarget = route?.kind === 'care' && (hud.careHit(route.eventId, p) || game.events.some(e => e.id === route.eventId && e.kind === 'boredom' && world.pickCat(p.x, p.y) === e.catId));
+  const inTarget = route?.kind === 'care' && careTarget(route.eventId, p);
+  updateCarePointer(p, hud.pointer ? Math.hypot(p.x - hud.pointer.x, p.y - hud.pointer.y) : 0);
   applyGesture(gesture.move(p, event.timeStamp, inTarget));
   if (route?.kind === 'care') hud.pointer = p;
 });
 canvas.addEventListener('pointerup', event => {
   if (event.pointerId !== pointerId) return;
   const p = point(event), route = gesture.route, hit = hud.hit(p.x, p.y);
-  const inTarget = route?.kind === 'care' && (hud.careHit(route.eventId, p) || game.events.some(e => e.id === route.eventId && e.kind === 'boredom' && world.pickCat(p.x, p.y) === e.catId));
+  const inTarget = route?.kind === 'care' && careTarget(route.eventId, p);
   const result = gesture.end(p, hit?.id, inTarget);
   cancelGesture(); applyGesture(result);
 });
@@ -172,12 +207,25 @@ function frame(now: number) {
   if (realDt > 1 && game.active && !manualClock) { cancelGesture(); game.pause('A little interruption. Ready to continue?'); }
   const dt = Math.min(realDt, 0.1);
   if (!contextLost) {
+    if (game.active && !hud.rotateRequired && gesture.route?.kind === 'care' && hud.pointer) {
+      const inside = careTarget(gesture.route.eventId, hud.pointer);
+      if (world.carePointer) world.carePointer.working = inside;
+      const held = gesture.hold(dt, inside);
+      if (held.work) applyGesture(held);
+    }
     if (!manualClock && !hud.rotateRequired) game.tick(dt);
     if (game.phase !== previousPhase) {
       cancelGesture();
+      if (game.phase === 'adoption' || game.phase === 'victory' || (game.phase === 'playing' && previousPhase === 'upgrade')) {
+        // The two adoption previews need a wider frame than active play.
+        world.resetView(game.phase === 'adoption' ? Math.min(1, world.camera.aspect / 0.65) : 1.65);
+        gyro.recenter();
+      }
       previousPhase = game.phase;
     }
     if (previousRevision !== game.revision) { hud.invalidate(); previousRevision = game.revision; }
+    const tilt = gyro.step(dt, game.active && !hud.rotateRequired && !document.hidden && pointerId === undefined);
+    if (tilt.x || tilt.y) { world.lookView(tilt.x, tilt.y); hud.invalidate(); }
     world.update(game, dt, now / 1000, manualClock ? 0 : dt); hud.draw(game, world, dt);
     renderFrame();
     fpsFrames++; fpsTime += realDt;
@@ -196,4 +244,30 @@ if (import.meta.env.MODE === 'test') {
     refresh(effectsDt = 0) { world.update(game, 0, performance.now() / 1000, effectsDt); hud.draw(game, world, 0, true); },
     stats() { return { fps, calls: renderer.info.render.calls, triangles: renderer.info.render.triangles, textures: renderer.info.memory.textures, geometries: renderer.info.memory.geometries }; },
   } });
+  // State-aware visual inspection is confined to the test build, like the input fixtures.
+  Object.assign(window, { __THREE_GAME_TEST_HOOKS__: {
+    seed(value: number) { Object.assign(game, new Game(value)); },
+    setPausedForScreenshot(paused: boolean) { manualClock = paused; },
+    setState(state: string) {
+      if (state !== 'active-play' && state !== 'five-cats') throw new Error(`Unknown inspection state: ${state}`);
+      game.reset();
+      if (state === 'five-cats') for (const tool of ['sweeper', 'mop', 'brush', 'food'] as const) {
+        game.cats.forEach(cat => { cat.nextNeedAt = Infinity; }); game.tick(game.timeLeft);
+        game.adopt(game.candidates[0].id); game.upgrade(tool);
+      }
+      game.cats.forEach((cat, i) => {
+        cat.nextNeedAt = Infinity; cat.decisionAt = Infinity; cat.activity = 'idle'; cat.yaw = 0.15;
+        if (state === 'five-cats') { cat.position = { x: (i - 2) * 1.15, z: 1 - Math.abs(i - 2) * 0.45 }; cat.destination = { ...cat.position }; }
+        game.spawn(cat, (['hunger', 'fur', 'poop', 'vomit', 'boredom'] as const)[i]);
+      });
+      world.resetView(); if (state === 'five-cats') world.zoomView(-10);
+      world.update(game, 0, 0); hud.draw(game, world, 0, true);
+      return { state };
+    },
+  } });
+  Object.defineProperty(window, '__THREE_GAME_DIAGNOSTICS__', { get: () => ({
+    phase: game.phase, catCount: game.cats.length, renderer: { calls: renderer.info.render.calls,
+      triangles: renderer.info.render.triangles, geometries: renderer.info.memory.geometries, textures: renderer.info.memory.textures },
+    fps, dpr: renderer.getPixelRatio(), shadows: false, postPasses: 0,
+  }) });
 }
