@@ -167,7 +167,7 @@ describe('articulated cat animation', () => {
   });
 
   it('produces finite transforms and above-floor paws through every interaction', () => {
-    const activities: CatActivity[] = ['idle', 'walking', 'sniffing', 'jumping', 'crawling', 'perching', 'hiding', 'watching', 'sleeping', 'grooming', 'scratching', 'eating', 'playing'];
+    const activities: CatActivity[] = ['idle', 'walking', 'sniffing', 'jumping', 'crawling', 'perching', 'hiding', 'watching', 'sleeping', 'grooming', 'scratching', 'eating', 'playing', 'stretching'];
     for (const activity of activities) {
       const { model, cat } = fixture(activity);
       for (let frame = 0; frame < 40; frame++) {

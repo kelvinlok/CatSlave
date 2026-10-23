@@ -20,20 +20,22 @@ export function mountCatStudio() {
   floor.rotation.x = -Math.PI / 2; floor.position.y = -0.005; scene.add(floor);
   const cat = new Game(42).cats[0]; let index = -1, model = createCat(PALETTE[0]);
   const camera = new THREE.PerspectiveCamera(32, 400 / 700, 0.1, 200);
-  const pose = (activity: CatActivity, time: number, variant = 0, stride = time * 7.2, jump = 0.5) => {
+  const pose = (activity: CatActivity, time: number, variant = 0, stride = time * 7.2, jump = 0.5, overhead = false, portrait = false) => {
     if (index !== variant) { model.root.removeFromParent(); disposeCat(model); model = createCat(PALETTE[variant]); scene.add(model.root); index = variant; }
     cat.activity = activity; cat.stride = stride; cat.pose = jump;
     animateCat(model, cat, time);
     renderer.setScissorTest(true); renderer.info.autoReset = false; renderer.info.reset();
     for (const [i, angle] of [0, -0.75, 1.05].entries()) {
       camera.position.set(Math.sin(angle) * 5.5, 1.6, Math.cos(angle) * 5.5); camera.lookAt(0, 0.76, 0);
+      if (overhead && i === 2) { camera.position.set(0, 6.3, -0.1); camera.lookAt(0, 0.76, 0); }
+      if (portrait && i === 2) { camera.position.set(0, 1.18, 3.6); camera.lookAt(0, 1.13, 0.57); }
       renderer.setViewport(i * 400, 0, 400, 700); renderer.setScissor(i * 400, 0, 400, 700); renderer.render(scene, camera);
     }
     return { calls: renderer.info.render.calls / 3, triangles: renderer.info.render.triangles / 3,
       geometries: renderer.info.memory.geometries, textures: renderer.info.memory.textures };
   };
   pose('idle', 1);
-  return { pose, renderer, scene, get model() { return model; } };
+  return { pose, renderer, scene, variantCount: PALETTE.length, get model() { return model; } };
 }
 
 declare global { interface Window { __CAT_STUDIO__: ReturnType<typeof mountCatStudio>; } }

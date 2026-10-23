@@ -9,7 +9,8 @@ test('inspects all coat variants and the articulated poses at close range', asyn
   try {
     await page.goto('/tests/browser/cat-studio.html'); await page.waitForFunction(() => !!window.__CAT_STUDIO__);
     const stats = [];
-    for (const variant of [0, 1, 2, 3, 4, 5, 6, 7]) {
+    const variantCount = await page.evaluate(() => window.__CAT_STUDIO__.variantCount);
+    for (let variant = 0; variant < variantCount; variant++) {
       stats.push(await page.evaluate(variant => window.__CAT_STUDIO__.pose('idle', 1, variant), variant));
       if (variant < 3) await page.screenshot({ path: `${folder}/coat-${variant}.png` });
     }

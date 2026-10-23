@@ -134,14 +134,50 @@ function loft(profile: number[][], axis: 'y' | 'z', paint: Paint | string, segme
   }, coatKey);
 }
 
+/** Distance to a painted polyline, used for the tabby's branching facial stripes. */
+function nearCoatStroke(x: number, y: number, points: number[][], width: number) {
+  for (let i = 1; i < points.length; i++) {
+    const [ax, ay] = points[i - 1], [bx, by] = points[i], dx = bx - ax, dy = by - ay;
+    const t = THREE.MathUtils.clamp(((x - ax) * dx + (y - ay) * dy) / (dx * dx + dy * dy), 0, 1);
+    if ((x - ax - t * dx) ** 2 + (y - ay - t * dy) ** 2 < width * width) return true;
+  }
+  return false;
+}
+
 function buildCat(cat: Appearance) {
-  const choco = cat.appearance === 'choco', white = choco ? '#faf6ef' : '#f3e7d4';
+  const choco = cat.appearance === 'choco', latte = cat.appearance === 'latte', didi = cat.appearance === 'didi';
+  const xiaosai = cat.appearance === 'xiaosai';
+  const white = choco ? '#faf6ef' : latte ? cat.color : xiaosai ? '#f5e6cd' : '#f3e7d4';
+  const latteTan = '#bfa17c', latteDark = '#514944';
   const pink = choco ? '#d99b9f' : '#cf9390', ink = '#252020';
+  const muzzleCoat = didi ? '#858b94' : white;
+  const foreheadM = [[0.145, 0.135], [0.115, 0.255], [0.07, 0.28], [0.018, 0.185]];
+  const foreheadFlame = [[0.026, 0.32], [0.034, 0.265], [0.018, 0.215], [0.014, 0.145]];
+  const cheekUpper = [[0.235, 0.012], [0.285, -0.025], [0.325, -0.015]];
+  const cheekLower = [[0.19, -0.085], [0.26, -0.12], [0.325, -0.105]];
   const root = new THREE.Group(), body = group(root, 'body');
   const torso = loft([
-    [-0.87, 0.005, 0.005], [-0.75, 0.25, 0.27], [-0.52, choco ? 0.37 : 0.33, 0.35],
-    [-0.16, choco ? 0.355 : 0.31, 0.32], [0.17, 0.30, 0.30], [0.41, 0.29, 0.35], [0.64, 0.13, 0.24], [0.69, 0.005, 0.005],
+    [-0.87, 0.005, 0.005], [-0.75, 0.25, 0.27], [-0.52, didi ? 0.39 : choco ? 0.37 : 0.33, 0.35],
+    [-0.16, didi ? 0.37 : choco ? 0.355 : 0.31, 0.32], [0.17, didi ? 0.34 : 0.30, 0.30], [0.41, 0.29, 0.35], [0.64, 0.13, 0.24], [0.69, 0.005, 0.005],
   ], 'z', (x, y, z) => {
+    if (didi) return cat.color;
+    if (xiaosai) {
+      if (y < -0.18 || (z > 0.52 && y < 0.14)) return '#ecd0a2';
+      return cat.color;
+    }
+    if (latte) {
+      // The large charcoal island is on her right hip; the belly stays white.
+      if (x < -0.16 && ((z + 0.48) / 0.23) ** 2 + ((y + 0.005) / 0.23) ** 2 < 1 + 0.06 * Math.sin(z * 45)) return latteDark;
+      // Separate dorsal islands from the rear/overhead reference, not a saddle.
+      if (y > 0.14) {
+        const edge = 1 + 0.055 * Math.sin(x * 65 + z * 37);
+        if (((x + 0.025) / 0.21) ** 2 + ((z + 0.56) / 0.16) ** 2 < edge
+          || ((x - 0.10) / 0.17) ** 2 + ((z + 0.13) / 0.18) ** 2 < edge
+          || ((x + 0.095) / 0.065) ** 2 + ((z - 0.17) / 0.08) ** 2 < edge
+          || ((x - 0.075) / 0.060) ** 2 + ((z - 0.20) / 0.065) ** 2 < edge) return '#655044';
+      }
+      return white;
+    }
     if (choco && ((z > 0.43 + Math.abs(x) * 0.35 && y < 0.24) || (y < -0.20 && z > 0.12))) return white;
     if (!choco && z > 0.57 && y < 0.12) return white;
     if (!choco && Math.abs(x) > 0.22 && y > 0.04 && Math.sin(z * 24 + y * 5) > 0.89) return cat.accent;
@@ -151,15 +187,24 @@ function buildCat(cat: Appearance) {
   for (let i = 0; i < 4; i++) {
     const front = i < 2, side = i % 2 ? 1 : -1;
     const leg = group(root, `leg${i}`, [side * 0.245, 0.57, front ? 0.4 : -0.62]);
-    const coat = choco && front && side > 0 ? white : cat.color;
+    const coat: Paint | string = xiaosai ? (_x, y, z) => Math.sin(y * 52 + z * 8) > 0.62 ? cat.accent : cat.color : latte && front && side > 0
+      ? (x, y, z) => x > 0.025 && y < -0.08 && y > -0.23 && z > -0.06 ? latteTan : white
+      : choco && front && side > 0 ? white : cat.color;
     mesh(leg, loft([[-0.28, 0.07, 0.075], [-0.20, front ? 0.105 : 0.13, 0.11], [-0.07, front ? 0.125 : 0.17, front ? 0.13 : 0.19], [0.08, 0.05, 0.06]], 'y', coat, 18, 18));
     const lower = group(leg, `lowerLeg${i}`, [0, -0.25, 0]);
     // Choco's left hind leg has a long white sock beneath its brown thigh.
-    const lowerCoat = choco && side > 0 ? white : coat;
+    const lowerCoat: Paint | string = xiaosai ? (_x, y, z) => y < -0.20 ? '#e9c58e' : Math.sin(y * 50 + z * 7) > 0.6 ? cat.accent : cat.color : latte ? (x, y, z) => {
+      if (front && side < 0 && z > -0.045) {
+        if (y > -0.12 && y < -0.065 && x < 0.025) return latteDark;
+        if (y > -0.22 && y < -0.015) return latteTan;
+      }
+      if (!front && side > 0 && x < -0.025 && y > -0.19) return latteTan;
+      return white;
+    } : choco && side > 0 ? white : coat;
     mesh(lower, loft([[-0.27, 0.06, 0.06], [-0.20, 0.075, 0.08], [-0.04, 0.092, 0.09], [0.035, 0.065, 0.065]], 'y', lowerCoat, 16, 14));
     const paw = group(lower, `paw${i}`, [0, -0.25, 0.085]);
-    ellipsoid(paw, [0, 0, 0], [0.115, 0.07, 0.15], white, fur, 24);
-    for (const x of [-0.038, 0.038]) curve(paw, [[x, 0.035, 0.139], [x, 0.055, 0.11], [x, 0.062, 0.075]], 0.002, '#c9bcb0', fur);
+    ellipsoid(paw, [0, 0, 0], [0.115, 0.07, 0.15], didi ? cat.color : xiaosai ? '#e9c58e' : white, fur, 24);
+    for (const x of [-0.038, 0.038]) curve(paw, [[x, 0.035, 0.139], [x, 0.055, 0.11], [x, 0.062, 0.075]], 0.002, didi ? '#505660' : '#c9bcb0', fur);
     ellipsoid(paw, [0, -0.064, -0.015], [0.047, 0.006, 0.052], pink, fur, 14);
     for (const x of [-0.060, 0, 0.060]) ellipsoid(paw, [x, -0.052, 0.075], [0.024, 0.009, 0.030], pink, fur, 12);
     batch(paw);
@@ -167,8 +212,9 @@ function buildCat(cat: Appearance) {
   const head = group(root, 'head', [0, 0.99, 0.57]);
   const headGeometry = new THREE.SphereGeometry(1, 64, 42), positions = headGeometry.getAttribute('position');
   function headPoint(x: number, y: number, z: number) {
-    const cheeks = 1 + 0.08 * Math.exp(-(((y + 0.35) / 0.4) ** 2));
-    return [x * (choco ? 0.39 : 0.355) * cheeks, y * 0.325,
+    const cheeks = 1 + (didi ? 0.12 : xiaosai ? 0.035 : 0.08) * Math.exp(-(((y + 0.35) / 0.4) ** 2));
+    const taper = xiaosai ? 1 - 0.16 * Math.max(0, -y) : 1;
+    return [x * (didi ? 0.405 : choco ? 0.39 : latte || xiaosai ? 0.335 : 0.355) * cheeks * taper, y * 0.325,
       z * 0.30 + (z > 0 ? 0.025 * Math.exp(-(((y + 0.4) / 0.3) ** 2)) * z : 0)];
   }
   for (let i = 0; i < positions.count; i++) {
@@ -177,6 +223,28 @@ function buildCat(cat: Appearance) {
   }
   headGeometry.computeVertexNormals();
   coatGeometry(headGeometry, (x, y, z) => {
+    if (didi) return cat.color;
+    if (xiaosai) {
+      const ax = Math.abs(x);
+      if (z > 0.035) {
+        const edge = 0.004 + 0.007 * THREE.MathUtils.clamp((y - 0.10) / 0.17, 0, 1) + 0.001 * Math.sin(y * 103 + x * 31);
+        if (nearCoatStroke(ax, y, foreheadM, edge) || nearCoatStroke(ax, y, foreheadFlame, edge * 0.72)
+          || nearCoatStroke(ax, y, cheekUpper, 0.009) || nearCoatStroke(ax, y, cheekLower, 0.011)) return cat.accent;
+        if (((ax - 0.166) / 0.095) ** 2 + ((y - 0.027) / 0.061) ** 2 < 1) return white;
+        if (y < -0.105 && ax < 0.23 + (y + 0.105) * 0.4) return white;
+        if ((x / 0.029) ** 2 + ((y - 0.025) / 0.14) ** 2 < 1) return '#e8c08b';
+      }
+      return cat.color;
+    }
+    if (latte) {
+      if (z > 0.025) {
+        // Asymmetric left-eye mask, separated from the tan nose bridge by white.
+        if (x > 0.055 && ((x - 0.18) / 0.17) ** 2 + ((y - 0.125) / 0.22) ** 2 < 1 + 0.05 * Math.sin(y * 65)) return latteDark;
+        if (((x + 0.025) / 0.061) ** 2 + ((y + 0.005) / 0.16) ** 2 < 1) return latteTan;
+        if (((x + 0.105) / 0.06) ** 2 + ((y - 0.235) / 0.052) ** 2 < 1) return latteTan;
+      }
+      return white;
+    }
     if (choco && z > 0.065) {
       const blaze = y > -0.035 ? Math.max(0, (0.13 - y) * 0.36) : y > -0.13 ? 0.06 + (-y - 0.035) * 1.9 : 0.255;
       if (y < 0.13 && Math.abs(x + 0.006) < blaze) {
@@ -195,11 +263,11 @@ function buildCat(cat: Appearance) {
   });
   mesh(head, headGeometry);
   for (const side of [-1, 1]) {
-    ellipsoid(head, [side * 0.083, -0.125, 0.286], [0.111, 0.077, 0.066], white, fur, 32);
+    ellipsoid(head, [side * 0.083, -0.125, 0.286], [didi ? 0.123 : 0.111, 0.077, 0.066], muzzleCoat, fur, 32);
     const ear = group(head, `ear${side < 0 ? 0 : 1}`, [side * 0.25, 0.19, -0.025]);
-    const height = choco && side < 0 ? 0.28 : 0.34;
+    const height = choco && side < 0 ? 0.28 : latte ? 0.39 : xiaosai ? 0.38 : didi ? 0.30 : 0.34;
     const earGeometry = loft([[0, 0.11, 0.035], [height * 0.2, 0.145, 0.047], [height * 0.6, 0.085, 0.032], [height * 0.94, 0.023, 0.012], [height, 0.002, 0.002]], 'y',
-      (x, y, z) => z > 0.020 && y > 0.045 && y < height * 0.86 && Math.abs(x) < (1 - y / height) * 0.13 ? '#ac7e7d' : cat.color, 26, 24, `${cat.color}:ear:${height}`);
+      (x, y, z) => z > 0.020 && y > 0.045 && y < height * 0.86 && Math.abs(x) < (1 - y / height) * 0.13 ? (didi ? '#8d7b81' : '#ac7e7d') : cat.color, 26, 24, `${cat.color}:ear:${height}`);
     // Choco's left ear (viewer-right from the front) has a small clipped tip.
     // Flatten the existing surface so the clip stays part of the animated ear.
     if (choco && side > 0) {
@@ -210,36 +278,58 @@ function buildCat(cat: Appearance) {
       earGeometry.computeVertexNormals();
     }
     earGeometry.rotateZ(-side * (choco && side < 0 ? 0.36 : 0.17)); mesh(ear, earGeometry);
-    const eyeHeight = choco ? 0.080 : 0.062;
+    const eyeHeight = choco || latte ? 0.080 : xiaosai ? 0.054 : didi ? 0.067 : 0.062;
     const eye = ellipsoid(head, [side * 0.166, 0.023, 0.286], [1, 1, 1], (x, y) => {
       const angle = Math.atan2(y, x), radius = Math.hypot(x, y);
-      if (radius > 0.92) return choco ? '#88713e' : '#536748';
-      return choco ? (Math.sin(angle * 34) > 0.35 ? '#cbb45e' : '#bda155') : '#a8b77b';
+      if (radius > 0.92) return xiaosai ? '#705035' : didi ? '#70502c' : choco ? '#88713e' : '#536748';
+      if (xiaosai) return Math.sin(angle * 32) > 0.35 ? '#b7a16b' : '#9e895a';
+      if (didi) return Math.sin(angle * 34) > 0.35 ? '#d2a04c' : '#bc8135';
+      return choco ? (Math.sin(angle * 34) > 0.35 ? '#cbb45e' : '#bda155') : latte ? (Math.sin(angle * 30) > 0.3 ? '#b8c582' : '#9eae6d') : '#a8b77b';
     }, eyeMaterial, 32);
     eye.name = `eye${side < 0 ? 0 : 1}`; eye.scale.set(0.082, eyeHeight, 0.016);
-    ellipsoid(eye, [0, 0.025, 0.97], [0.34, 0.77, 0.12], ink, eyeMaterial, 24);
+    if (xiaosai) eye.rotation.z = side * 0.12;
+    ellipsoid(eye, [0, 0.025, 0.97], [xiaosai ? 0.51 : latte ? 0.44 : 0.34, 0.77, 0.12], ink, eyeMaterial, 24);
     ellipsoid(eye, [-0.21, 0.34, 1.08], [0.16, 0.18, 0.09], '#ffffff', eyeMaterial, 16);
     ellipsoid(eye, [0.22, -0.25, 1.02], [0.065, 0.07, 0.05], '#e9e5d5', eyeMaterial, 12);
-    curve(eye, [[-0.93, 0.25, 0.4], [-0.50, 0.86, 0.4], [0.35, 0.93, 0.4], [0.93, 0.25, 0.4]], 0.055, cat.accent, eyeMaterial); batchEye(eye);
+    curve(eye, [[-0.93, 0.25, 0.4], [-0.50, 0.86, 0.4], [0.35, 0.93, 0.4], [0.93, 0.25, 0.4]], 0.055, xiaosai ? white : cat.accent, eyeMaterial);
+    if (xiaosai) curve(eye, [[-0.93, -0.15, 0.4], [-0.45, -0.87, 0.4], [0.45, -0.87, 0.4], [0.93, -0.15, 0.4]], 0.05, white, eyeMaterial);
+    batchEye(eye);
+    if (xiaosai) {
+      const points = eye.geometry.getAttribute('position');
+      for (let i = 0; i < points.count; i++) points.setY(i, points.getY(i) * (1 - 0.28 * Math.min(1, Math.abs(points.getX(i)))));
+      eye.geometry.computeVertexNormals();
+    }
     const closedEye = group(head, `closedEye${side < 0 ? 0 : 1}`, [side * 0.166, 0.023, 0.296]);
     closedEye.visible = false;
     curve(closedEye, [[-0.063, -0.002, -0.008], [-0.025, 0.013, 0.008], [0.025, 0.013, 0.008], [0.063, -0.002, -0.008]], 0.004, cat.accent);
     for (let i = 0; i < 4; i++) {
       const y = -0.105 - i * 0.025, spread = 0.05 - i * 0.034;
-      curve(head, [[side * 0.13, y, 0.337], [side * 0.28, y + spread * 0.3, 0.35], [side * 0.47, y + spread, 0.31]], 0.0024, white);
+      curve(head, [[side * 0.13, y, 0.337], [side * 0.28, y + spread * 0.3, 0.35], [side * 0.47, y + spread, 0.31]], 0.0024, didi ? '#d7d9dc' : white);
     }
     for (const [x, y] of [[0.08, -0.11], [0.12, -0.13], [0.07, -0.15]]) ellipsoid(head, [side * x, y, 0.352], [0.0035, 0.0035, 0.002], '#bba89c', detail, 8);
   }
-  ellipsoid(head, [0, -0.234, 0.192], [0.16, 0.055, 0.07], white, fur, 28);
+  ellipsoid(head, [0, -0.234, 0.192], [0.16, 0.055, 0.07], didi ? cat.color : white, fur, 28);
   if (choco) ellipsoid(head, [0.01, -0.217, 0.262], [0.086, 0.040, 0.016], cat.color, fur, 24);
   const noseShape = new THREE.Shape();
   noseShape.moveTo(-0.041, 0.012); noseShape.quadraticCurveTo(0, 0.025, 0.041, 0.012);
   noseShape.quadraticCurveTo(0.041, 0, 0.008, -0.022); noseShape.quadraticCurveTo(0, -0.031, -0.008, -0.022);
   noseShape.quadraticCurveTo(-0.041, 0, -0.041, 0.012);
   const noseGeometry = new THREE.ExtrudeGeometry(noseShape, { depth: 0.008, bevelEnabled: true, bevelThickness: 0.004, bevelSize: 0.004, bevelSegments: 2, steps: 1, curveSegments: 6 });
-  paintGeometry(noseGeometry, pink); mesh(head, noseGeometry, noseMaterial).position.set(0, -0.087, 0.354);
-  curve(head, [[0, -0.113, 0.355], [0, -0.138, 0.352], [0, -0.148, 0.350]], 0.003, '#986963');
+  paintGeometry(noseGeometry, didi ? '#303844' : latte ? '#916b63' : pink); mesh(head, noseGeometry, noseMaterial).position.set(0, -0.087, 0.354);
+  curve(head, [[0, -0.113, 0.355], [0, -0.138, 0.352], [0, -0.148, 0.350]], 0.003, didi ? cat.accent : '#986963');
   for (const side of [-1, 1]) curve(head, [[0, -0.148, 0.350], [side * 0.025, -0.16, 0.348], [side * 0.056, -0.148, 0.342]], 0.003, cat.accent);
+  if (didi) {
+    // His signature tongue follows the head through every pose and blink.
+    const tongue = group(head, 'tongue', [0.006, -0.151, 0.350]);
+    const shape = new THREE.Shape();
+    shape.moveTo(-0.035, 0); shape.quadraticCurveTo(0, 0.009, 0.035, 0);
+    shape.bezierCurveTo(0.042, -0.036, 0.030, -0.080, 0, -0.083);
+    shape.bezierCurveTo(-0.030, -0.080, -0.042, -0.036, -0.035, 0);
+    const geometry = new THREE.ExtrudeGeometry(shape, { depth: 0.012, bevelEnabled: true, bevelThickness: 0.005, bevelSize: 0.004, bevelSegments: 3, steps: 1, curveSegments: 10 });
+    mesh(tongue, paintGeometry(geometry, '#df8298'), detail);
+    curve(tongue, [[0, -0.012, 0.018], [0.001, -0.035, 0.019], [0, -0.060, 0.018]], 0.0015, '#b95d76');
+    batch(tongue);
+  }
   const anger = group(head, 'anger'); anger.visible = false;
   for (const side of [-1, 1]) {
     curve(anger, [[side * 0.09, 0.075, 0.302], [side * 0.17, 0.12, 0.29], [side * 0.235, 0.13, 0.251]], 0.016, cat.accent, fur);
@@ -254,8 +344,10 @@ function buildCat(cat: Appearance) {
     const joint = new THREE.Bone(); joint.name = `tailJoint${i}`; joint.position.y = i === 0 ? 0 : 0.18;
     parent.add(joint); bones.push(joint); parent = joint;
   }
-  const r = choco ? 0.074 : 0.060;
+  const r = choco || didi ? 0.074 : 0.060;
   const tailGeometry = loft([[-0.02, r * 0.8, r * 0.8], [0.04, r, r], [0.30, r * 0.85, r * 0.85], [0.60, r * 0.6, r * 0.6], [0.84, r * 0.35, r * 0.35], [0.90, 0.002, 0.002]], 'y', cat.color, 16, 48);
+  if (latte) paintGeometry(tailGeometry, (_x, y) => y > 0.76 || Math.sin(y * 39) > 0.55 ? latteDark : '#675b52');
+  if (xiaosai) paintGeometry(tailGeometry, (_x, y) => y > 0.83 || Math.sin(y * 37) > 0.25 ? cat.accent : cat.color);
   const tailPoints = tailGeometry.getAttribute('position'), skinIndices: number[] = [], skinWeights: number[] = [];
   for (let i = 0; i < tailPoints.count; i++) {
     const along = THREE.MathUtils.clamp(tailPoints.getY(i) / 0.18, 0, 4), a = Math.floor(along), weight = along - a;

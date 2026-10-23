@@ -18,6 +18,9 @@ export const TOOLS: readonly ToolDefinition[] = [
 export const TOOL_BY_ID = Object.fromEntries(TOOLS.map(t => [t.id, t])) as Record<ToolId, ToolDefinition>;
 export const PALETTE: readonly (Pick<CatDefinition, 'name' | 'color' | 'accent'> & Partial<Pick<CatDefinition, 'appearance'>>)[] = [
   { name: 'Choco', color: '#604239', accent: '#49312c', appearance: 'choco' },
+  { name: 'Latte', color: '#f8f4e9', accent: '#514944', appearance: 'latte' },
+  { name: '的的', color: '#727983', accent: '#3e4650', appearance: 'didi' },
+  { name: '小塞', color: '#d7a05b', accent: '#a96a2d', appearance: 'xiaosai' },
   { name: 'Miso', color: '#9caeb7', accent: '#657e8b' },
   { name: 'Peaches', color: '#e7a59b', accent: '#bd7774' },
   { name: 'Tofu', color: '#e9e2d0', accent: '#b9b0a1' },
@@ -32,3 +35,4 @@ export const EFFICIENCY = [0, 1, 1.5, 2] as const;
 export const ATTACK_DAMAGE = 10;
 export const ATTACK_WARNING = 1;
 export const ATTACK_INTERVAL = 4;
+export const STRETCH_DURATION = 4.2;

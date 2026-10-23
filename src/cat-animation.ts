@@ -9,7 +9,7 @@ const cycle = (n: number, period = TAU) => ((n % period) + period) % period;
 const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
 
 interface Pose {
-  bodyY: number; bodyPitch: number; hipY: number;
+  bodyY: number; bodyZ: number; bodyPitch: number; hipY: number; frontHipDrop: number;
   headY: number; headZ: number; headPitch: number; headYaw: number; headRoll: number;
   tailPitch: number; tailCurl: number; tailSway: number;
   earBack: number; eyeOpen: number;
@@ -70,7 +70,7 @@ function crawlDirection(cat: CatState) {
 
 function targetPose(model: CatModel, cat: CatState, time: number, angry: boolean, happy: boolean): Pose {
   const p: Pose = {
-    bodyY: -0.04, bodyPitch: 0, hipY: 0.53,
+    bodyY: -0.04, bodyZ: 0, bodyPitch: 0, hipY: 0.53, frontHipDrop: 0,
     headY: -0.035, headZ: 0, headPitch: Math.sin(time * 0.63 + cat.id) * 0.018,
     headYaw: Math.sin(time * 0.48 + cat.id * 2) * 0.045, headRoll: 0,
     tailPitch: -0.48, tailCurl: 0.20, tailSway: Math.sin(time * 1.5 + cat.id) * 0.09,
@@ -105,6 +105,22 @@ function targetPose(model: CatModel, cat: CatState, time: number, angry: boolean
     });
   }
   switch (cat.activity) {
+    case 'stretching': {
+      // Reach, hold the bow, then unroll. The simulation owns progress and pause.
+      const progress = clamp(cat.pose);
+      const stretch = smooth(progress / 0.30) * (1 - smooth((progress - 0.70) / 0.30));
+      p.bodyPitch = 0.35 * stretch; p.bodyY -= 0.035 * stretch; p.bodyZ = -0.20 * stretch;
+      p.hipY += 0.015 * stretch; p.frontHipDrop = 0.24 * stretch;
+      p.headY -= 0.40 * stretch; p.headZ = 0.24 * stretch;
+      p.headPitch = lerp(p.headPitch, 0.15, stretch); p.headYaw *= 1 - stretch;
+      p.eyeOpen = lerp(p.eyeOpen, 0.06, stretch); p.earBack = 0.06 * stretch;
+      p.tailPitch = lerp(p.tailPitch, -0.25, stretch); p.tailCurl += 0.12 * stretch; p.tailSway *= 1 - stretch * 0.8;
+      p.feet.slice(0, 2).forEach(foot => {
+        foot.z += 0.43 * stretch;
+        foot.y += 0.025 * Math.sin(Math.PI * stretch) ** 2;
+      });
+      break;
+    }
     case 'jumping': {
       const tuck = Math.sin(clamp(cat.pose) * Math.PI);
       p.bodyPitch = -0.12 * Math.sin(clamp(cat.pose) * TAU);
@@ -267,7 +283,7 @@ export function animateCat(model: CatModel, cat: CatState, time: number, options
   state.current = p; state.lastTime = time;
   model.root.rotation.x = 0; model.root.rotation.z = 0;
   const breath = Math.sin(time * (cat.activity === 'sleeping' ? 1.8 : 2.4) + cat.id) * 0.006;
-  model.body.position.y = p.bodyY;
+  model.body.position.y = p.bodyY; model.body.position.z = p.bodyZ;
   model.body.rotation.set(p.bodyPitch, 0, 0); model.body.scale.set(1 + breath * 0.45, 1 + breath, 1);
   model.head.position.y = state.headRestY + p.headY + breath * 0.20;
   model.head.position.z = state.headRestZ + p.headZ;
@@ -278,8 +294,10 @@ export function animateCat(model: CatModel, cat: CatState, time: number, options
     model.closedEyes[i].visible = !eye.visible;
   });
   model.anger.visible = angry;
-  p.feet.forEach((foot, i) => placeFoot(model, i, p.hipY, foot.y, foot.z));
-  model.tail.position.y = 0.82 + p.bodyY;
+  p.feet.forEach((foot, i) => placeFoot(model, i, p.hipY - (i < 2 ? p.frontHipDrop : 0), foot.y, foot.z));
+  // Keep the tail attached to the rump as the torso bows or leans.
+  model.tail.position.y = 0.82 * Math.cos(p.bodyPitch) + 0.76 * Math.sin(p.bodyPitch) + p.bodyY;
+  model.tail.position.z = -0.76 * Math.cos(p.bodyPitch) + 0.82 * Math.sin(p.bodyPitch) + p.bodyZ;
   model.tail.rotation.set(p.tailPitch, 0, p.tailSway);
   model.tailJoints.forEach((joint, i) => {
     const follow = Math.sin(time * (angry ? 8 : 1.5) + cat.id - i * 0.38);

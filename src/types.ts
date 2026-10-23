@@ -4,14 +4,15 @@ export type Phase = 'title' | 'tutorial' | 'playing' | 'paused' | 'adoption' | '
 export interface BehaviorProfile { needRate: number; patience: number; }
 export interface CatDefinition {
   id: number; name: string; color: string; accent: string;
-  appearance: 'primitive' | 'choco'; behavior: BehaviorProfile;
+  appearance: 'primitive' | 'choco' | 'latte' | 'didi' | 'xiaosai'; behavior: BehaviorProfile;
 }
 export interface FloorPoint { x: number; z: number; }
-export type CatActivity = 'idle' | 'walking' | 'sniffing' | 'jumping' | 'crawling' | 'perching' | 'hiding' | 'watching' | 'sleeping' | 'grooming' | 'scratching' | 'eating' | 'playing';
+export type CatActivity = 'idle' | 'walking' | 'sniffing' | 'jumping' | 'crawling' | 'perching' | 'hiding' | 'watching' | 'sleeping' | 'grooming' | 'scratching' | 'eating' | 'playing' | 'stretching';
 export interface CatState extends CatDefinition {
   nextNeedAt: number; lastKind?: EventKind; happyUntil: number; attackUntil: number;
   position: FloorPoint; destination: FloorPoint; yaw: number; stride: number;
   activity: CatActivity; decisionAt: number;
+  nextStretchAt?: number; stretchStartedAt?: number;
   elevation: number; pose: number;
   visit?: import('./furniture').FurnitureVisit; lastFurniture?: string;
   pendingNeed?: EventKind;

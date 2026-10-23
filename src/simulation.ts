@@ -1,4 +1,4 @@
-import { ATTACK_DAMAGE, ATTACK_INTERVAL, ATTACK_WARNING, EFFICIENCY, PALETTE, ROOM, STAGES, TOOLS, TOOL_BY_ID } from './config';
+import { ATTACK_DAMAGE, ATTACK_INTERVAL, ATTACK_WARNING, EFFICIENCY, PALETTE, ROOM, STAGES, STRETCH_DURATION, TOOLS, TOOL_BY_ID } from './config';
 import type { CareEvent, CatDefinition, CatState, EventKind, Phase, ToolId } from './types';
 import { FURNITURE } from './furniture';
 import { beginVisit, tickVisit } from './cat-behavior';
@@ -67,6 +67,7 @@ export class Game {
       const starts = [{ x: 0, z: 1.2 }, { x: -2.2, z: -3.8 }, { x: 2.2, z: -4.4 }, { x: -2, z: 2.8 }, { x: 2, z: 3.2 }];
       cat.position = { ...starts[i] };
       cat.destination = { ...cat.position }; cat.activity = 'idle'; cat.decisionAt = this.clock + 0.6 + i * 0.3;
+      cat.stretchStartedAt = undefined; cat.nextStretchAt = this.clock + 12 + i * 3;
       cat.elevation = 0; cat.pose = 0; cat.visit = undefined; cat.lastFurniture = undefined; cat.pendingNeed = undefined;
     });
     this.revision++;
@@ -98,6 +99,7 @@ export class Game {
       createdAt: this.clock, deadline, nextAttackAt: deadline + ATTACK_WARNING, attacks: 0,
       position });
     cat.activity = 'sniffing'; cat.decisionAt = this.clock + 0.9;
+    cat.stretchStartedAt = undefined; cat.pose = 0;
     cat.lastKind = nextKind; this.revision++;
   }
 
@@ -132,14 +134,36 @@ export class Game {
   private moveCats(dt: number) {
     for (const cat of this.cats) {
       const need = this.events.find(e => e.catId === cat.id);
-      if (cat.visit) { tickVisit(cat, this.clock, dt, this.cats); continue; }
+      if (cat.visit) { cat.stretchStartedAt = undefined; tickVisit(cat, this.clock, dt, this.cats); continue; }
       // Bowls and play stay reachable. Cleaning messes remain behind as the cat wanders.
       const waiting = need && (need.kind === 'hunger' || need.kind === 'boredom');
       if (waiting || cat.attackUntil > this.clock) {
+        cat.stretchStartedAt = undefined; cat.pose = 0;
         cat.activity = need?.kind === 'hunger' ? (need.progress > 0 ? 'eating' : 'sniffing') : need?.kind === 'boredom' ? 'playing' : 'idle';
         const turn = Math.atan2(Math.sin(-cat.yaw), Math.cos(-cat.yaw));
         cat.yaw += turn * Math.min(1, dt * 4);
         continue;
+      }
+      if (cat.activity === 'stretching') {
+        cat.stretchStartedAt ??= this.clock;
+        cat.pose = Math.min(1, (this.clock - cat.stretchStartedAt) / STRETCH_DURATION);
+        if (cat.pose >= 1) {
+          cat.activity = 'idle'; cat.pose = 0; cat.stretchStartedAt = undefined;
+          cat.decisionAt = this.clock + 0.7;
+        }
+        continue;
+      }
+      // Stretch only during an unhurried floor pause, with room to reach forward.
+      if (!need && cat.elevation === 0 && (cat.activity === 'idle' || cat.activity === 'sniffing')
+        && this.clock >= (cat.nextStretchAt ?? Infinity) && cat.nextNeedAt > this.clock + STRETCH_DURATION) {
+        const reach = { x: cat.position.x + Math.sin(cat.yaw) * 0.7, z: cat.position.z + Math.cos(cat.yaw) * 0.7 };
+        const clear = reach.x > ROOM.minX && reach.x < ROOM.maxX && reach.z > ROOM.minZ && reach.z < ROOM.maxZ
+          && this.cats.every(other => other === cat || other.elevation > 0.3 || Math.hypot(other.position.x - reach.x, other.position.z - reach.z) > 0.65);
+        if (clear) {
+          cat.activity = 'stretching'; cat.stretchStartedAt = this.clock; cat.pose = 0;
+          cat.destination = { ...cat.position }; cat.nextStretchAt = this.clock + this.movementRandom.between(28, 44);
+          continue;
+        }
       }
       if (cat.activity !== 'walking' && this.clock >= cat.decisionAt) {
         if (!need && cat.nextNeedAt > this.clock + 2 && this.movementRandom.next() < 0.8) {
@@ -217,7 +241,8 @@ export class Game {
     if (this.stage === STAGES.length - 1) { this.phase = 'victory'; this.revision++; return; }
     this.hp = Math.min(100, this.hp + 20);
     const available = PALETTE.filter(p => !this.cats.some(c => c.color === p.color));
-    const first = this.random.choose(available);
+    const featured = this.stage === 0 ? 'latte' : this.stage === 1 ? 'didi' : this.stage === 2 ? 'xiaosai' : undefined;
+    const first = available.find(p => featured !== undefined && p.appearance === featured) ?? this.random.choose(available);
     const second = this.random.choose(available.filter(p => p !== first));
     this.candidates = [first, second].map(p => this.makeCat(p, this.cats.length));
     this.phase = 'adoption'; this.revision++;
