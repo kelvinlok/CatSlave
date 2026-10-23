@@ -10,8 +10,8 @@ async function start(page: Page) {
   await page.evaluate(() => window.__CATSLAVE_TEST__.setManualClock(true)); await tap(page, 'start');
 }
 async function camera(page: Page) { return page.evaluate(() => window.__CATSLAVE_TEST__.world.camera.quaternion.toArray()); }
-async function sample(page: Page, beta: number, gamma: number) {
-  await page.evaluate(({ beta, gamma }) => window.dispatchEvent(Object.assign(new Event('deviceorientation'), { beta, gamma })), { beta, gamma });
+async function sample(page: Page, beta: number, gamma: number, alpha = 0) {
+  await page.evaluate(({ alpha, beta, gamma }) => window.dispatchEvent(Object.assign(new Event('deviceorientation'), { alpha, beta, gamma })), { alpha, beta, gamma });
 }
 async function sensor(page: Page, permission: string) {
   await page.addInitScript(permission => {
@@ -149,6 +149,35 @@ test('gyro is opt-in, calibrates, pauses during touch and pause, and disables', 
   await tap(page, 'resume'); await tap(page, 'view:gyro');
   expect(await page.evaluate(() => window.__CATSLAVE_TEST__.hud.gyroStatus)).toBe('off');
   const off = await camera(page); await sample(page, 80, -30); await page.waitForTimeout(150); expect(await camera(page)).toEqual(off);
+});
+
+test('gyro follows phone heading without drift, preserves pose through zoom/resize, and Reset recovers', async ({ page }) => {
+  await sensor(page, 'granted'); await start(page);
+  const original = await camera(page);
+  const position = await page.evaluate(() => window.__CATSLAVE_TEST__.world.camera.position.toArray());
+  const distance = async (reference: number[]) => page.evaluate(reference => {
+    const q = window.__CATSLAVE_TEST__.world.camera.quaternion.toArray();
+    return 2 * Math.acos(Math.min(1, Math.abs(q.reduce((sum, v, i) => sum + v * reference[i], 0))));
+  }, reference);
+  await tap(page, 'view:gyro'); await sample(page, 90, 0);
+  await expect.poll(() => page.evaluate(() => window.__CATSLAVE_TEST__.hud.gyroStatus)).toBe('on');
+  await page.waitForTimeout(100);
+  await sample(page, 90, 0, 120);
+  await expect.poll(() => distance(original)).toBeCloseTo(2 * Math.PI / 3, 5);
+  const turned = await camera(page);
+  for (let i = 0; i < 5; i++) { await sample(page, 90, 0, 120); await page.waitForTimeout(100); }
+  expect(await distance(turned)).toBeLessThan(0.00001);
+  await tap(page, 'view:in');
+  await page.evaluate(() => window.dispatchEvent(new Event('resize')));
+  expect(await distance(turned)).toBeLessThan(0.00001);
+  await sample(page, 90, 0);
+  await expect.poll(() => distance(original)).toBeLessThan(0.00001);
+  await sample(page, 90, 0, 120); await expect.poll(() => distance(original)).toBeCloseTo(2 * Math.PI / 3, 5);
+  await tap(page, 'view:reset'); await sample(page, 90, 0, 120);
+  await expect.poll(() => distance(original)).toBeLessThan(0.00001);
+  await sample(page, 90, 0, 150);
+  await expect.poll(() => distance(original)).toBeCloseTo(Math.PI / 6, 5);
+  expect(await page.evaluate(() => window.__CATSLAVE_TEST__.world.camera.position.toArray())).toEqual(position);
 });
 
 test('denied gyro permission leaves swipe controls usable', async ({ page }) => {

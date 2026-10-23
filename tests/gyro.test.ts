@@ -1,8 +1,10 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { GyroLook } from '../src/gyro';
+import { Euler, MathUtils, Quaternion, Vector3 } from 'three';
 
 let target: EventTarget;
 let gyro: GyroLook;
+let currentView: Quaternion;
 beforeEach(() => {
   vi.useFakeTimers(); target = new EventTarget();
   vi.stubGlobal('window', {
@@ -12,26 +14,72 @@ beforeEach(() => {
     removeEventListener: target.removeEventListener.bind(target),
     setTimeout,
   });
-  gyro = new GyroLook(() => {});
+  currentView = new Quaternion();
+  gyro = new GyroLook(() => {}, () => currentView);
 });
 afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); });
-function sample(beta: number | null, gamma: number | null) {
-  target.dispatchEvent(Object.assign(new Event('deviceorientation'), { beta, gamma }));
+function sample(beta: number | null, gamma: number | null, alpha: number | null = 0) {
+  target.dispatchEvent(Object.assign(new Event('deviceorientation'), { alpha, beta, gamma }));
 }
 
-it('calibrates to the first valid pose and ignores noise inside the dead zone', async () => {
+function expectPose(actual: Quaternion | undefined, expected: Quaternion) {
+  expect(actual).toBeDefined();
+  expect(Math.abs(actual!.dot(expected))).toBeCloseTo(1, 10);
+}
+
+it('tracks phone heading one-to-one, holds still, and returns to the starting view', async () => {
   await gyro.toggle(); sample(null, 0); sample(NaN, 0); expect(gyro.status).toBe('waiting');
-  sample(45, 10); expect(gyro.status).toBe('on'); expect(gyro.step(0.1, true)).toEqual({ x: 0, y: 0 });
-  sample(48, 13); expect(gyro.step(0.1, true)).toEqual({ x: 0, y: 0 });
-  sample(45, 35); expect(gyro.step(0.1, true).x).toBeGreaterThan(0);
-  gyro.step(0.1, false); expect(gyro.step(0.1, true)).toEqual({ x: 0, y: 0 });
+  sample(90, 0, null); expect(gyro.status).toBe('waiting');
+  const original = new Quaternion().setFromEuler(new Euler(-0.17, 0, 0, 'YXZ'));
+  currentView.copy(original);
+  sample(90, 0); expect(gyro.status).toBe('on'); expectPose(gyro.step(original, true), original);
+  sample(90, 0, 120);
+  const turned = original.clone().multiply(new Quaternion().setFromAxisAngle(new Vector3(0, 1, 0), MathUtils.degToRad(120)));
+  expectPose(gyro.step(original, true), turned);
+  for (let i = 0; i < 300; i++) { sample(90, 0, 120); expectPose(gyro.step(turned, true), turned); }
+  sample(90, 0); expectPose(gyro.step(turned, true), original);
 });
 
-it('handles angle wrapping and recalibration without a sudden full-speed turn', async () => {
-  await gyro.toggle(); sample(179, 0); sample(-179, 0);
-  expect(gyro.step(0.1, true).y).toBe(0);
-  sample(-150, 0); expect(gyro.step(0.1, true).y).toBeGreaterThan(0);
-  gyro.recenter(); expect(gyro.step(0.1, true).y).toBe(0);
+it('anchors the first reading even when the phone moves before the next rendered frame', async () => {
+  await gyro.toggle(); sample(90, 0); sample(90, 0, 30);
+  expectPose(gyro.step(currentView, true), new Quaternion().setFromAxisAngle(new Vector3(0, 1, 0), Math.PI / 6));
+});
+
+it('looks up and rolls with the phone without limiting the viewing direction', async () => {
+  const original = new Quaternion(); await gyro.toggle(); sample(90, 0); gyro.step(original, true);
+  sample(150, 0);
+  expectPose(gyro.step(original, true), new Quaternion().setFromAxisAngle(new Vector3(1, 0, 0), Math.PI / 3));
+  // With the phone flat, changing alpha rotates about the viewing axis (roll).
+  sample(0, 0); gyro.recenter(); gyro.step(original, true);
+  sample(0, 0, 30);
+  expectPose(gyro.step(original, true), new Quaternion().setFromAxisAngle(new Vector3(0, 0, 1), Math.PI / 6));
+});
+
+it('crosses heading wrap smoothly and Reset anchors the current phone pose to the new gaze', async () => {
+  const original = new Quaternion(); await gyro.toggle(); sample(90, 0, 359); gyro.step(original, true);
+  sample(90, 0, 1);
+  expectPose(gyro.step(original, true), new Quaternion().setFromAxisAngle(new Vector3(0, 1, 0), MathUtils.degToRad(2)));
+  const reset = new Quaternion().setFromEuler(new Euler(-0.17, 0, 0, 'YXZ'));
+  gyro.recenter(reset);
+  sample(90, 0, 31);
+  expectPose(gyro.step(reset, true), reset.clone().multiply(new Quaternion().setFromAxisAngle(new Vector3(0, 1, 0), Math.PI / 6)));
+});
+
+it('freezes during touch, pause and stale data without losing the original reference', async () => {
+  const original = new Quaternion(); await gyro.toggle(); sample(90, 0); gyro.step(original, true);
+  sample(90, 0, 45); expect(gyro.step(original, false)).toBeUndefined();
+  const turned = gyro.step(original, true)!.clone();
+  vi.spyOn(performance, 'now').mockReturnValue(performance.now() + 1000);
+  expect(gyro.step(turned, true)).toBeUndefined();
+  sample(90, 0); expectPose(gyro.step(turned, true), original);
+  vi.restoreAllMocks();
+});
+
+it('compensates for screen rotation so landscape and portrait agree on forward', async () => {
+  const original = new Quaternion(); await gyro.toggle(); sample(90, 0); gyro.step(original, true);
+  Object.assign(window, { screen: { orientation: { angle: 90 } } });
+  // Same physical forward ray, phone rotated to landscape.
+  sample(0, -90, 90); expectPose(gyro.step(original, true), original);
 });
 
 it('stops listening when disabled and handles missing sensor data', async () => {

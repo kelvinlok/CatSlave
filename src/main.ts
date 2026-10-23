@@ -36,7 +36,7 @@ const game = new Game(import.meta.env.MODE === 'test' ? 42 : undefined);
 const world = new World();
 const hud = new Hud();
 const gesture = new Gesture();
-const gyro = new GyroLook(() => { hud.gyroStatus = gyro.status; hud.invalidate(); });
+const gyro = new GyroLook(() => { hud.gyroStatus = gyro.status; hud.invalidate(); }, () => world.camera.quaternion);
 let pointerId: number | undefined;
 let contextLost = false;
 let previousPhase = game.phase;
@@ -66,7 +66,6 @@ function safeInsets() {
 }
 function resize() {
   cancelGesture();
-  gyro.recenter();
   const visible = window.visualViewport;
   const viewport = portraitViewport({ x: visible?.offsetLeft ?? 0, y: visible?.offsetTop ?? 0,
     w: Math.round(Math.min(innerWidth, visible?.width ?? innerWidth)), h: Math.round(Math.min(innerHeight, visible?.height ?? innerHeight)) }, matchMedia('(pointer: coarse)').matches);
@@ -93,7 +92,7 @@ function renderFrame() {
 }
 function action(id: string) {
   cancelGesture();
-  if (['learn', 'start', 'restart', 'home'].includes(id)) { world.resetView(); gyro.recenter(); }
+  if (['learn', 'start', 'restart', 'home'].includes(id)) { world.resetView(); gyro.recenter(world.camera.quaternion); }
   if (id === 'learn') { game.reset(true); }
   else if (id === 'start' || id === 'restart') { game.reset(); }
   else if (id === 'home') { game.reset(); game.phase = 'title'; }
@@ -105,16 +104,16 @@ function action(id: string) {
   else if (id.startsWith('upgrade:')) { game.upgrade(id.slice(8) as ToolId); }
   else if (game.active && id === 'view:in') world.zoomView(0.2);
   else if (game.active && id === 'view:out') world.zoomView(-0.2);
-  else if (game.active && id === 'view:reset') { world.resetView(); gyro.recenter(); }
+  else if (game.active && id === 'view:reset') { world.resetView(); gyro.recenter(world.camera.quaternion); }
   else if (game.active && id === 'view:gyro') void gyro.toggle();
   else if (game.active && id.startsWith('focus:')) {
     const care = game.events.find(e => e.id === Number(id.slice(6)));
-    if (care) { world.focusOn(world.eventPosition(care)); gyro.recenter(); }
+    if (care) { world.focusOn(world.eventPosition(care)); gyro.recenter(world.camera.quaternion); }
   }
   hud.invalidate();
 }
 function applyGesture(result: GestureResult) {
-  if (result.look && game.active) world.lookView(result.look.x, result.look.y);
+  if (result.look && game.active) { world.lookView(result.look.x, result.look.y); gyro.recenter(world.camera.quaternion); }
   if (result.eventId !== undefined && result.work) {
     game.work(result.eventId, result.work);
     if (!game.events.some(e => e.id === result.eventId)) cancelGesture();
@@ -219,13 +218,13 @@ function frame(now: number) {
       if (game.phase === 'adoption' || game.phase === 'victory' || (game.phase === 'playing' && previousPhase === 'upgrade')) {
         // The two adoption previews need a wider frame than active play.
         world.resetView(game.phase === 'adoption' ? Math.min(1, world.camera.aspect / 0.65) : 1.65);
-        gyro.recenter();
+        gyro.recenter(world.camera.quaternion);
       }
       previousPhase = game.phase;
     }
     if (previousRevision !== game.revision) { hud.invalidate(); previousRevision = game.revision; }
-    const tilt = gyro.step(dt, game.active && !hud.rotateRequired && !document.hidden && pointerId === undefined);
-    if (tilt.x || tilt.y) { world.lookView(tilt.x, tilt.y); hud.invalidate(); }
+    const gaze = gyro.step(world.camera.quaternion, game.active && !hud.rotateRequired && !document.hidden && pointerId === undefined);
+    if (gaze && 1 - Math.abs(gaze.dot(world.camera.quaternion)) > 1e-12) { world.setViewOrientation(gaze); hud.invalidate(); }
     world.update(game, dt, now / 1000, manualClock ? 0 : dt); hud.draw(game, world, dt);
     renderFrame();
     fpsFrames++; fpsTime += realDt;

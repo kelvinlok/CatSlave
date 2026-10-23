@@ -175,16 +175,26 @@ export class World {
     this.camera.position.set(0, 1.65, 5.8);
     this.camera.fov = 65;
     this.attackCamera.aspect = width / height; this.attackCamera.updateProjectionMatrix();
+    const firstResize = !this.viewReady;
     this.viewReady = true;
-    this.applyView();
+    if (firstResize) this.applyView();
+    else this.applyProjection();
   }
   private applyView() {
     if (!this.viewReady) return;
     this.viewYaw = THREE.MathUtils.clamp(this.viewYaw, -Math.PI * 5 / 12, Math.PI * 5 / 12);
     this.viewPitch = THREE.MathUtils.clamp(this.viewPitch, -Math.PI / 9, Math.PI * 13 / 36);
     this.camera.rotation.set(-this.viewPitch, -this.viewYaw, 0, 'YXZ');
+    this.applyProjection();
+  }
+  private applyProjection() {
     this.camera.zoom = this.viewZoom;
     this.camera.updateProjectionMatrix(); this.camera.updateMatrixWorld();
+  }
+  setViewOrientation(orientation: THREE.Quaternion) {
+    this.camera.quaternion.copy(orientation);
+    this.camera.updateMatrixWorld();
+    this.viewYaw = -this.camera.rotation.y; this.viewPitch = -this.camera.rotation.x;
   }
   lookView(dx: number, dy: number) {
     const radians = THREE.MathUtils.degToRad(100) / Math.max(1, Math.min(this.viewport.w, this.viewport.h)) / this.viewZoom;
@@ -192,7 +202,7 @@ export class World {
     this.applyView();
   }
   zoomView(delta: number) {
-    this.viewZoom = THREE.MathUtils.clamp(this.viewZoom + delta, 1, 2.5); this.applyView();
+    this.viewZoom = THREE.MathUtils.clamp(this.viewZoom + delta, 1, 2.5); this.applyProjection();
   }
   resetView(zoom = 1.65) { this.viewYaw = 0; this.viewPitch = Math.atan2(1.2, 7); this.viewZoom = zoom; this.applyView(); }
   focusOn(position: THREE.Vector3) {

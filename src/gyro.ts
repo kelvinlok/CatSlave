@@ -1,18 +1,28 @@
-/** Optional tilt-to-look. Sensor permission is requested only from the Gyro button. */
+import { Euler, MathUtils, Quaternion, Vector3 } from 'three';
+
+/** Optional phone-as-viewpoint tracking. Permission is requested only from the Gyro button. */
 export class GyroLook {
   status: 'off' | 'waiting' | 'on' | 'denied' | 'unavailable' = 'off';
-  private origin?: { beta: number; gamma: number };
-  private latest?: { beta: number; gamma: number };
-  private velocity = { x: 0, y: 0 };
+  private alignment?: Quaternion;
+  private latest?: { alpha: number; beta: number; gamma: number };
+  private euler = new Euler(0, 0, 0, 'YXZ');
+  private phone = new Quaternion();
+  private screenRotation = new Quaternion();
+  private screenAxis = new Vector3(0, 0, 1);
+  private backOfPhone = new Quaternion(-Math.SQRT1_2, 0, 0, Math.SQRT1_2);
+  private gaze = new Quaternion();
   private timer?: number;
   private lastSample = 0;
   private request = 0;
-  constructor(private changed: () => void) {}
+  constructor(private changed: () => void, private currentView: () => Quaternion) {}
   private receive = (event: DeviceOrientationEvent) => {
-    if (event.beta === null || event.gamma === null || !Number.isFinite(event.beta) || !Number.isFinite(event.gamma)) return;
-    this.latest = { beta: event.beta, gamma: event.gamma }; this.lastSample = performance.now();
-    this.origin ??= this.latest;
-    if (this.status === 'waiting') { clearTimeout(this.timer); this.status = 'on'; this.changed(); }
+    if (![event.alpha, event.beta, event.gamma].every(value => typeof value === 'number' && Number.isFinite(value))) return;
+    this.latest = { alpha: event.alpha!, beta: event.beta!, gamma: event.gamma! }; this.lastSample = performance.now();
+    if (this.status === 'waiting') {
+      clearTimeout(this.timer); this.status = 'on';
+      // The first reading is neutral even if several readings precede the next frame.
+      this.recenter(this.currentView()); this.changed();
+    } else if (!this.alignment) this.step(this.currentView(), true);
   };
   async toggle() {
     if (this.status === 'on' || this.status === 'waiting') { this.stop('off'); return; }
@@ -35,19 +45,22 @@ export class GyroLook {
     window.removeEventListener('deviceorientation', this.receive); clearTimeout(this.timer);
     this.status = status; this.latest = undefined; this.recenter(); this.changed();
   }
-  recenter() { this.origin = undefined; this.velocity = { x: 0, y: 0 }; }
-  step(dt: number, active: boolean) {
-    if (!active || this.status !== 'on' || !this.latest || performance.now() - this.lastSample > 500) {
-      this.origin = this.latest; this.velocity = { x: 0, y: 0 }; return this.velocity;
-    }
-    this.origin ??= this.latest;
-    const speed = (angle: number) => {
-      const delta = ((angle + 540) % 360) - 180;
-      return Math.sign(delta) * Math.min(1, Math.max(0, Math.abs(delta) - 4) / 20) * 180;
-    };
-    const blend = 1 - Math.exp(-dt * 10);
-    this.velocity.x += (speed(this.latest.gamma - this.origin.gamma) - this.velocity.x) * blend;
-    this.velocity.y += (speed(this.latest.beta - this.origin.beta) - this.velocity.y) * blend;
-    return { x: this.velocity.x * dt, y: this.velocity.y * dt };
+  recenter(current?: Quaternion) {
+    this.alignment = undefined;
+    // Anchor button/swipe actions immediately, before a newer sensor sample arrives.
+    if (current) this.step(current, true);
+  }
+  step(current: Quaternion, active: boolean): Quaternion | undefined {
+    if (!active || this.status !== 'on' || !this.latest || performance.now() - this.lastSample > 500) return;
+    const { alpha, beta, gamma } = this.latest;
+    // Device Z-X'-Y'' angles become a camera looking out through the phone's back.
+    this.euler.set(MathUtils.degToRad(beta), MathUtils.degToRad(alpha), -MathUtils.degToRad(gamma), 'YXZ');
+    const screenAngle = window.screen?.orientation?.angle ?? window.orientation ?? 0;
+    this.phone.setFromEuler(this.euler).multiply(this.backOfPhone)
+      .multiply(this.screenRotation.setFromAxisAngle(this.screenAxis, -MathUtils.degToRad(screenAngle)));
+    // Keep this reference through pauses and missing samples: never integrate tilt or
+    // silently redefine neutral, so returning the phone also returns the same gaze.
+    this.alignment ??= current.clone().multiply(this.phone.clone().invert());
+    return this.gaze.copy(this.alignment).multiply(this.phone).normalize();
   }
 }
