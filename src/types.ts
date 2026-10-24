@@ -1,6 +1,6 @@
-export type ToolId = 'sweeper' | 'mop' | 'brush' | 'food' | 'toy';
+export type ToolId = 'sweeper' | 'mop' | 'brush' | 'food' | 'toy' | 'vacuum';
 export type EventKind = 'poop' | 'vomit' | 'fur' | 'hunger' | 'boredom';
-export type Phase = 'title' | 'tutorial' | 'playing' | 'paused' | 'adoption' | 'upgrade' | 'game-over' | 'victory';
+export type Phase = 'title' | 'tutorial' | 'playing' | 'bonus' | 'paused' | 'adoption' | 'upgrade' | 'game-over' | 'victory';
 export interface BehaviorProfile { needRate: number; patience: number; }
 export interface CatDefinition {
   id: number; name: string; color: string; accent: string;
@@ -23,7 +23,8 @@ export interface CareEvent {
   position: FloorPoint;
 }
 export interface ToolDefinition {
-  id: ToolId; name: string; need: EventKind; label: string; instruction: string;
+  id: ToolId; name: string; need: EventKind;
+  needs?: readonly EventKind[];
   gesture: 'sweep' | 'rub' | 'tap' | 'pour' | 'hold' | 'drag'; color: string; work: number;
 }
 export interface StageConfig { duration: number; cats: number; delay: readonly [number, number]; patience: number; }

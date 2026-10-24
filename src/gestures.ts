@@ -13,11 +13,13 @@ export class Gesture {
   private dragTime = 0;
   private travel = 0;
   private shortEdge = 1;
+  private wasInTarget = true;
   route?: GestureRoute;
   begin(point: Point, time: number, shortEdge: number, route: GestureRoute) {
     this.start = point; this.previous = point; this.lastTime = time;
     this.distance = 0; this.dragTime = 0; this.travel = 0;
     this.shortEdge = Math.max(1, shortEdge); this.route = route;
+    this.wasInTarget = true;
   }
   move(point: Point, time: number, inTarget: boolean): GestureResult {
     const result = empty();
@@ -37,8 +39,14 @@ export class Gesture {
       } else if (route.tool.gesture === 'drag') {
         this.dragTime += seconds;
         result.work = this.dragTime; this.dragTime = 0;
+      } else if (route.tool.gesture === 'hold' && this.wasInTarget) {
+        // A moving wand earns up to twice the base hold rate in bonus work.
+        // Both endpoints must be inside; jumps and duplicate timestamps cannot
+        // turn leaving/re-entering the arch into instant care.
+        result.work = Math.min(distance / this.shortEdge * 6, seconds * 2);
       }
     }
+    this.wasInTarget = inTarget;
     this.previous = point; this.lastTime = time; return result;
   }
   end(point: Point, targetId?: string, inTarget = true): GestureResult {

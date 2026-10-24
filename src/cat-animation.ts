@@ -27,6 +27,7 @@ interface Attention {
 }
 interface AnimationOptions {
   angry?: boolean; happy?: boolean;
+  buttPat?: { lift: number; side: number };
   /** Lure position in world space; independent of the model's render transform. */
   focus?: { x: number; y: number; z: number };
   engagement?: number;
@@ -263,8 +264,18 @@ function placeFoot(model: CatModel, i: number, hipY: number, y: number, z: numbe
 /** Evaluate from simulation time, so pause/repeated renders never advance or drift. */
 export function animateCat(model: CatModel, cat: CatState, time: number, options: AnimationOptions = {}) {
   const angry = options.angry ?? false, happy = options.happy ?? false;
-  const key = `${cat.activity}:${angry}:${happy}`;
+  const key = `${cat.activity}:${angry}:${happy}:${!!options.buttPat}`;
   const target = targetPose(model, cat, time, angry, happy);
+  if (options.buttPat) {
+    const lift = options.buttPat.lift;
+    target.bodyY = 0.02 + lift * 0.055; target.bodyZ = 0; target.bodyPitch = 0.03 + lift * 0.16;
+    // Extend the rear legs within their reach so the paws stay planted.
+    target.hipY = 0.53 + lift * 0.035; target.frontHipDrop = lift * 0.035;
+    target.headY = 0.24 + lift * 0.05; target.headZ = -0.10;
+    target.headYaw = options.buttPat.side * 2.55; target.headPitch = -0.06; target.headRoll = options.buttPat.side * 0.1;
+    target.tailPitch = -0.9; target.tailCurl = 0.45; target.tailSway = options.buttPat.side * 0.48;
+    target.feet = Array.from({ length: 4 }, () => ({ y: 0.07, z: 0.085 }));
+  }
   let state = states.get(model);
   const headRestY = state?.headRestY ?? model.head.position.y;
   const headRestZ = state?.headRestZ ?? model.head.position.z;
@@ -286,11 +297,13 @@ export function animateCat(model: CatModel, cat: CatState, time: number, options
   model.body.position.y = p.bodyY; model.body.position.z = p.bodyZ;
   model.body.rotation.set(p.bodyPitch, 0, 0); model.body.scale.set(1 + breath * 0.45, 1 + breath, 1);
   model.head.position.y = state.headRestY + p.headY + breath * 0.20;
+  model.head.position.x = options.buttPat ? options.buttPat.side * 0.24 : 0;
   model.head.position.z = state.headRestZ + p.headZ;
   model.head.rotation.set(p.headPitch, p.headYaw, p.headRoll);
   model.eyes.forEach((eye, i) => {
     eye.scale.y = model.eyeHeight * Math.max(0.04, p.eyeOpen);
-    eye.visible = p.eyeOpen > 0.08;
+    // Use the readable curved lid for happy squints as well as full blinks.
+    eye.visible = p.eyeOpen > 0.2;
     model.closedEyes[i].visible = !eye.visible;
   });
   model.anger.visible = angry;

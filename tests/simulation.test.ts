@@ -1,12 +1,16 @@
 import { describe, expect, it } from 'vitest';
 import { Game, Random } from '../src/simulation';
 import { STAGES, TOOLS } from '../src/config';
+import { winBonus } from './support/bonus';
 
 function active(seed = 42) { const game = new Game(seed); game.reset(); return game; }
 function completeAll(game: Game) {
   for (const event of [...game.events]) { game.select(TOOLS.find(t => t.need === event.kind)!.id); game.work(event.id, 100); }
 }
-function survive(game: Game) { while (game.phase === 'playing') { completeAll(game); game.tick(0.5); } }
+function survive(game: Game) { while (game.phase === 'playing') { completeAll(game); game.tick(0.5); } winBonus(game); }
+function spendUpgrades(game: Game) {
+  while (game.phase === 'upgrade') game.upgrade(TOOLS.find(tool => game.levels[tool.id] < 3)!.id);
+}
 
 describe('simulation', () => {
   it('uses a reproducible random stream', () => {
@@ -16,7 +20,7 @@ describe('simulation', () => {
   it('keeps at most one unresolved need per cat and staggers initial needs', () => {
     const game = active(); game.tick(2); expect(game.events).toHaveLength(1);
     game.spawn(game.cats[0]); game.tick(3); expect(game.events).toHaveLength(1);
-    survive(game); game.adopt(game.candidates[0].id); game.upgrade('food');
+    survive(game); game.adopt(game.candidates[0].id); spendUpgrades(game);
     game.tick(1.6); expect(game.events).toHaveLength(1);
     game.tick(1.1); expect(game.events).toHaveLength(2);
   });
@@ -60,7 +64,9 @@ describe('simulation', () => {
     const clock = game.clock; game.tick(50); expect(game.clock).toBe(clock);
   });
   it('adopts exactly one cat, upgrades once, and starts the next stage', () => {
-    const game = active(); survive(game);
+    const game = active();
+    game.spawn(game.cats[0], 'poop'); game.tick(23); completeAll(game); survive(game);
+    expect(game.lastStagePerfect).toBe(false); expect(game.upgradesRemaining).toBe(1);
     const id = game.candidates[0].id; game.adopt(id); game.adopt(id);
     expect(game.cats).toHaveLength(2); expect(game.phase).toBe('upgrade');
     game.upgrade('food'); expect(game.levels.food).toBe(2); expect(game.stage).toBe(1);
@@ -69,14 +75,51 @@ describe('simulation', () => {
     expect(game.events[0].progress).toBe(0.75);
   });
   it('limits upgrades to level 3', () => {
-    const game = active(); game.phase = 'upgrade'; game.levels.food = 3;
+    const game = active(); game.phase = 'upgrade'; game.upgradesRemaining = 1; game.levels.food = 3;
     game.upgrade('food'); expect(game.phase).toBe('upgrade'); expect(game.levels.food).toBe(3);
+    expect(game.upgradesRemaining).toBe(1);
+  });
+  it('awards two picks after winning the perfect-stage bonus and waits for both', () => {
+    const game = active();
+    game.cats[0].nextNeedAt = Infinity; game.tick(game.timeLeft);
+    expect(game.phase).toBe('bonus'); expect(game.upgradesRemaining).toBe(1); winBonus(game);
+    expect(game.lastStagePerfect).toBe(true); expect(game.upgradesRemaining).toBe(2);
+    game.adopt(game.candidates[0].id);
+    const clock = game.clock;
+    game.upgrade('toy');
+    expect(game.phase).toBe('upgrade'); expect(game.stage).toBe(0); expect(game.upgradesRemaining).toBe(1);
+    game.tick(100); expect(game.clock).toBe(clock);
+    game.upgrade('toy');
+    expect(game.levels.toy).toBe(3); expect(game.phase).toBe('playing'); expect(game.stage).toBe(1);
+    expect(game.upgradesRemaining).toBe(0);
+    game.upgrade('food'); expect(game.levels.food).toBe(1);
+    game.reset(true); expect(game.lastStagePerfect).toBe(false); expect(game.upgradesRemaining).toBe(0);
+  });
+  it('awards perfection without HP loss even when the timer cuts off unfinished care', () => {
+    const game = active();
+    game.spawn(game.cats[0], 'poop'); game.tick(23); completeAll(game);
+    game.cats[0].nextNeedAt = Infinity; game.tick(game.timeLeft);
+    expect(game.lastStagePerfect).toBe(false); expect(game.upgradesRemaining).toBe(1);
+    game.adopt(game.candidates[0].id); spendUpgrades(game);
+    game.hp = 70;
+    game.cats.forEach(cat => cat.nextNeedAt = Infinity); game.tick(game.timeLeft);
+    expect(game.phase).toBe('bonus'); expect(game.upgradesRemaining).toBe(1); winBonus(game);
+    expect(game.lastStagePerfect).toBe(true); expect(game.upgradesRemaining).toBe(2);
+    expect(game.hp).toBe(90);
+    game.adopt(game.candidates[0].id); spendUpgrades(game);
+    game.cats.forEach(cat => cat.nextNeedAt = Infinity);
+    game.stageElapsed = game.config.duration - 0.1; game.spawn(game.cats[0], 'hunger');
+    game.select('food'); game.work(game.events[0].id, 0.5);
+    expect(game.events[0].progress).toBeGreaterThan(0); expect(game.events[0].progress).toBeLessThan(1);
+    game.tick(0.1);
+    expect(game.lastStagePerfect).toBe(true); expect(game.phase).toBe('bonus'); expect(game.upgradesRemaining).toBe(1);
+    expect(game.events).toHaveLength(0);
   });
   it('finishes five stages with five cats and never offers a sixth', () => {
     const game = active();
     for (let stage = 0; stage < STAGES.length; stage++) {
       survive(game);
-      if (stage < 4) { game.adopt(game.candidates[0].id); game.upgrade(TOOLS[stage].id); }
+      if (stage < 4) { game.adopt(game.candidates[0].id); spendUpgrades(game); }
     }
     expect(game.phase).toBe('victory'); expect(game.stagesSurvived).toBe(5); expect(game.cats).toHaveLength(5); expect(game.events).toHaveLength(0);
   });

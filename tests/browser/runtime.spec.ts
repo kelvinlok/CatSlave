@@ -78,8 +78,8 @@ test('keeps controls in bounds, care targets separate, and resources bounded', a
   await page.evaluate(() => {
     const t = window.__CATSLAVE_TEST__; t.game.reset();
     for (const tool of ['sweeper', 'mop', 'brush', 'food'] as const) {
-      t.game.cats.forEach(c => { c.nextNeedAt = Infinity; }); t.game.tick(t.game.timeLeft);
-      t.game.adopt(t.game.candidates[0].id); t.game.upgrade(tool);
+      t.game.cats.forEach(c => { c.nextNeedAt = Infinity; }); t.game.tick(t.game.timeLeft); t.finishBonus();
+      t.game.adopt(t.game.candidates[0].id); t.game.upgrade(tool); t.game.upgrade(tool);
     }
     t.game.cats.forEach((cat, i) => t.game.spawn(cat, (['poop', 'vomit', 'fur', 'hunger', 'boredom'] as const)[i])); t.game.tick(2); t.refresh();
   });

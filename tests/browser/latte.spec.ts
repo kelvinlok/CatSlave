@@ -9,9 +9,9 @@ test('Latte can be adopted and shows her asymmetric coat and dorsal patches', as
   await page.goto('/'); await page.waitForFunction(() => !!window.__CATSLAVE_TEST__);
   const cats = await page.evaluate(() => {
     const t = window.__CATSLAVE_TEST__, game = t.game;
-    t.setManualClock(true); game.reset(); game.stageElapsed = game.config.duration - 0.01; game.tick(0.02);
+    t.setManualClock(true); game.reset(); game.stageElapsed = game.config.duration - 0.01; game.tick(0.02); t.finishBonus();
     const latte = game.candidates.find(cat => cat.appearance === 'latte')!;
-    game.adopt(latte.id); game.upgrade('food'); t.refresh();
+    game.adopt(latte.id); for (const tool of ['food', 'sweeper', 'mop', 'brush', 'toy'] as const) while (game.phase === 'upgrade' && game.levels[tool] < 3) game.upgrade(tool); t.refresh();
     return game.cats.map(cat => cat.name);
   });
   expect(cats).toEqual(['Choco', 'Latte']);

@@ -21,6 +21,17 @@ function snapshot(root: THREE.Object3D) {
 const footPosition = (paw: THREE.Group) => paw.getWorldPosition(new THREE.Vector3());
 
 describe('articulated cat animation', () => {
+  it('looks back over the rump and lifts on a pat without floating the paws', () => {
+    const { model, cat } = fixture(); model.root.rotation.y = Math.PI;
+    animateCat(model, cat, 1, { buttPat: { lift: 0, side: 1 } });
+    const feet = model.paws.map(footPosition), rest = model.body.position.y;
+    expect(model.head.getWorldDirection(new THREE.Vector3()).z).toBeGreaterThan(0.7);
+    animateCat(model, cat, 2, { buttPat: { lift: 1, side: 1 } });
+    expect(model.body.position.y).toBeGreaterThan(rest);
+    model.paws.forEach((paw, i) => expect(footPosition(paw).distanceTo(feet[i])).toBeLessThan(0.00001));
+    animateCat(model, cat, 3, { buttPat: { lift: 0, side: 1 } });
+    expect(model.body.position.y).toBeCloseTo(rest);
+  });
   it('keeps planted paws level and stationary in world space throughout a full walking cycle', () => {
     const { model, cat } = fixture('walking');
     const offsets = [0, 0.5, 0.75, 0.25];
@@ -164,6 +175,17 @@ describe('articulated cat animation', () => {
     expect(samples[1]).toBeLessThan(samples[0]); expect(samples[1]).toBeGreaterThan(samples[2]);
     expect(samples[3]).toBeGreaterThan(samples[2]); expect(samples[3]).toBeLessThan(samples[4]);
     expect(samples[4]).toBeCloseTo(model.eyeHeight);
+  });
+
+  it('uses visible curved lids for happy squints and restores open eyes afterwards', () => {
+    const { model, cat } = fixture();
+    animateCat(model, cat, 1, { happy: true });
+    expect(model.closedEyes.every(eye => eye.visible)).toBe(true);
+    expect(model.eyes.every(eye => !eye.visible)).toBe(true);
+    animateCat(model, cat, 1.1); animateCat(model, cat, 1.4);
+    expect(model.closedEyes.every(eye => !eye.visible)).toBe(true);
+    expect(model.eyes.every(eye => eye.visible)).toBe(true);
+    expect(model.eyes[0].scale.y).toBeCloseTo(model.eyeHeight);
   });
 
   it('produces finite transforms and above-floor paws through every interaction', () => {

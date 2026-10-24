@@ -1,20 +1,27 @@
 import * as THREE from 'three';
-import { EFFICIENCY, STAGES, TOOLS, TOOL_BY_ID } from './config';
+import { EFFICIENCY, TOOLS, TOOL_BY_ID, toolMatches } from './config';
 import { Game } from './simulation';
 import { World, inPlayArea, type PlayArea } from './world';
 import { needIcon } from './need-icons';
 import type { CareEvent, Point, ToolId } from './types';
 import { gameLayout, type GameLayout } from './layout';
+import { BONUS_DURATION, PAT_PATIENCE } from './bonus';
 
-const C = { ink: '#493e38', muted: '#8f8072', paper: '#fff9eb', cream: '#f7efdf', line: '#e1d5bf', coral: '#c77355', green: '#72866b', paleGreen: '#e6eadb', red: '#bd5c51' };
-export interface Hit { id: string; x: number; y: number; w: number; h: number; eventId?: number; tool?: ToolId; arch?: PlayArea; }
+const C = { ink: '#493e38', muted: '#756658', paper: '#fff9eb', cream: '#f7efdf', line: '#e1d5bf', coral: '#a9583d', green: '#526b4c', paleGreen: '#e6eadb', red: '#ad4239' };
+export interface Hit { id: string; x: number; y: number; w: number; h: number; eventId?: number; tool?: ToolId; arch?: PlayArea; label?: string; disabled?: boolean; }
+export type HudModal = 'help' | 'restart' | 'home';
 
 function round(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number, fill: string, stroke?: string) {
   ctx.beginPath(); ctx.roundRect(x, y, Math.max(0, w), Math.max(0, h), r); ctx.fillStyle = fill; ctx.fill();
   if (stroke) { ctx.strokeStyle = stroke; ctx.lineWidth = 1; ctx.stroke(); }
 }
-function text(ctx: CanvasRenderingContext2D, value: string, x: number, y: number, size = 14, color = C.ink, align: CanvasTextAlign = 'left', font = 'sans') {
-  ctx.font = font === 'serif' ? `500 ${size}px Georgia, 'Times New Roman', serif` : `${font === 'bold' ? 700 : 500} ${size}px 'Trebuchet MS', Arial, sans-serif`;
+function text(ctx: CanvasRenderingContext2D, value: string, x: number, y: number, size = 14, color = C.ink, align: CanvasTextAlign = 'left', font = 'sans', maxWidth?: number) {
+  const face = font === 'serif' ? "Georgia, 'Times New Roman', serif" : "'Trebuchet MS', Arial, sans-serif";
+  ctx.font = `${font === 'bold' ? 700 : 500} ${size}px ${face}`;
+  if (maxWidth && ctx.measureText(value).width > maxWidth) {
+    size = Math.max(11, size * maxWidth / ctx.measureText(value).width);
+    ctx.font = `${font === 'bold' ? 700 : 500} ${size}px ${face}`;
+  }
   ctx.textAlign = align; ctx.textBaseline = 'middle'; ctx.fillStyle = color; ctx.fillText(value, x, y);
 }
 function line(ctx: CanvasRenderingContext2D, points: number[][], color: string, width = 3) {
@@ -35,7 +42,15 @@ function heart(ctx: CanvasRenderingContext2D, x: number, y: number, size: number
 function toolIcon(ctx: CanvasRenderingContext2D, id: ToolId, x: number, y: number, size: number) {
   ctx.save(); ctx.translate(x, y); ctx.scale(size / 40, size / 40);
   const wood = '#a7835e', outline = '#67584c';
-  if (id === 'sweeper') {
+  if (id === 'vacuum') {
+    round(ctx, -15, -5, 20, 20, 7, '#81a6a1', outline);
+    round(ctx, -11, -1, 12, 5, 2, '#cde0d8');
+    ellipse(ctx, -10, 15, 4, 4, outline); ellipse(ctx, 1, 15, 4, 4, outline);
+    ctx.beginPath(); ctx.moveTo(-5, -5); ctx.bezierCurveTo(-16, -25, 15, -26, 13, -9);
+    ctx.strokeStyle = outline; ctx.lineWidth = 3; ctx.stroke();
+    line(ctx, [[13, -9], [10, 10]], '#a9b9b5', 4);
+    round(ctx, 4, 10, 18, 6, 2, '#526b67', outline);
+  } else if (id === 'sweeper') {
     line(ctx, [[8, -16], [-1, 6]], wood, 4);
     ctx.beginPath(); ctx.moveTo(-6, 2); ctx.lineTo(4, 6); ctx.lineTo(6, 17); ctx.quadraticCurveTo(-5, 23, -17, 12); ctx.closePath(); ctx.fillStyle = '#d6ad69'; ctx.fill();
     for (let i = 0; i < 4; i++) line(ctx, [[-5 + i * 2, 8], [-12 + i * 5, 16]], '#a7835e', 1.3);
@@ -62,6 +77,42 @@ function toolIcon(ctx: CanvasRenderingContext2D, id: ToolId, x: number, y: numbe
     ellipse(ctx, 15, 2, 3, 3, '#d6ad69');
   }
   ctx.restore();
+}
+
+/** The same pictorial gesture guide appears in practice and the pause help. */
+function careGuide(ctx: CanvasRenderingContext2D, id: ToolId, x: number, y: number, time: number) {
+  if (id === 'vacuum') {
+    toolIcon(ctx, id, x - 62, y, 30);
+    for (const [i, kind] of (['poop', 'vomit', 'fur'] as const).entries()) needIcon(ctx, kind, x - 20 + i * 29, y, 21, '#604239');
+    ctx.beginPath(); ctx.arc(x + 72, y, 9, 0, Math.PI * 2);
+    ctx.strokeStyle = C.green; ctx.lineWidth = 2; ctx.stroke();
+    ellipse(ctx, x + 72, y, 3, 3, C.green); return;
+  }
+  const moving = id !== 'food', wave = Math.sin(time * 4) * 10;
+  toolIcon(ctx, id, x - 62, y, 25);
+  line(ctx, [[x - 41, y], [x - 27, y], [x - 32, y - 4]], C.muted, 1.5);
+  line(ctx, [[x - 27, y], [x - 32, y + 4]], C.muted, 1.5);
+  if (id === 'toy') {
+    ctx.beginPath(); ctx.ellipse(x + 4, y + 9, 24, 20, 0, Math.PI, Math.PI * 2);
+    ctx.strokeStyle = C.green; ctx.lineWidth = 1.5; ctx.stroke();
+    ellipse(ctx, x + 4, y + 7, 9, 7, '#a7835e');
+    line(ctx, [[x - 4, y + 3], [x - 4, y - 2], [x, y + 1]], '#a7835e', 2);
+    line(ctx, [[x + 8, y + 1], [x + 12, y - 2], [x + 12, y + 3]], '#a7835e', 2);
+    ellipse(ctx, x + 1, y + 6, 1, 1.5, C.ink); ellipse(ctx, x + 7, y + 6, 1, 1.5, C.ink);
+    toolIcon(ctx, id, x + 4 + wave, y - 7, 20);
+  } else {
+    needIcon(ctx, TOOL_BY_ID[id].need, x + 4, y + 2, 24, '#604239');
+    toolIcon(ctx, id, x + 4 + (moving ? wave : 0), y - 4, 23);
+  }
+  if (moving) {
+    line(ctx, [[x + 40, y], [x + 68, y]], C.green, 2);
+    line(ctx, [[x + 45, y - 5], [x + 40, y], [x + 45, y + 5]], C.green, 2);
+    line(ctx, [[x + 63, y - 5], [x + 68, y], [x + 63, y + 5]], C.green, 2);
+  } else {
+    ctx.beginPath(); ctx.arc(x + 52, y, 9, -Math.PI / 2, -Math.PI / 2 + (time % 2) * Math.PI);
+    ctx.strokeStyle = C.green; ctx.lineWidth = 3; ctx.stroke();
+    ellipse(ctx, x + 52, y, 3, 3, C.green);
+  }
 }
 
 export class Hud {
@@ -91,10 +142,25 @@ export class Hud {
   damageFlash = 0;
 
   private elapsed = 0;
+  private animationTime = 0;
   private dirty = true;
   private lastPhase = '';
   private selectedTool: ToolId = 'sweeper';
   private bubbleCenters: Point[] = [];
+  modal?: HudModal;
+  hoveredId?: string;
+  pressedId?: string;
+  focusedId?: string;
+
+  get controls() { return this.hits.filter(hit => hit.eventId === undefined && !hit.disabled).sort((a, b) => a.y - b.y || a.x - b.x); }
+  focusNext(backward = false) {
+    const controls = this.controls;
+    if (!controls.length) return;
+    const index = controls.findIndex(hit => hit.id === this.focusedId);
+    this.focusedId = controls[(index < 0 ? (backward ? controls.length - 1 : 0) : (index + (backward ? -1 : 1) + controls.length) % controls.length)].id;
+    this.invalidate();
+  }
+  clearInteraction() { this.hoveredId = undefined; this.pressedId = undefined; this.focusedId = undefined; this.invalidate(); }
 
   constructor() {
     this.camera.near = 0; this.camera.far = 10; this.camera.position.z = 5;
@@ -122,7 +188,8 @@ export class Hud {
   }
   invalidate() { this.dirty = true; }
   get compact() { return this.height < 540; }
-  get panelWidth() { return Math.min(this.width - 32, 500); }
+  get panelWidth() { return Math.min(this.width - this.left - this.right - 32, 500); }
+  get center() { return (this.left + this.width - this.right) / 2; }
   private addHit(hit: Hit) { this.hits.push(hit); }
   hit(x: number, y: number): Hit | undefined {
     this.camera.updateMatrixWorld(); this.scene.updateMatrixWorld(true);
@@ -130,7 +197,7 @@ export class Hud {
     const intersections = this.raycaster.intersectObjects(this.hitMeshes.filter(m => m.visible), false);
     const hits = intersections.map(i => i.object.userData.hit as Hit).filter(h => !h.arch || inPlayArea(h.arch, { x, y }));
     const ui = hits.find(h => h.eventId === undefined);
-    if (ui) return ui;
+    if (ui) return ui; // Disabled controls still block input to the world below them.
     // Nearby roaming cats can overlap in perspective. Prefer the selected tool,
     // then the closest actual target, rather than whichever quad was added last.
     return hits.sort((a, b) => Number(b.tool === this.selectedTool) - Number(a.tool === this.selectedTool)
@@ -152,13 +219,18 @@ export class Hud {
   private button(id: string, label: string, x: number, y: number, w: number, h = 52, primary = false) {
     round(this.ctx, x, y + 3, w, h, 15, primary ? '#a45f45' : '#d9cdb9');
     round(this.ctx, x, y, w, h, 15, primary ? C.coral : C.paper, primary ? undefined : C.line);
-    text(this.ctx, label, x + w / 2, y + h / 2, 15, primary ? '#fffaf0' : C.ink, 'center', 'bold');
-    this.addHit({ id, x, y, w, h });
+    text(this.ctx, label, x + w / 2, y + h / 2, 15, primary ? '#fffaf0' : C.ink, 'center', 'bold', w - 20);
+    this.addHit({ id, label, x, y, w, h });
   }
-  private pill(label: string, x: number, y: number, color = C.green) {
-    this.ctx.font = '700 10px Arial'; const width = this.ctx.measureText(label).width + 24;
-    round(this.ctx, x - width / 2, y - 12, width, 24, 12, C.paper, C.line);
-    text(this.ctx, label, x, y, 10, color, 'center', 'bold');
+  private upgradeRewards(game: Game, y: number) {
+    const total = game.bonus?.won ? 2 : 1;
+    for (let i = 0; i < total; i++) {
+      const x = this.center + (i - (total - 1) / 2) * 40;
+      const available = i < game.upgradesRemaining;
+      round(this.ctx, x - 14, y - 14, 28, 28, 8, available ? '#e7c681' : C.cream, available ? '#b89553' : C.line);
+      line(this.ctx, available ? [[x - 6, y + 3], [x, y - 4], [x + 6, y + 3]]
+        : [[x - 6, y], [x - 2, y + 4], [x + 6, y - 4]], available ? C.ink : C.muted, 2.5);
+    }
   }
   private backdrop() {
     const ctx = this.ctx;
@@ -182,32 +254,83 @@ export class Hud {
     line(ctx, [[x - 8, y - 22], [x + 8, y - 22]], C.green, 3);
     paw(ctx, x, y - 52, 27, C.green);
     text(ctx, 'Rotate to portrait', x, y + 15, Math.min(27, w * 0.055), C.ink, 'center', 'serif');
-    text(ctx, 'Your cats will wait. Nothing is ticking.', x, y + 47, 12, C.muted, 'center');
   }
 
   private title() {
-    const { width: w, height: h, ctx } = this;
+    const { height: h, ctx } = this;
     this.backdrop(); this.brand();
-    const center = w / 2, panel = this.panelWidth, x = (w - panel) / 2;
-    if (this.compact) {
-      // Landscape keeps the cat visible on the right and the introduction on the left.
-      const panelX = this.left + 12, panelW = Math.min((w - this.left - this.right) * 0.48, 420);
-      round(ctx, panelX, this.top + 45, panelW, h - this.top - this.bottom - 60, 22, 'rgba(255,249,235,0.95)', C.line);
-      const left = panelX + 16, cw = panelW - 32;
-      text(ctx, 'CatSlave.', left, this.top + (h < 340 ? 70 : 91), h < 340 ? 32 : 43, C.ink, 'left', 'serif');
-      if (h >= 340) text(ctx, 'At their service. Always.', left, this.top + 130, 15, C.muted);
-      this.button('learn', 'Tutorial  →', left, h - this.bottom - 126, cw, 52, true);
-      this.button('start', 'Play', left, h - this.bottom - 65, cw, 48);
-      return;
+    const center = this.center, panel = this.panelWidth, x = center - panel / 2;
+    const titleY = this.top + (this.compact ? 64 : Math.min(155, h * 0.18));
+    text(ctx, 'CatSlave.', center, titleY, Math.min(72, panel * 0.2), C.ink, 'center', 'serif');
+    const bottomY = h - this.bottom - 168;
+    this.button('start', 'Play  →', x, bottomY + 34, panel, 52, true);
+    this.button('learn', 'Practice', x, bottomY + 98, panel, 48);
+  }
+
+  worldViewport(game: Game): GameLayout['room'] {
+    if (!game.inBonus) return this.layout.room;
+    const y = this.top + 120;
+    return { x: this.left + 6, y, w: this.width - this.left - this.right - 12,
+      h: Math.max(90, this.height - this.bottom - 150 - y) };
+  }
+
+  private bonusRound(game: Game, world: World) {
+    const bonus = game.bonus!;
+    const { ctx } = this, center = this.center, width = this.panelWidth;
+    const urgent = bonus.status === 'playing' && bonus.timeLeft <= 3;
+    text(ctx, 'BONUS · BUTT PATS', center, this.top + 15, 13, C.ink, 'center', 'bold');
+    const value = bonus.status === 'intro' ? '10' : bonus.status === 'countdown' ? String(Math.ceil(bonus.countdown))
+      : bonus.status === 'playing' ? bonus.timeLeft.toFixed(1) : bonus.won ? '✓' : '×';
+    const pulse = urgent ? Math.sin(bonus.clock * 14) * 3 : 0;
+    text(ctx, value, center, this.top + 66, 65 + pulse, urgent || bonus.failedCatId !== undefined ? C.red : C.green, 'center', 'bold');
+    if (bonus.status === 'playing') {
+      round(ctx, center - width / 2, this.top + 108, width, 6, 3, C.line);
+      round(ctx, center - width / 2, this.top + 108, width * bonus.timeLeft / BONUS_DURATION, 6, 3, urgent ? C.red : C.green);
     }
-    this.pill('FIVE-STAGE SURVIVAL', center, Math.max(this.top + 65, h * 0.13));
-    text(ctx, 'CatSlave.', center, h * 0.225, Math.min(78, w * 0.17), C.ink, 'center', 'serif');
-    text(ctx, 'At their service. Always.', center, h * 0.225 + 51, 17, C.muted, 'center');
-    const badgeY = h * 0.59;
-    const bottomY = h - this.bottom - 193;
-    text(ctx, 'Swipe to look left, right, up or down · + / − to zoom', center, bottomY + 24, 11, C.muted, 'center');
-    this.button('learn', 'Tutorial  →', x, bottomY + 50, panel, 54, true);
-    this.button('start', 'Play', x, bottomY + 115, panel, 48);
+    const pause = this.layout.pause;
+    round(ctx, pause.x, pause.y, pause.w, pause.h, 12, C.paper, C.line);
+    line(ctx, [[pause.x + 19, pause.y + 15], [pause.x + 19, pause.y + 32]], C.ink, 3);
+    line(ctx, [[pause.x + 28, pause.y + 15], [pause.x + 28, pause.y + 32]], C.ink, 3);
+    this.addHit({ id: 'pause', label: 'Pause bonus round', ...pause });
+
+    if (bonus.status === 'playing' || bonus.status === 'intro' || bonus.status === 'countdown') {
+      const points = bonus.catIds.map(id => world.bonusPatTarget(id));
+      const spacing = Math.min(...points.slice(1).map((point, i) => point && points[i] ? Math.abs(point.x - points[i]!.x) : Infinity));
+      const targetSize = Math.max(44, Math.min(64, spacing - 6, world.viewport.w / bonus.catIds.length - 12));
+      for (const id of bonus.catIds) {
+        const point = world.bonusPatTarget(id);
+        if (!point?.visible) continue;
+        const patience = bonus.patience(id) / PAT_PATIENCE, radius = Math.min(world.viewport.h < 240 ? 16 : 21, targetSize / 2 - 3);
+        const color = patience <= 1 / 3 ? C.red : C.green;
+        ellipse(ctx, point.x, point.y, radius, radius, 'rgba(255,249,235,0.30)');
+        ctx.beginPath(); ctx.arc(point.x, point.y, radius, 0, Math.PI * 2); ctx.strokeStyle = C.paper; ctx.lineWidth = 6; ctx.stroke();
+        ctx.beginPath(); ctx.arc(point.x, point.y, radius, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * patience);
+        ctx.strokeStyle = color; ctx.lineWidth = 3; ctx.stroke();
+        // A palm and fingers mark the actual rump, rather than a remote button.
+        ellipse(ctx, point.x, point.y + 3, 5, 6, C.paper);
+        for (let i = 0; i < 4; i++) line(ctx, [[point.x - 4 + i * 2.6, point.y + 1], [point.x - 4 + i * 2.6, point.y - 6 - (i === 1 || i === 2 ? 2 : 0)]], C.paper, 2);
+        line(ctx, [[point.x - 4, point.y + 5], [point.x - 8, point.y]], C.paper, 3);
+        const lift = bonus.lift(id);
+        if (lift > 0) heart(ctx, point.x + radius - 2, point.y - radius - (1 - lift) * 12, 12 * lift + 5);
+        if (bonus.status === 'playing') this.addHit({ id: `pat:${id}`, label: `Pat ${game.cats.find(cat => cat.id === id)!.name}`,
+          x: point.x - targetSize / 2, y: point.y - targetSize / 2, w: targetSize, h: targetSize });
+      }
+    }
+    const bottom = this.height - this.bottom, x = center - width / 2;
+    if (bonus.status === 'intro') {
+      text(ctx, 'Tap every cat’s butt.', center, bottom - 128, 15, C.ink, 'center', 'bold', width);
+      text(ctx, 'Pat each cat at least once every 3 seconds.', center, bottom - 105, 12, C.ink, 'center', 'sans', width);
+      text(ctx, 'Last 10 seconds to win +1 upgrade.', center, bottom - 83, 12, C.muted, 'center', 'sans', width);
+      this.button('bonus-start', 'Ready', x, bottom - 59, width, 52, true);
+    } else if (bonus.status === 'countdown') {
+      text(ctx, 'Get ready', center, bottom - 80, 24, C.ink, 'center', 'serif');
+    } else if (bonus.status === 'result') {
+      text(ctx, bonus.won ? '+1 upgrade' : 'Bonus over', center, bottom - 120, 26, bonus.won ? C.green : C.ink, 'center', 'serif');
+      text(ctx, `${bonus.pats} ${bonus.pats === 1 ? 'pat' : 'pats'}`, center, bottom - 87, 15, C.muted, 'center');
+      this.button('bonus-continue', 'Adopt  →', x, bottom - 59, width, 52, true);
+    } else {
+      text(ctx, `${bonus.pats} ${bonus.pats === 1 ? 'pat' : 'pats'}`, center, bottom - 85, 24, C.ink, 'center', 'bold');
+    }
   }
 
   private gameplay(game: Game, world: World) {
@@ -215,11 +338,21 @@ export class Hud {
     const { header, room, pause } = layout;
     const seconds = Math.ceil(game.timeLeft);
     const timer = game.phase === 'tutorial' ? 'Practice' : Math.floor(seconds / 60) + ':' + String(seconds % 60).padStart(2, '0');
-    round(ctx, header.x, header.y, header.w, header.h, 12, 'rgba(255,249,235,0.92)', C.line);
-    heart(ctx, header.x + 16, header.y + header.h / 2, 14, game.hp <= 30 ? C.red : C.coral);
-    text(ctx, String(game.hp), header.x + 29, header.y + header.h / 2, 13, C.ink, 'left', 'bold');
-    text(ctx, (game.phase === 'tutorial' ? 'Learn ' + (game.tutorialStep + 1) : 'Stage ' + (game.stage + 1)) + ' / 5', header.x + header.w / 2, header.y + header.h / 2, 11, C.muted, 'center', 'bold');
-    text(ctx, timer, header.x + header.w - 10, header.y + header.h / 2, 13, C.ink, 'right', 'bold');
+    const tutorial = game.phase === 'tutorial' || (game.phase === 'paused' && game.resumePhase === 'tutorial');
+    round(ctx, header.x, header.y, header.w, header.h, 12, C.paper, C.line);
+    heart(ctx, header.x + 17, header.y + 19, 15, game.hp <= 30 ? C.red : C.coral);
+    text(ctx, `${game.hp} HP`, header.x + 31, header.y + 19, 13, C.ink, 'left', 'bold');
+    round(ctx, header.x + 12, header.y + 34, 70, 5, 2, C.line);
+    round(ctx, header.x + 12, header.y + 34, 70 * game.hp / 100, 5, 2, game.hp <= 30 ? C.red : C.green);
+    const stageX = header.x + header.w * 0.54;
+    text(ctx, tutorial ? `Lesson ${game.tutorialStep + 1}/5` : `Stage ${game.stage + 1}/5`, stageX, header.y + 18, 12, C.ink, 'center', 'bold');
+    for (let i = 0; i < 5; i++) ellipse(ctx, stageX + (i - 2) * 10, header.y + 36, 3, 3,
+      i <= (tutorial ? game.tutorialStep : game.stage) ? C.green : C.line);
+    text(ctx, tutorial ? 'Untimed' : timer, header.x + header.w - 12, header.y + 18, 13, C.ink, 'right', 'bold');
+    if (!tutorial) {
+      round(ctx, header.x + header.w - 62, header.y + 34, 50, 5, 2, C.line);
+      round(ctx, header.x + header.w - 62, header.y + 34, 50 * game.timeLeft / game.config.duration, 5, 2, C.coral);
+    }
 
     this.bubbleCenters = [];
     ctx.save(); ctx.beginPath(); ctx.rect(room.x, room.y, room.w, room.h); ctx.clip();
@@ -242,35 +375,40 @@ export class Hud {
       }
     }
     ctx.restore();
-    const gyroLabel = ({ off: 'Gyro off', on: 'Gyro on', waiting: 'Gyro…', denied: 'Gyro denied', unavailable: 'No gyro' } as Record<string, string>)[this.gyroStatus];
-    const controls = [['out', '−'], ['in', '+'], ['reset', 'Reset'], ['gyro', gyroLabel]];
+    const gyroLabel = ({ off: 'Gyro off', on: 'Gyro on', waiting: 'Connecting…', denied: 'Retry gyro', unavailable: 'No gyro' } as Record<string, string>)[this.gyroStatus] ?? 'Gyro off';
+    const controls = [['out', '−'], ['in', '+'], ['reset', 'Reset view'], ['gyro', gyroLabel]];
     controls.forEach(([id, label], i) => {
       const r = layout.viewControls[i];
-      round(ctx, r.x + 2, r.y, r.w - 4, r.h, 12, C.paper, C.line);
-      text(ctx, label, r.x + r.w / 2, r.y + r.h / 2, i < 2 ? 24 : 11, C.ink, 'center', 'bold');
-      this.addHit({ id: 'view:' + id, x: r.x + 2, y: r.y, w: r.w - 4, h: r.h });
+      const disabled = id === 'in' && world.viewZoom >= 2.5 - 1e-6 || id === 'out' && world.viewZoom <= 1 + 1e-6 || id === 'gyro' && this.gyroStatus === 'waiting';
+      round(ctx, r.x + 2, r.y, r.w - 4, r.h, 10, disabled ? C.cream : id === 'gyro' && this.gyroStatus === 'on' ? C.paleGreen : C.paper, C.line);
+      text(ctx, label, r.x + r.w / 2, r.y + r.h / 2, i < 2 ? 24 : 12, disabled ? C.muted : C.ink, 'center', 'bold', r.w - 12);
+      this.addHit({ id: 'view:' + id, label: i === 0 ? 'Zoom out' : i === 1 ? 'Zoom in' : label, disabled, x: r.x + 2, y: r.y, w: r.w - 4, h: r.h });
     });
-    TOOLS.forEach((tool, i) => {
-      const r = layout.tools[i], selected = game.selected === tool.id;
-      round(ctx, r.x + 1, r.y, r.w - 2, r.h, 12, selected ? C.paleGreen : C.paper, selected ? C.green : C.line);
-      toolIcon(ctx, tool.id, r.x + r.w / 2, r.y + 22, 31);
-      text(ctx, tool.name, r.x + r.w / 2, r.y + 45, 10, selected ? C.green : C.ink, 'center', 'bold');
-      for (let level = 0; level < 3; level++) ellipse(ctx, r.x + r.w / 2 + (level - 1) * 7, r.y + 57, 2, 2, level < game.levels[tool.id] ? C.green : C.line);
-      this.addHit({ id: 'tool:' + tool.id, ...r });
+    const status = layout.status;
+    if (tutorial && !game.tutorialDone) careGuide(ctx, TOOLS[game.tutorialStep].id, status.x + status.w / 2, status.y + status.h / 2, this.animationTime);
+    else if (game.selected === 'vacuum') careGuide(ctx, 'vacuum', status.x + status.w / 2, status.y + status.h / 2, this.animationTime);
+    const tray = game.availableTools, first = layout.tools[0], last = layout.tools.at(-1)!;
+    const slotWidth = (last.x + last.w - first.x) / tray.length;
+    tray.forEach((tool, i) => {
+      const r = { x: first.x + i * slotWidth, y: first.y, w: slotWidth, h: first.h }, selected = game.selected === tool.id;
+      round(ctx, r.x + 2, r.y, r.w - 4, r.h, 10, selected ? C.green : C.paper, selected ? C.green : C.line);
+      toolIcon(ctx, tool.id, r.x + r.w / 2, r.y + 20, 29);
+      text(ctx, tool.name, r.x + r.w / 2, r.y + 43, 11, selected ? C.paper : C.ink, 'center', 'bold');
+      if (tool.id === 'vacuum') text(ctx, '3-IN-1', r.x + r.w / 2, r.y + 56, 10, selected ? C.paper : C.green, 'center', 'bold');
+      else for (let level = 0; level < 3; level++) ellipse(ctx, r.x + r.w / 2 + (level - 1) * 7, r.y + 56, 2, 2,
+        level < game.levels[tool.id] ? (selected ? C.paper : C.green) : (selected ? '#809478' : C.line));
+      const needs = game.events.filter(e => toolMatches(tool, e.kind)).length;
+      if (needs) {
+        ellipse(ctx, r.x + r.w - 11, r.y + 10, 8, 8, C.coral);
+        text(ctx, String(needs), r.x + r.w - 11, r.y + 10, 10, C.paper, 'center', 'bold');
+      }
+      this.addHit({ id: 'tool:' + tool.id, label: `${tool.name}, ${tool.id === 'vacuum' ? 'one-tap cleanup' : `level ${game.levels[tool.id]}`}${selected ? ', selected' : ''}`, ...r });
     });
     round(ctx, pause.x, pause.y, pause.w, pause.h, 12, C.paper, C.line);
-    line(ctx, [[pause.x + pause.w / 2 - 4, pause.y + 12], [pause.x + pause.w / 2 - 4, pause.y + 25]], C.ink, 3);
-    line(ctx, [[pause.x + pause.w / 2 + 4, pause.y + 12], [pause.x + pause.w / 2 + 4, pause.y + 25]], C.ink, 3);
-    this.addHit({ id: 'pause', ...pause });
-    if (game.phase === 'tutorial') {
-      if (game.tutorialDone) this.tutorialCaption(game, room.y + 4);
-      else {
-        const label = TOOL_BY_ID[game.selected].instruction;
-        const tw = Math.min(room.w - 12, 240), tx = room.x + (room.w - tw) / 2;
-        round(ctx, tx, room.y + 2, tw, 24, 9, 'rgba(255,249,235,0.88)');
-        text(ctx, label, room.x + room.w / 2, room.y + 14, 11, C.ink, 'center');
-      }
-    }
+    line(ctx, [[pause.x + pause.w / 2 - 4, pause.y + 13], [pause.x + pause.w / 2 - 4, pause.y + 30]], C.ink, 3);
+    line(ctx, [[pause.x + pause.w / 2 + 4, pause.y + 13], [pause.x + pause.w / 2 + 4, pause.y + 30]], C.ink, 3);
+    this.addHit({ id: 'pause', label: 'Pause', ...pause });
+    if (tutorial && game.tutorialDone) this.tutorialCaption(game, room.y + 4);
     if (game.events.some(e => game.warning(e))) {
       ctx.strokeStyle = 'rgba(168,48,40,' + (0.25 + Math.sin(game.clock * 18) * 0.12) + ')'; ctx.lineWidth = 8;
       ctx.strokeRect(4, 4, w - 8, h - 8);
@@ -278,15 +416,8 @@ export class Hud {
   }
 
   private tutorialCaption(game: Game, y: number) {
-    const tool = TOOLS[game.tutorialStep];
-    const ctx = this.ctx, center = this.layout.room.x + this.layout.room.w / 2;
-    if (game.tutorialDone) {
-      const bw = Math.min(this.layout.room.w - 16, 320);
-      this.button('tutorial-next', game.tutorialStep === 4 ? 'You’re hired. Start stage 1  →' : 'Nicely done. Next lesson  →', center - bw / 2, y, bw, 48, true);
-    } else if (this.height >= 720) {
-      text(ctx, `0${game.tutorialStep + 1} / 05  ·  ${tool.label}`, center, y + 5, this.compact ? 15 : 22, C.ink, 'center', 'serif');
-      text(ctx, `${tool.name} selected. ${tool.instruction.toLowerCase()}.`, center, y + (this.compact ? 25 : 33), 11, C.muted, 'center');
-    }
+    const center = this.layout.room.x + this.layout.room.w / 2, bw = Math.min(this.layout.room.w - 16, 180);
+    this.button('tutorial-next', game.tutorialStep === 4 ? '✓  Play  →' : '✓  Next  →', center - bw / 2, y, bw, 48, true);
   }
   private eventCard(game: Game, world: World, event: CareEvent, count: number) {
     const ctx = this.ctx, cat = game.cats.find(c => c.id === event.catId)!;
@@ -355,7 +486,15 @@ export class Hud {
         ctx.beginPath(); ctx.ellipse(a.x, a.y, a.outerX + 5, a.outerY + 5, 0, Math.PI, Math.PI + Math.PI * event.progress);
         ctx.lineWidth = 4; ctx.strokeStyle = C.green; ctx.stroke();
       }
-      if (!active) toolIcon(ctx, 'toy', a.x + a.outerX * 0.67, a.y - a.outerY * 0.48, 30);
+      if (!active) {
+        toolIcon(ctx, 'toy', a.x + a.outerX * 0.67, a.y - a.outerY * 0.48, 30);
+        if (game.selected === 'toy') {
+          const cy = a.y - (a.outerY + a.innerY) / 2;
+          line(ctx, [[a.x - 15, cy], [a.x + 15, cy]], C.green, 2);
+          line(ctx, [[a.x - 10, cy - 4], [a.x - 15, cy], [a.x - 10, cy + 4]], C.green, 2);
+          line(ctx, [[a.x + 10, cy - 4], [a.x + 15, cy], [a.x + 10, cy + 4]], C.green, 2);
+        }
+      }
       if (game.wrongToolEventId === event.id && game.clock < game.wrongToolUntil && game.selected !== 'toy') {
         toolIcon(ctx, 'toy', a.x, a.y - (a.outerY + a.innerY) / 2, 38);
       }
@@ -377,89 +516,119 @@ export class Hud {
       round(ctx, left + 14, top + height - 2, width - 28, 4, 2, '#e5d9c1');
       round(ctx, left + 14, top + height - 2, (width - 28) * event.progress, 4, 2, C.green);
     }
-    if (game.wrongToolEventId === event.id && game.clock < game.wrongToolUntil && TOOL_BY_ID[game.selected].need !== event.kind) {
-      toolIcon(ctx, TOOLS.find(t => t.need === event.kind)!.id, left + width / 2, top - 18, 27);
+    if (game.wrongToolEventId === event.id && game.clock < game.wrongToolUntil && !toolMatches(TOOL_BY_ID[game.selected], event.kind)) {
+      toolIcon(ctx, game.toolFor(event.kind).id, left + width / 2, top - 18, 27);
       line(ctx, [[left + width - 22, top + 7], [left + width - 10, top + 19]], C.red, 3);
       line(ctx, [[left + width - 10, top + 7], [left + width - 22, top + 19]], C.red, 3);
     }
-    this.addHit({ id: 'event:' + event.id, eventId: event.id, tool: TOOLS.find(t => t.need === event.kind)!.id, x: left, y: top, w: width, h: height });
-    if (event.kind === 'hunger') this.addHit({ id: 'thought:' + event.id, eventId: event.id, tool: TOOLS.find(t => t.need === event.kind)!.id, x: x - radius, y: y - radius, w: radius * 2, h: radius * 2 });
+    this.addHit({ id: 'event:' + event.id, eventId: event.id, tool: game.toolFor(event.kind).id, x: left, y: top, w: width, h: height });
+    if (event.kind === 'hunger') this.addHit({ id: 'thought:' + event.id, eventId: event.id, tool: game.toolFor(event.kind).id, x: x - radius, y: y - radius, w: radius * 2, h: radius * 2 });
   }
 
   private adoption(game: Game) {
     this.backdrop(); this.brand();
-    const ctx = this.ctx, w = this.width, h = this.height, center = w / 2;
-    const top = this.compact ? this.top + 55 : h * 0.13;
-    this.pill(`STAGE ${game.stage + 1} COMPLETE  ·  +20 HP`, center, top);
-    text(ctx, 'Choose a cat', center, top + (this.compact ? 36 : 49), this.compact ? 31 : Math.min(38, w * 0.085), C.ink, 'center', 'serif');
-    const panel = Math.min(w - 32, 510), x = (w - panel) / 2, gap = 14, cw = (panel - gap) / 2;
-    const y = h - this.bottom - (this.compact ? 111 : 172);
+    const ctx = this.ctx, h = this.height, center = this.center;
+    const top = this.top + (this.compact ? 48 : 76);
+    text(ctx, `✓  ${game.stage + 1} / 5`, center, top, 18, C.green, 'center', 'bold');
+    text(ctx, 'Adopt', center, top + 40, 34, C.ink, 'center', 'serif');
+    heart(ctx, center - 46, top + 73, 17);
+    text(ctx, `${game.hp} / 100`, center + 10, top + 73, 15, C.green, 'center', 'bold');
+    const panel = this.panelWidth, x = center - panel / 2, gap = 12, cw = (panel - gap) / 2;
+    const y = h - this.bottom - 130;
     game.candidates.forEach((cat, i) => {
       const cx = x + i * (cw + gap);
-      round(ctx, cx, y, cw, this.compact ? 96 : 141, 18, C.paper, C.line);
-      ellipse(ctx, cx + 21, y + 25, 7, 7, cat.color);
-      text(ctx, cat.name, cx + 35, y + 25, this.compact ? 18 : 23, C.ink, 'left', 'serif');
-      this.button(`adopt:${cat.id}`, `Adopt ${cat.name}`, cx + 10, y + (this.compact ? 39 : 77), cw - 20, 48, true);
+      round(ctx, cx, y, cw, 100, 14, C.paper, C.line);
+      ellipse(ctx, cx + 18, y + 24, 6, 6, cat.color);
+      text(ctx, cat.name, cx + 32, y + 24, 21, C.ink, 'left', 'serif', cw - 44);
+      this.button(`adopt:${cat.id}`, `Adopt ${cat.name}`, cx + 8, y + 43, cw - 16, 48, true);
     });
+    this.upgradeRewards(game, h - this.bottom - 15);
   }
 
   private upgrade(game: Game) {
-    this.ctx.fillStyle = 'rgba(248,240,224,0.96)'; this.ctx.fillRect(0, 0, this.width, this.height); this.brand();
-    const ctx = this.ctx, w = this.width, h = this.height, center = w / 2;
-    const top = this.top + (h < 340 ? 10 : this.compact ? 49 : 69);
-    text(ctx, 'Choose an upgrade', center, top + 43, this.compact ? 32 : 43, C.ink, 'center', 'serif');
-    const width = Math.min(w - 32, 460), x = (w - width) / 2;
-    const y = top + (h < 340 ? 75 : 108);
-    const rowH = Math.min(76, Math.max(48, (h - y - this.bottom - 39) / 5 - 8));
-    if (this.compact) {
-      const cell = Math.min((w - 40) / 5, 134), start = (w - cell * 5) / 2;
-      TOOLS.forEach((tool, i) => {
-        const level = game.levels[tool.id], cx = start + i * cell + 3, cw = cell - 6;
-        const ch = Math.max(104, h - y - this.bottom - 14);
-        round(ctx, cx, y, cw, ch, 15, level < 3 ? C.paper : '#eae3d5', C.line);
-        toolIcon(ctx, tool.id, cx + cw / 2, y + 26, 31);
-        text(ctx, tool.name, cx + cw / 2, y + 54, 12, C.ink, 'center', 'bold');
-        text(ctx, level === 3 ? 'MAX LEVEL' : `LV ${level} → ${level + 1}`, cx + cw / 2, y + 77, 10, C.green, 'center');
-        if (level < 3) this.addHit({ id: `upgrade:${tool.id}`, x: cx, y, w: cw, h: ch });
-      });
-    } else TOOLS.forEach((tool, i) => {
-      const cy = y + i * (rowH + 8), level = game.levels[tool.id];
-      round(ctx, x, cy, width, rowH, 16, level < 3 ? C.paper : '#eae3d5', C.line);
-      toolIcon(ctx, tool.id, x + 32, cy + rowH / 2, 34);
-      text(ctx, tool.name, x + 62, cy + rowH / 2 - 10, 16, C.ink, 'left', 'bold');
-      text(ctx, level === 3 ? 'Already your finest tool' : `${EFFICIENCY[level + 1]}× efficiency · less work per task`, x + 62, cy + rowH / 2 + 12, 11, C.muted);
-      text(ctx, level === 3 ? 'MAX' : `${level} → ${level + 1}`, x + width - 22, cy + rowH / 2, 16, level === 3 ? C.muted : C.green, 'right', 'bold');
-      if (level < 3) this.addHit({ id: `upgrade:${tool.id}`, x, y: cy, w: width, h: rowH });
+    const { ctx, height: h } = this, center = this.center;
+    ctx.fillStyle = C.cream; ctx.fillRect(0, 0, this.width, h); this.brand();
+    const width = this.panelWidth, x = center - width / 2;
+    const top = this.top + (this.compact ? 51 : 74);
+    text(ctx, 'Upgrade', center, top, Math.min(36, width * 0.105), C.ink, 'center', 'serif');
+    this.upgradeRewards(game, top + 35);
+    const y = top + 62, gap = 8;
+    const rowTools = game.availableTools;
+    const rowH = Math.min(76, (h - this.bottom - 40 - y - gap * (rowTools.length - 1)) / rowTools.length);
+    rowTools.forEach((tool, i) => {
+      const cy = y + i * (rowH + gap), level = game.levels[tool.id], disabled = tool.id === 'vacuum' || level >= 3;
+      round(ctx, x, cy, width, rowH, 12, disabled ? '#eae3d5' : C.paper, C.line);
+      toolIcon(ctx, tool.id, x + 28, cy + rowH / 2, 32);
+      text(ctx, tool.name, x + 54, cy + rowH / 2 - 9, 15, disabled ? C.muted : C.ink, 'left', 'bold');
+      text(ctx, tool.id === 'vacuum' ? '3 → 1  ✓' : disabled ? `${EFFICIENCY[level]}×  ✓` : `${EFFICIENCY[level]}× → ${EFFICIENCY[level + 1]}×`, x + 54, cy + rowH / 2 + 11, 12, C.muted);
+      text(ctx, tool.id === 'vacuum' ? '✓' : disabled ? 'MAX' : '+', x + width - 20, cy + rowH / 2, disabled ? 12 : 25, disabled ? C.muted : C.green, 'center', 'bold');
+      this.addHit({ id: `upgrade:${tool.id}`, label: tool.id === 'vacuum' ? 'Vacuum unlocked' : `Upgrade ${tool.name} to level ${level + 1}`, disabled, x, y: cy, w: width, h: rowH });
     });
-    if (!this.compact) text(ctx, `NEXT: STAGE ${game.stage + 2}  ·  ${game.cats.length} CATS  ·  ${STAGES[game.stage + 1].duration} SECONDS`, center, h - this.bottom - 14, 10, C.muted, 'center');
+    for (let i = 0; i < 5; i++) paw(ctx, center + (i - 2) * 28, h - this.bottom - 14, 18, i < game.cats.length ? C.green : C.line);
   }
 
   private pause(game: Game) {
-    const ctx = this.ctx, w = this.width, h = this.height;
-    ctx.fillStyle = 'rgba(66,57,50,0.44)'; ctx.fillRect(0, 0, w, h);
-    const width = Math.min(w - 32, 390), height = Math.min(h - 32, 335), x = (w - width) / 2, y = (h - height) / 2;
-    round(ctx, x, y, width, height, 25, C.paper, C.line);
-    if (height >= 300) paw(ctx, w / 2, y + 40, 34, C.green);
-    text(ctx, 'Paused', w / 2, y + (height < 300 ? 30 : 86), Math.min(30, w * 0.075), C.ink, 'center', 'serif');
-    text(ctx, game.pauseReason, w / 2, y + (height < 300 ? 64 : 121), 12, C.muted, 'center');
-    this.button('resume', 'Resume  →', x + 24, y + height - 136, width - 48, 53, true);
-    this.button('restart', 'Restart', x + 24, y + height - 72, width - 48, 48);
+    const { ctx, height: h } = this, center = this.center;
+    ctx.fillStyle = 'rgba(43,38,33,0.52)'; ctx.fillRect(0, 0, this.width, h);
+    const width = Math.min(this.panelWidth, 390), height = Math.min(h - this.top - this.bottom - 12, this.modal === 'help' ? 424 : 400);
+    const x = center - width / 2, y = this.top + (h - this.top - this.bottom - height) / 2;
+    round(ctx, x, y, width, height, 22, C.paper, C.line);
+    const bx = x + 18, bw = width - 36;
+    if (this.modal === 'help') {
+      text(ctx, 'Controls', center, y + 30, 24, C.ink, 'center', 'serif', width - 24);
+      if (game.inBonus) {
+        paw(ctx, center, y + 100, 55, C.coral);
+        text(ctx, 'Tap every cat’s butt.', center, y + 160, 16, C.ink, 'center', 'bold', width - 32);
+        text(ctx, 'Pat each cat at least once every 3 seconds.', center, y + 192, 12, C.ink, 'center', 'sans', width - 32);
+        text(ctx, 'Last 10 seconds to win +1 upgrade.', center, y + 220, 12, C.muted, 'center', 'sans', width - 32);
+      } else game.availableTools.forEach((tool, i) => careGuide(ctx, tool.id, center, y + 79 + i * 48, this.animationTime));
+      this.button('back', 'Back', bx, y + height - 66, bw, 48, true);
+      return;
+    }
+    if (this.modal === 'restart' || this.modal === 'home') {
+      const home = this.modal === 'home';
+      paw(ctx, center, y + 52, 40, C.coral);
+      text(ctx, home ? 'Main menu?' : 'Restart?', center, y + 105, 30, C.ink, 'center', 'serif');
+      text(ctx, 'Progress will be reset.', center, y + 146, 13, C.muted, 'center', 'sans', width - 32);
+      this.button('back', 'Cancel', bx, y + height - 130, bw, 48, true);
+      this.button(home ? 'confirm-home' : 'confirm-restart', home ? 'Main menu' : 'Restart', bx, y + height - 68, bw, 48);
+      return;
+    }
+    text(ctx, 'Paused', center, y + 36, 30, C.ink, 'center', 'serif', width - 24);
+    const by = y + height - 258;
+    this.button('resume', 'Resume  →', bx, by, bw, 52, true);
+    this.button('help', 'Controls', bx, by + 65, bw, 48);
+    this.button('restart', game.resumePhase === 'tutorial' ? 'Restart tutorial' : 'Restart shift', bx, by + 126, bw, 48);
+    this.button('home', 'Main menu', bx, by + 187, bw, 48);
   }
 
   private ending(game: Game) {
     this.backdrop(); this.brand();
-    const ctx = this.ctx, w = this.width, h = this.height, win = game.phase === 'victory';
-    const top = this.compact ? this.top + (h < 340 ? 25 : 55) : h * 0.13;
-    this.pill(win ? 'FIVE STAGES. STILL STANDING.' : 'YOUR SHIFT HAS ENDED', w / 2, top, win ? C.green : C.red);
-    text(ctx, win ? 'Victory.' : 'Game over.', w / 2, top + 47, Math.min(this.compact ? 39 : 49, w * 0.105), C.ink, 'center', 'serif');
-    const width = Math.min(w - 32, 440), x = (w - width) / 2, y = h - this.bottom - (this.compact ? 133 : 199);
-    round(ctx, x, y, width, this.compact ? 58 : 75, 18, C.paper, C.line);
+    const ctx = this.ctx, h = this.height, center = this.center, win = game.phase === 'victory';
+    const top = this.top + (this.compact ? 49 : 85);
+    text(ctx, win ? 'Victory' : 'Game over', center, top + 44, Math.min(42, this.panelWidth * 0.11), C.ink, 'center', 'serif');
+    for (let i = 0; i < 5; i++) paw(ctx, center + (i - 2) * 28, top + 82, 20, i < game.stagesSurvived ? C.green : C.line);
+    const width = this.panelWidth, x = center - width / 2, y = h - this.bottom - 220;
+    round(ctx, x, y, width, 72, 14, C.paper, C.line);
     text(ctx, `${game.stagesSurvived} / 5`, x + width * 0.25, y + 24, 24, C.ink, 'center', 'serif');
     text(ctx, String(game.completed), x + width * 0.75, y + 24, 24, C.ink, 'center', 'serif');
-    text(ctx, 'STAGES SURVIVED', x + width * 0.25, y + 48, 9, C.muted, 'center');
-    text(ctx, 'TASKS COMPLETED', x + width * 0.75, y + 48, 9, C.muted, 'center');
-    this.button('restart', 'Play again  →', x, y + (this.compact ? 69 : 88), width, 52, true);
-    if (!this.compact) this.button('home', 'Home', x, y + 150, width, 48);
+    text(ctx, 'STAGES SURVIVED', x + width * 0.25, y + 50, 10, C.muted, 'center');
+    text(ctx, 'TASKS COMPLETED', x + width * 0.75, y + 50, 10, C.muted, 'center');
+    this.button('restart', 'Play again  →', x, y + 87, width, 52, true);
+    this.button('home', 'Main menu', x, y + 152, width, 48);
+  }
+
+  private interactionStates() {
+    const ctx = this.ctx;
+    for (const hit of this.hits) {
+      if (hit.eventId !== undefined || hit.disabled) continue;
+      const focused = hit.id === this.focusedId, pressed = hit.id === this.pressedId, hovered = hit.id === this.hoveredId;
+      if (!focused && !pressed && !hovered) continue;
+      round(ctx, hit.x + 2, hit.y + 2, hit.w - 4, hit.h - 4, 10, pressed ? 'rgba(73,62,56,0.18)' : 'rgba(73,62,56,0.05)');
+      ctx.beginPath(); ctx.roundRect(hit.x + 3, hit.y + 3, hit.w - 6, hit.h - 6, 9);
+      ctx.strokeStyle = focused ? '#302921' : C.green; ctx.lineWidth = focused ? 3 : 2; ctx.stroke();
+      if (focused) { ctx.beginPath(); ctx.roundRect(hit.x + 6, hit.y + 6, hit.w - 12, hit.h - 12, 6); ctx.strokeStyle = C.paper; ctx.lineWidth = 1; ctx.stroke(); }
+    }
   }
 
   private scratches(age: number) {
@@ -509,8 +678,10 @@ export class Hud {
   draw(game: Game, world: World, dt: number, force = false) {
     this.selectedTool = game.selected;
     this.elapsed += dt;
+    this.animationTime += dt;
     this.damageFlash = game.phase === 'paused' ? 0 : Math.max(0, 1.15 - world.attackAge);
     if (!force && !this.dirty && this.lastPhase === game.phase && this.elapsed < 1 / 30) return;
+    if (this.lastPhase !== game.phase) { this.modal = undefined; this.clearInteraction(); }
     this.lastPhase = game.phase; this.elapsed = 0; this.dirty = false;
     const ctx = this.ctx;
     ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0); ctx.clearRect(0, 0, this.width, this.height); this.hits = [];
@@ -520,7 +691,8 @@ export class Hud {
     else if (game.phase === 'upgrade') this.upgrade(game);
     else if (game.phase === 'game-over' || game.phase === 'victory') this.ending(game);
     else {
-      this.gameplay(game, world);
+      if (game.inBonus) this.bonusRound(game, world);
+      else this.gameplay(game, world);
       if (game.phase === 'paused') { this.hits = []; this.pause(game); }
     }
     if (!this.rotateRequired && this.pointer && game.active && this.pointerTool) {
@@ -563,6 +735,8 @@ export class Hud {
       ctx.restore();
     }
     if (!this.rotateRequired && this.damageFlash > 0) this.scratches(world.attackAge);
+    if (!this.controls.some(hit => hit.id === this.focusedId)) this.focusedId = undefined;
+    this.interactionStates();
     this.texture.needsUpdate = true; this.syncHits();
   }
 }

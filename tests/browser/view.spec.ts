@@ -30,7 +30,7 @@ test('stage completion resets gaze and zoom while pause preserves the view', asy
   for (let stage = 0; stage < 5; stage++) {
     await page.evaluate(() => {
       const t = window.__CATSLAVE_TEST__; t.world.lookView(180, -60); t.world.zoomView(0.8);
-      t.game.cats.forEach(cat => { cat.nextNeedAt = Infinity; }); t.game.tick(t.game.timeLeft);
+      t.game.cats.forEach(cat => { cat.nextNeedAt = Infinity; }); t.game.tick(t.game.timeLeft); t.finishBonus();
     });
     await expect.poll(() => camera(page)).toEqual(original);
     expect(await page.evaluate(() => window.__CATSLAVE_TEST__.world.viewZoom)).toBe(stage < 4
@@ -40,6 +40,7 @@ test('stage completion resets gaze and zoom while pause preserves the view', asy
     if (stage < 4) {
       const id = await page.evaluate(() => window.__CATSLAVE_TEST__.game.candidates[0].id);
       await tap(page, `adopt:${id}`); await tap(page, `upgrade:${['sweeper', 'mop', 'brush', 'food'][stage]}`);
+      await tap(page, `upgrade:${['sweeper', 'mop', 'brush', 'food'][stage]}`);
       expect(await camera(page)).toEqual(original);
       await expect.poll(() => page.evaluate(() => window.__CATSLAVE_TEST__.world.viewZoom)).toBe(1.65);
     }
@@ -113,8 +114,8 @@ test('edge markers leave visible care targets clear at every look direction', as
   const overlaps = await page.evaluate(() => {
     const t = window.__CATSLAVE_TEST__;
     for (const tool of ['sweeper', 'mop', 'brush', 'food'] as const) {
-      t.game.cats.forEach(c => { c.nextNeedAt = Infinity; }); t.game.tick(t.game.timeLeft);
-      t.game.adopt(t.game.candidates[0].id); t.game.upgrade(tool);
+      t.game.cats.forEach(c => { c.nextNeedAt = Infinity; }); t.game.tick(t.game.timeLeft); t.finishBonus();
+      t.game.adopt(t.game.candidates[0].id); t.game.upgrade(tool); t.game.upgrade(tool);
     }
     t.game.cats.forEach((cat, i) => {
       cat.position = { x: [-3, -1.6, 0, 1.6, 3][i], z: i % 2 ? 0.2 : -2.6 };

@@ -301,7 +301,7 @@ function buildCat(cat: Appearance) {
     }
     const closedEye = group(head, `closedEye${side < 0 ? 0 : 1}`, [side * 0.166, 0.023, 0.296]);
     closedEye.visible = false;
-    curve(closedEye, [[-0.063, -0.002, -0.008], [-0.025, 0.013, 0.008], [0.025, 0.013, 0.008], [0.063, -0.002, -0.008]], 0.004, cat.accent);
+    curve(closedEye, [[-0.063, -0.002, -0.008], [-0.025, 0.013, 0.008], [0.025, 0.013, 0.008], [0.063, -0.002, -0.008]], 0.012, ink);
     for (let i = 0; i < 4; i++) {
       const y = -0.105 - i * 0.025, spread = 0.05 - i * 0.034;
       curve(head, [[side * 0.13, y, 0.337], [side * 0.28, y + spread * 0.3, 0.35], [side * 0.47, y + spread, 0.31]], 0.0024, didi ? '#d7d9dc' : white);

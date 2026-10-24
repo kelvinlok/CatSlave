@@ -20,6 +20,37 @@ async function setup(page: Page, kind: EventKind, live = false) {
   }, { kind, live });
 }
 async function progress(page: Page) { return page.evaluate(() => window.__CATSLAVE_TEST__.game.events[0]?.progress ?? 1); }
+
+test('waving inside the arch completes care with less held time than staying still', async ({ page }) => {
+  await page.goto('/'); await page.waitForFunction(() => !!window.__CATSLAVE_TEST__);
+  const p = await setup(page, 'boredom');
+  await page.evaluate(() => {
+    const g = window.__CATSLAVE_TEST__.game, original = g.work.bind(g);
+    const canvas = document.querySelector('canvas')!;
+    let inMove = false;
+    canvas.addEventListener('pointermove', () => { inMove = true; }, true);
+    canvas.addEventListener('pointermove', () => { inMove = false; });
+    const totals = { held: 0, waved: 0 };
+    Object.assign(window, { wandWork: totals });
+    g.work = (id, amount) => {
+      const accepted = original(id, amount);
+      if (accepted) totals[inMove ? 'waved' : 'held'] += amount;
+      return accepted;
+    };
+  });
+  await page.mouse.move(p.x, p.y); await page.mouse.down();
+  for (let i = 0; i < 60 && await progress(page) < 1; i++) {
+    await page.waitForTimeout(25);
+    await page.mouse.move(p.x + (i % 2 ? -16 : 16), p.y);
+  }
+  await expect.poll(() => progress(page), { timeout: 15000 }).toBe(1); await page.mouse.up();
+  const totals = await page.evaluate(() => (window as unknown as { wandWork: { held: number; waved: number } }).wandWork);
+  expect(totals.waved).toBeGreaterThan(0.3);
+  // A stationary level-one wand requires three seconds of held work. Measure
+  // active frame time so software-GPU stalls do not skew the comparison.
+  expect(totals.held).toBeLessThan(2.7);
+  expect(await page.evaluate(() => window.__CATSLAVE_TEST__.game.tutorialDone)).toBe(true);
+});
 async function meshState(page: Page) {
   return page.evaluate(() => {
     const t = window.__CATSLAVE_TEST__, e = t.game.events[0];
@@ -130,7 +161,9 @@ test('held standalone wand draws the cat into repeated reaches inside the arch a
 test('mobile play arch accepts a stationary hold and leaves the face and floor clear', async ({ page }, info) => {
   const folder = `artifacts/care-polish/${info.project.name}`; await mkdir(folder, { recursive: true });
   await page.goto('/'); await page.waitForFunction(() => !!window.__CATSLAVE_TEST__);
-  const p = await setup(page, 'boredom', true);
+  // Holding still uses real pointer/frame time even with the simulation clock frozen.
+  // Keep screenshot stalls on software GPUs from triggering the interruption pause.
+  const p = await setup(page, 'boredom');
   expect(await page.evaluate(() => {
     const t = window.__CATSLAVE_TEST__, event = t.game.events[0], arch = t.world.playArea(event);
     return t.hud.careHit(event.id, { x: arch.x, y: arch.y }) || t.hud.careHit(event.id, { x: arch.x, y: arch.y + 70 });

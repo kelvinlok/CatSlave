@@ -3,7 +3,7 @@ import type { Game } from '../../src/simulation';
 import type { World } from '../../src/world';
 import type { Hud } from '../../src/hud';
 
-declare global { interface Window { __CATSLAVE_TEST__: { game: Game; world: World; hud: Hud; refresh(effectsDt?: number): void; setManualClock(value: boolean): void; stats(): object; }; } }
+declare global { interface Window { __CATSLAVE_TEST__: { game: Game; world: World; hud: Hud; refresh(effectsDt?: number): void; setManualClock(value: boolean): void; finishBonus(): void; stats(): object; }; } }
 type Hit = { x: number; y: number; w: number; h: number; id: string; eventId?: number; arch?: { x: number; y: number; outerY: number; innerY: number } };
 async function hit(page: Page, id: string): Promise<Hit> {
   await expect.poll(() => page.evaluate(id => !!window.__CATSLAVE_TEST__?.hud.hits.find(h => h.id === id), id)).toBe(true);
@@ -27,8 +27,7 @@ async function stroke(page: Page, h: Hit, turns = 4, duration = 0) {
 }
 async function care(page: Page) {
   const event = (await state(page)).events[0]; if (!event) return;
-  const tools = { poop: 'sweeper', vomit: 'mop', fur: 'brush', hunger: 'food', boredom: 'toy' };
-  const tool = tools[event.kind];
+  const tool = await page.evaluate(kind => window.__CATSLAVE_TEST__.game.toolFor(kind).id, event.kind);
   await page.evaluate(id => { const t = window.__CATSLAVE_TEST__; const e = t.game.events.find(e => e.id === id)!; t.refresh(); }, event.id);
   await tap(page, `tool:${tool}`);
   if (await page.evaluate(id => window.__CATSLAVE_TEST__.hud.hits.some(h => h.id === `focus:${id}`), event.id)) await tap(page, `focus:${event.id}`);
@@ -39,6 +38,7 @@ async function care(page: Page) {
     await expect.poll(async () => (await state(page)).events.some(e => e.id === event.id), { timeout: 15_000 }).toBe(false);
     await page.mouse.up();
   }
+  else if (tool === 'vacuum') await page.mouse.click(h.x + h.w / 2, h.y + h.h / 2);
   else await stroke(page, h, 12);
   await expect.poll(async () => {
     const current = await state(page);
@@ -73,7 +73,7 @@ test('renders only a canvas and completes all five tutorial gestures', async ({ 
 });
 
 test('plays an accelerated five-stage run through real care, adoption, and upgrade UI', async ({ page }, info) => {
-  test.setTimeout(300_000); // Real pointer strokes on software-rendered mobile browsers.
+  test.setTimeout(420_000); // Real pointer care and bonus pats on software-rendered mobile browsers.
   await tap(page, 'start');
   const upgradeOrder = ['sweeper', 'mop', 'brush', 'food'];
   for (let stage = 0; stage < 5; stage++) {
@@ -90,12 +90,25 @@ test('plays an accelerated five-stage run through real care, adoption, and upgra
       t.game.tick(remaining); t.refresh();
     });
     if (stage < 4) {
+      if ((await state(page)).phase === 'bonus') {
+        await tap(page, 'bonus-start');
+        await page.evaluate(() => { const t = window.__CATSLAVE_TEST__; t.game.tick(3); t.refresh(); });
+        const ids = await page.evaluate(() => window.__CATSLAVE_TEST__.game.bonus!.catIds);
+        for (let round = 0; round < 5; round++) {
+          for (const id of ids) await tap(page, `pat:${id}`);
+          await page.evaluate(() => { const t = window.__CATSLAVE_TEST__; t.game.tick(2); t.refresh(); });
+        }
+        expect(await page.evaluate(() => window.__CATSLAVE_TEST__.game.bonus!.won)).toBe(true);
+        await tap(page, 'bonus-continue');
+      }
       expect((await state(page)).phase).toBe('adoption');
       if (stage === 0) await page.screenshot({ path: `test-results/adoption-${info.project.name}.png` });
       const id = await page.evaluate(() => window.__CATSLAVE_TEST__.game.candidates[0].id);
       await tap(page, `adopt:${id}`);
       if (stage === 0) await page.screenshot({ path: `test-results/upgrade-${info.project.name}.png` });
       await tap(page, `upgrade:${upgradeOrder[stage]}`);
+      if ((await state(page)).phase === 'upgrade') await tap(page, `upgrade:${upgradeOrder[stage]}`);
+      expect((await state(page)).phase).toBe('playing');
       expect((await state(page)).count).toBe(stage + 2);
     }
   }
@@ -143,7 +156,7 @@ test('turns the view without moving, retains work, pauses, resizes, and loses a 
   await page.evaluate(() => window.__CATSLAVE_TEST__.setManualClock(true));
   await tap(page, 'resume');
   expect((await state(page)).events[0].progress).toBe(partial);
-  await tap(page, 'pause'); await tap(page, 'restart');
+  await tap(page, 'pause'); await tap(page, 'home'); await tap(page, 'confirm-home'); await tap(page, 'start');
   await page.evaluate(() => {
     const t = window.__CATSLAVE_TEST__; t.game.hp = 10; t.game.spawn(t.game.cats[0], 'poop');
     t.game.events[0].deadline = t.game.clock; t.game.events[0].nextAttackAt = t.game.clock + 1; t.game.tick(1); t.refresh();

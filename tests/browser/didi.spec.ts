@@ -11,8 +11,8 @@ test('的的 joins the household and keeps his signature tongue in animated pose
     const t = window.__CATSLAVE_TEST__, game = t.game;
     t.setManualClock(true); game.reset();
     for (const appearance of ['latte', 'didi']) {
-      game.stageElapsed = game.config.duration - 0.01; game.tick(0.02);
-      game.adopt(game.candidates.find(cat => cat.appearance === appearance)!.id); game.upgrade('food');
+      game.stageElapsed = game.config.duration - 0.01; game.tick(0.02); t.finishBonus();
+      game.adopt(game.candidates.find(cat => cat.appearance === appearance)!.id); for (const tool of ['food', 'sweeper', 'mop', 'brush', 'toy'] as const) while (game.phase === 'upgrade' && game.levels[tool] < 3) game.upgrade(tool);
     }
     t.refresh(); return game.cats.map(cat => cat.name);
   });

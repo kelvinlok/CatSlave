@@ -1,7 +1,8 @@
-import { ATTACK_DAMAGE, ATTACK_INTERVAL, ATTACK_WARNING, EFFICIENCY, PALETTE, ROOM, STAGES, STRETCH_DURATION, TOOLS, TOOL_BY_ID } from './config';
+import { ATTACK_DAMAGE, ATTACK_INTERVAL, ATTACK_WARNING, CLEANING_TOOLS, EFFICIENCY, PALETTE, ROOM, STAGES, STRETCH_DURATION, TOOLS, TOOL_BY_ID, VACUUM, toolMatches } from './config';
 import type { CareEvent, CatDefinition, CatState, EventKind, Phase, ToolId } from './types';
 import { FURNITURE } from './furniture';
 import { beginVisit, tickVisit } from './cat-behavior';
+import { BONUS_GAMES, BonusRound } from './bonus';
 
 export class Random {
   constructor(private seed: number) {}
@@ -12,7 +13,7 @@ export class Random {
 
 export class Game {
   phase: Phase = 'title';
-  resumePhase: 'playing' | 'tutorial' = 'playing';
+  resumePhase: 'playing' | 'tutorial' | 'bonus' = 'playing';
   pauseReason = 'A little breather';
   hp = 100;
   stage = 0;
@@ -20,8 +21,12 @@ export class Game {
   stageElapsed = 0;
   completed = 0;
   stagesSurvived = 0;
+  lastStagePerfect = false;
+  upgradesRemaining = 0;
+  bonus?: BonusRound;
+  private stageDamageStart = 0;
   selected: ToolId = 'sweeper';
-  levels: Record<ToolId, number> = { sweeper: 1, mop: 1, brush: 1, food: 1, toy: 1 };
+  levels: Record<ToolId, number> = { sweeper: 1, mop: 1, brush: 1, food: 1, toy: 1, vacuum: 1 };
   cats: CatState[] = [];
   events: CareEvent[] = [];
   candidates: CatDefinition[] = [];
@@ -40,6 +45,11 @@ export class Game {
   constructor(seed = Date.now()) { this.random = new Random(seed); this.movementRandom = new Random(seed ^ 0x51ca7); this.cats = [this.makeCat(PALETTE[0], 0)]; }
   get config() { return STAGES[this.stage]; }
   get active() { return this.phase === 'playing' || this.phase === 'tutorial'; }
+  get running() { return this.active || this.phase === 'bonus'; }
+  get inBonus() { return this.phase === 'bonus' || this.phase === 'paused' && this.resumePhase === 'bonus'; }
+  get vacuumUnlocked() { return CLEANING_TOOLS.every(id => this.levels[id] >= 3); }
+  get availableTools() { return this.vacuumUnlocked ? [VACUUM, TOOL_BY_ID.food, TOOL_BY_ID.toy] : TOOLS; }
+  toolFor(kind: EventKind) { return this.availableTools.find(tool => toolMatches(tool, kind))!; }
   get timeLeft() { return Math.max(0, this.config.duration - this.stageElapsed); }
 
   private makeCat(palette: typeof PALETTE[number], index: number): CatState {
@@ -51,8 +61,10 @@ export class Game {
   reset(tutorial = false) {
     this.hp = 100; this.stage = 0; this.clock = 0; this.stageElapsed = 0;
     this.completed = 0; this.stagesSurvived = 0; this.events = []; this.candidates = [];
+    this.lastStagePerfect = false; this.upgradesRemaining = 0; this.stageDamageStart = 0;
+    this.bonus = undefined;
     this.selected = 'sweeper'; this.tutorialStep = 0; this.tutorialDone = false;
-    this.levels = { sweeper: 1, mop: 1, brush: 1, food: 1, toy: 1 };
+    this.levels = { sweeper: 1, mop: 1, brush: 1, food: 1, toy: 1, vacuum: 1 };
     this.cats = [this.makeCat(PALETTE[0], 0)]; this.feedback = ''; this.damageSerial = 0; this.lastAttackCatId = undefined;
     this.wrongToolEventId = undefined; this.wrongToolUntil = 0;
     if (tutorial) { this.phase = 'tutorial'; this.spawn(this.cats[0], TOOLS[0].need); }
@@ -62,6 +74,8 @@ export class Game {
 
   startStage() {
     this.phase = 'playing'; this.stageElapsed = 0; this.events = []; this.feedback = '';
+    this.bonus = undefined;
+    this.stageDamageStart = this.damageSerial;
     this.cats.forEach((cat, i) => {
       cat.nextNeedAt = this.clock + 1.5 + i * 1.1; cat.attackUntil = 0;
       const starts = [{ x: 0, z: 1.2 }, { x: -2.2, z: -3.8 }, { x: 2.2, z: -4.4 }, { x: -2, z: 2.8 }, { x: 2, z: 3.2 }];
@@ -104,6 +118,19 @@ export class Game {
   }
 
   tick(dt: number) {
+    if (this.phase === 'bonus' && this.bonus) {
+      const before = this.bonus.status;
+      const failedBefore = this.bonus.failedCatId;
+      this.bonus.tick(dt);
+      if (before !== this.bonus.status) {
+        if (this.bonus.failedCatId !== undefined && failedBefore === undefined) {
+          this.damageSerial++; this.lastAttackCatId = this.bonus.failedCatId;
+        }
+        if (this.bonus.won) this.upgradesRemaining = 2;
+        this.revision++;
+      }
+      return;
+    }
     if (!this.active || dt <= 0 || !Number.isFinite(dt)) return;
     // Substeps keep deadlines, lethal attacks, and stage boundaries deterministic.
     let remaining = dt;
@@ -208,8 +235,8 @@ export class Game {
     const event = this.events.find(e => e.id === eventId);
     if (!event) return false;
     const tool = TOOL_BY_ID[this.selected];
-    if (tool.need !== event.kind) { this.rejectTool(event); return false; }
-    event.progress = Math.min(1, event.progress + amount * EFFICIENCY[this.levels[this.selected]] / tool.work);
+    if (!this.availableTools.some(t => t.id === this.selected) || !toolMatches(tool, event.kind)) { this.rejectTool(event); return false; }
+    event.progress = this.selected === 'vacuum' ? 1 : Math.min(1, event.progress + amount * EFFICIENCY[this.levels[this.selected]] / tool.work);
     if (event.progress >= 1 - 1e-7) {
       const cat = this.cats.find(c => c.id === event.catId)!;
       cat.happyUntil = this.clock + 1.8; cat.attackUntil = 0;
@@ -224,21 +251,47 @@ export class Game {
     return true;
   }
 
-  select(tool: ToolId) { if (this.active) { this.selected = tool; this.revision++; } }
+  select(tool: ToolId) {
+    if (!this.active) return;
+    if (this.vacuumUnlocked && CLEANING_TOOLS.some(id => id === tool)) tool = 'vacuum';
+    if (!this.availableTools.some(t => t.id === tool)) return;
+    this.selected = tool; this.revision++;
+  }
   rejectTool(event: CareEvent) {
     this.wrongToolEventId = event.id; this.wrongToolUntil = this.clock + 1.5;
-    this.say(`Use the ${TOOLS.find(t => t.need === event.kind)!.name.toLowerCase()} for this`);
+    this.say(`Use the ${this.toolFor(event.kind).name.toLowerCase()} for this`);
   }
   say(message: string) { this.feedback = message; this.feedbackUntil = this.clock + 2; }
   pause(reason = 'A little breather') {
-    if (!this.active) return;
-    this.resumePhase = this.phase as 'playing' | 'tutorial'; this.phase = 'paused'; this.pauseReason = reason; this.revision++;
+    if (!this.running) return;
+    this.resumePhase = this.phase as 'playing' | 'tutorial' | 'bonus'; this.phase = 'paused'; this.pauseReason = reason; this.revision++;
   }
   resume() { if (this.phase === 'paused') { this.phase = this.resumePhase; this.revision++; } }
 
   private finishStage() {
+    // The stage timer can cut care short; only HP loss disqualifies perfection.
+    this.lastStagePerfect = this.damageSerial === this.stageDamageStart;
+    this.upgradesRemaining = this.stage < STAGES.length - 1 ? 1 : 0;
     this.events = []; this.stagesSurvived++; this.feedback = '';
     if (this.stage === STAGES.length - 1) { this.phase = 'victory'; this.revision++; return; }
+    if (this.lastStagePerfect) {
+      this.bonus = new BonusRound(this.random.choose(BONUS_GAMES), this.cats.map(cat => cat.id));
+      this.phase = 'bonus'; this.revision++; return;
+    }
+    this.openAdoption();
+  }
+
+  startBonus() { if (this.phase === 'bonus') { this.bonus?.start(); this.revision++; } }
+  pat(catId: number) {
+    if (this.phase !== 'bonus' || !this.bonus?.pat(catId)) return false;
+    this.revision++; return true;
+  }
+  continueBonus() {
+    if (this.phase !== 'bonus' || this.bonus?.status !== 'result') return;
+    this.openAdoption();
+  }
+
+  private openAdoption() {
     this.hp = Math.min(100, this.hp + 20);
     const available = PALETTE.filter(p => !this.cats.some(c => c.color === p.color));
     const featured = this.stage === 0 ? 'latte' : this.stage === 1 ? 'didi' : this.stage === 2 ? 'xiaosai' : undefined;
@@ -257,8 +310,12 @@ export class Game {
     this.candidates = []; this.phase = 'upgrade'; this.revision++;
   }
   upgrade(tool: ToolId) {
-    if (this.phase !== 'upgrade' || this.levels[tool] >= 3) return;
-    this.levels[tool]++; this.stage++; this.startStage();
+    if (this.phase !== 'upgrade' || this.upgradesRemaining <= 0 || !TOOL_BY_ID[tool] || tool === 'vacuum' || this.levels[tool] >= 3) return;
+    const wasUnlocked = this.vacuumUnlocked;
+    this.levels[tool]++; this.upgradesRemaining--; this.revision++;
+    if (!wasUnlocked && this.vacuumUnlocked) this.selected = 'vacuum';
+    if (this.upgradesRemaining === 0) { this.stage++; this.startStage(); }
+    if (!wasUnlocked && this.vacuumUnlocked) this.say('Vacuum unlocked! Tap any mess to clean it.');
   }
   urgency(event: CareEvent) {
     if (this.phase === 'tutorial' || (this.phase === 'paused' && this.resumePhase === 'tutorial')) return 'calm';

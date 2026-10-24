@@ -91,6 +91,7 @@ export class World {
   private previews = new THREE.Group();
   private previewCats: CatModel[] = [];
   private previewKey = '';
+  private bonusCamera = false;
 
   constructor() {
     this.attackScene.add(new THREE.HemisphereLight('#fff2e7', '#604540', 3));
@@ -223,6 +224,14 @@ export class World {
       y: this.viewport.y + (1 - this.vector.y) * this.viewport.h / 2, visible: this.vector.z < 1 && this.vector.z > -1 };
   }
   catPosition(id: number) { return this.residents.get(id)?.model.root.position.clone(); }
+  bonusPatTarget(id: number) {
+    const model = this.residents.get(id)?.model;
+    if (!model) return undefined;
+    model.root.updateMatrixWorld(true);
+    const rump = new THREE.Vector3(0, 0.78, -0.66);
+    model.body.localToWorld(rump);
+    return this.project(rump);
+  }
   catLabelPosition(id: number) {
     const model = this.residents.get(id)?.model;
     return model ? model.root.position.clone().add(new THREE.Vector3(0, 1.85 * model.root.scale.y, 0)) : undefined;
@@ -269,8 +278,18 @@ export class World {
   }
 
   update(game: Game, dt: number, time: number, effectsDt = dt) {
+    if (game.inBonus) {
+      this.bonusCamera = true;
+      const halfWidth = Math.max(0.9, game.cats.length * 0.62);
+      const distance = Math.max(3, halfWidth / (Math.tan(THREE.MathUtils.degToRad(65 / 2)) * this.camera.aspect) * 1.15);
+      this.camera.position.set(0, 1.65 + distance * 0.12, distance);
+      this.camera.zoom = 1; this.camera.lookAt(0, 0.65, 0);
+      this.camera.updateProjectionMatrix();
+    } else if (this.bonusCamera) {
+      this.bonusCamera = false; this.camera.position.set(0, 1.65, 5.8); this.applyView();
+    }
     const careDt = Math.max(0, Math.min(0.1, game.clock - this.lastCareClock));
-    if (game.clock < this.lastCareClock || ['title', 'adoption', 'upgrade'].includes(game.phase)) {
+    if (game.clock < this.lastCareClock || game.inBonus || ['title', 'adoption', 'upgrade'].includes(game.phase)) {
       for (const { mesh } of this.completedMesses.values()) { mesh.removeFromParent(); disposeMess(mesh); }
       this.completedMesses.clear();
     }
@@ -283,7 +302,7 @@ export class World {
     for (const [id, resident] of this.residents) if (!game.cats.some(cat => cat.id === id)) {
       this.scene.remove(resident.model.root); disposeCat(resident.model); this.residents.delete(id);
     }
-    for (const cat of game.cats) {
+    for (const [index, cat] of game.cats.entries()) {
       let resident = this.residents.get(cat.id);
       if (!resident) {
         const model = createCat(cat); model.root.userData.catId = cat.id; this.scene.add(model.root);
@@ -297,7 +316,14 @@ export class World {
       const happy = cat.happyUntil > game.clock;
       model.root.scale.setScalar(ROOM.catScale);
       const attention = event?.kind === 'boredom' && this.carePointer?.eventId === event.id ? this.carePointer : undefined;
-      animateCat(model, cat, game.clock, { angry, happy, focus: attention?.working ? attention.focus : undefined, engagement: attention?.working ? 1 : 0 });
+      if (game.inBonus && game.bonus) {
+        model.root.position.set((index - (game.cats.length - 1) / 2) * 1.24, 0.07, 0);
+        model.root.rotation.y = Math.PI; model.root.scale.setScalar(0.68);
+        animateCat(model, { ...cat, activity: 'idle' }, game.bonus.clock, {
+          angry: game.bonus.failedCatId === cat.id,
+          buttPat: { lift: game.bonus.lift(cat.id), side: index < (game.cats.length - 1) / 2 ? -1 : 1 },
+        });
+      } else animateCat(model, cat, game.clock, { angry, happy, focus: attention?.working ? attention.focus : undefined, engagement: attention?.working ? 1 : 0 });
 
     }
     for (const [id, mesh] of this.messes) if (!game.events.some(e => e.id === id)) {

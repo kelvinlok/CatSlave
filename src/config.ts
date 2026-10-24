@@ -1,4 +1,4 @@
-import type { CatDefinition, StageConfig, ToolDefinition, ToolId } from './types';
+import type { CatDefinition, EventKind, StageConfig, ToolDefinition, ToolId } from './types';
 
 export const STAGES: readonly StageConfig[] = [
   { duration: 45, cats: 1, delay: [8, 12], patience: 22 },
@@ -9,13 +9,17 @@ export const STAGES: readonly StageConfig[] = [
 ];
 // Movement work is measured in fractions of the short viewport edge.
 export const TOOLS: readonly ToolDefinition[] = [
-  { id: 'sweeper', name: 'Sweeper', need: 'poop', label: 'Poop patrol', instruction: 'Sweep away all three layers', gesture: 'sweep', color: '#d6a36e', work: 0.9 },
-  { id: 'mop', name: 'Mop', need: 'vomit', label: 'A little accident', instruction: 'Rub back and forth', gesture: 'rub', color: '#91b9bd', work: 0.9 },
-  { id: 'brush', name: 'Brush', need: 'fur', label: 'Fluff everywhere', instruction: 'Gather the fluff, then sweep away', gesture: 'sweep', color: '#c0acd6', work: 0.9 },
-  { id: 'food', name: 'Food', need: 'hunger', label: 'Dinner, please', instruction: 'Hold over the bowl to pour', gesture: 'pour', color: '#dda079', work: 2 },
-  { id: 'toy', name: 'Wand', need: 'boredom', label: 'Play with me', instruction: 'Hold the wand in the arch above me', gesture: 'hold', color: '#a5b99a', work: 3 },
+  { id: 'sweeper', name: 'Sweeper', need: 'poop', gesture: 'sweep', color: '#d6a36e', work: 0.9 },
+  { id: 'mop', name: 'Mop', need: 'vomit', gesture: 'rub', color: '#91b9bd', work: 0.9 },
+  { id: 'brush', name: 'Brush', need: 'fur', gesture: 'sweep', color: '#c0acd6', work: 0.9 },
+  { id: 'food', name: 'Food', need: 'hunger', gesture: 'pour', color: '#dda079', work: 2 },
+  { id: 'toy', name: 'Wand', need: 'boredom', gesture: 'hold', color: '#a5b99a', work: 3 },
 ];
-export const TOOL_BY_ID = Object.fromEntries(TOOLS.map(t => [t.id, t])) as Record<ToolId, ToolDefinition>;
+export const CLEANING_TOOLS = ['sweeper', 'mop', 'brush'] as const;
+export const VACUUM: ToolDefinition = { id: 'vacuum', name: 'Vacuum', need: 'poop', needs: ['poop', 'vomit', 'fur'],
+  gesture: 'tap', color: '#81a6a1', work: 1 };
+export const TOOL_BY_ID = Object.fromEntries([...TOOLS, VACUUM].map(t => [t.id, t])) as Record<ToolId, ToolDefinition>;
+export function toolMatches(tool: ToolDefinition, kind: EventKind) { return tool.needs ? tool.needs.includes(kind) : tool.need === kind; }
 export const PALETTE: readonly (Pick<CatDefinition, 'name' | 'color' | 'accent'> & Partial<Pick<CatDefinition, 'appearance'>>)[] = [
   { name: 'Choco', color: '#604239', accent: '#49312c', appearance: 'choco' },
   { name: 'Latte', color: '#f8f4e9', accent: '#514944', appearance: 'latte' },

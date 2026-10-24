@@ -46,6 +46,32 @@ describe('gesture ownership', () => {
     g.begin({ x: 50, y: 50 }, 0, 400, route); g.cancel();
     expect(g.hold(0.03, true).work).toBe(0);
   });
+  it('rewards active wand waving at up to three times the stationary rate', () => {
+    for (const edge of [320, 800]) {
+      const held = new Gesture(), waved = new Gesture();
+      for (const g of [held, waved]) g.begin({ x: 0, y: 50 }, 0, edge, { kind: 'care', eventId: 7, tool: TOOL_BY_ID.toy });
+      let stillWork = 0, activeWork = 0;
+      for (let frame = 1; frame <= 60; frame++) {
+        stillWork += held.hold(1 / 60, true).work;
+        const x = edge * 0.1 * Math.sin(frame / 60 * Math.PI * 4);
+        activeWork += waved.move({ x, y: 50 }, frame * 1000 / 60, true).work + waved.hold(1 / 60, true).work;
+      }
+      expect(stillWork).toBeCloseTo(1);
+      expect(activeWork).toBeGreaterThan(stillWork * 2.5);
+      expect(activeWork).toBeLessThanOrEqual(stillWork * 3 + 1e-7);
+    }
+  });
+  it('does not reward wand re-entry, timestamp bursts, off-target movement or food waving', () => {
+    const g = new Gesture();
+    g.begin({ x: 50, y: 50 }, 0, 400, { kind: 'care', eventId: 7, tool: TOOL_BY_ID.toy });
+    expect(g.move({ x: 1000, y: 50 }, 20, false).work).toBe(0);
+    expect(g.move({ x: 50, y: 50 }, 40, true).work).toBe(0);
+    expect(g.move({ x: 70, y: 50 }, 40, true).work).toBe(0);
+    expect(g.move({ x: 1000, y: 50 }, 1000, true).work).toBeCloseTo(0.1);
+    g.cancel(); expect(g.move({ x: 50, y: 50 }, 1050, true).work).toBe(0);
+    g.begin({ x: 50, y: 50 }, 0, 400, { kind: 'care', eventId: 8, tool: TOOL_BY_ID.food });
+    expect(g.move({ x: 90, y: 50 }, 20, true).work).toBe(0);
+  });
   it('only counts movement in the target and clamps teleport jumps', () => {
     const g = new Gesture(); g.begin({ x: 50, y: 50 }, 0, 400, { kind: 'care', eventId: 1, tool: TOOL_BY_ID.brush });
     expect(g.move({ x: 100, y: 50 }, 20, false).work).toBe(0); expect(g.move({ x: 500, y: 50 }, 40, true).work).toBeCloseTo(0.12);

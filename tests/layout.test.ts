@@ -7,7 +7,7 @@ import * as THREE from 'three';
 it('keeps thumb targets outside the portrait room and clear of phone safe areas', () => {
   const safe = { left: 0, right: 0, top: 47, bottom: 34 };
   const l = gameLayout(390, 664, safe);
-  expect(l.room.h).toBeGreaterThan(390);
+  expect(l.room.h).toBeGreaterThan(350); // Includes a dedicated feedback strip outside the room.
   for (const r of [...l.tools, ...l.viewControls, l.pause]) {
     expect(r.w).toBeGreaterThanOrEqual(48); expect(r.h).toBeGreaterThanOrEqual(48);
     expect(r.y + r.h <= l.room.y || r.y >= l.room.y + l.room.h).toBe(true);
