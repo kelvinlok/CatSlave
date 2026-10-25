@@ -5,7 +5,9 @@ import { winBonus } from './support/bonus';
 
 function perfectStage() {
   const game = new Game(42); game.reset(); game.cats[0].nextNeedAt = Infinity;
-  game.tick(game.timeLeft); return game;
+  game.tick(game.timeLeft);
+  // These progression cases specifically exercise Butt Pats' scratch deadlines.
+  game.bonus = new BonusRound('butt-pats', game.cats.map(cat => cat.id)); return game;
 }
 
 describe('Butt Pats bonus', () => {

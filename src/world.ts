@@ -10,6 +10,9 @@ import { createFurniture } from './furniture-model';
 import { animateCat } from './cat-animation';
 import { BENCH, BED, POST, RUG } from './furniture';
 import { gameLayout, type Rect } from './layout';
+import { PawdicureModel } from './pawdicure-model';
+import type { PawdicureRound } from './pawdicure';
+import { updateBlenderCatRig } from './blender-cat-rig';
 
 const sphere = new THREE.SphereGeometry(1, 16, 10);
 const box = new THREE.BoxGeometry(1, 1, 1);
@@ -100,8 +103,14 @@ export class World {
   private freeWand = new THREE.Group();
   private freeBowls = new Map<number, THREE.Group>();
   private freePats = new Map<number, number>();
+  private groomingPaw = new PawdicureModel();
+  private groomingBackdrop = new THREE.Group();
 
   constructor() {
+    this.scene.add(this.groomingPaw.root, this.groomingBackdrop);
+    this.groomingPaw.root.visible = false; this.groomingBackdrop.visible = false;
+    block(this.groomingBackdrop, '#e4d5bf', [0, 1.5, -1.4], [15, 12, .12]);
+    ball(this.groomingBackdrop, '#bac6b0', [0, -.35, 1], [2.3, .24, 1.8]);
     this.attackScene.add(new THREE.HemisphereLight('#fff2e7', '#604540', 3));
     const attackLight = new THREE.DirectionalLight('#ffffff', 3); attackLight.position.set(-2, 3, 4); this.attackScene.add(attackLight);
     this.scene.background = new THREE.Color('#e8ddca');
@@ -293,6 +302,44 @@ export class World {
       y: this.viewport.y + (1 - this.vector.y) * this.viewport.h / 2, visible: this.vector.z < 1 && this.vector.z > -1 };
   }
   catPosition(id: number) { return this.residents.get(id)?.model.root.position.clone(); }
+  pawClawTarget(index: number) {
+    const toe = this.groomingPaw.toes[index];
+    if (!this.groomingPaw.root.visible || !toe?.visible) return undefined;
+    return this.project(toe.localToWorld(new THREE.Vector3(0, -.015, .25)));
+  }
+  pawTimingTarget(paw: PawdicureRound) {
+    if (paw.activeClaw === undefined) return undefined;
+    const current = this.pawClawTarget(paw.activeClaw);
+    if (!current) return undefined;
+    const previous = paw.lastSnip?.pawIndex === paw.pawIndex && paw.lastSnip.success
+      ? this.pawClawTarget(paw.lastSnip.clawIndex) : undefined;
+    const t = THREE.MathUtils.clamp((paw.snipAge - .12) / .10, 0, 1), blend = t * t * (3 - 2 * t);
+    const x = previous ? THREE.MathUtils.lerp(previous.x, current.x, blend) : current.x;
+    const y = previous ? THREE.MathUtils.lerp(previous.y, current.y, blend) : current.y;
+    const v = this.viewport;
+    const radius = Math.min(42, Math.max(29, v.w * .095), x - v.x - 8, v.x + v.w - x - 8, y - v.y - 8, v.y + v.h - y - 8);
+    return { x, y, radius };
+  }
+  pawTapArea() {
+    if (!this.groomingPaw.root.visible) return undefined;
+    const root = this.groomingPaw.root;
+    root.updateMatrixWorld(true);
+    const regions: { x: number; y: number; rx: number; ry: number }[] = [];
+    const region = (parent: THREE.Object3D, x: number, y: number, rx: number, ry: number) => {
+      const p = this.project(parent.localToWorld(new THREE.Vector3(x, y, .26)));
+      const ex = this.project(parent.localToWorld(new THREE.Vector3(x + rx, y, .26)));
+      const ey = this.project(parent.localToWorld(new THREE.Vector3(x, y + ry, .26)));
+      regions.push({ x: p.x, y: p.y, rx: Math.abs(ex.x - p.x) + 7, ry: Math.abs(ey.y - p.y) + 7 });
+    };
+    region(root, 0, .05, 1.02, .68); region(root, 0, -.55, .6, .55);
+    this.groomingPaw.toes.forEach(toe => { if (toe.visible) region(toe, 0, .07, .30, .44); });
+    const v = this.viewport;
+    const x = Math.max(v.x, Math.min(...regions.map(p => p.x - p.rx)));
+    const y = Math.max(v.y, Math.min(...regions.map(p => p.y - p.ry)));
+    const right = Math.min(v.x + v.w, Math.max(...regions.map(p => p.x + p.rx)));
+    const bottom = Math.min(v.y + v.h, Math.max(...regions.map(p => p.y + p.ry)));
+    return { x, y, w: right - x, h: bottom - y, regions };
+  }
   bonusPatTarget(id: number) {
     const model = this.residents.get(id)?.model;
     if (!model) return undefined;
@@ -359,6 +406,12 @@ export class World {
       this.camera.position.set(0, 0.65 + distance * 0.48, 3 + distance);
       this.camera.zoom = 1; this.camera.lookAt(0, 0.65, 3);
       this.camera.updateProjectionMatrix();
+    } else if (game.inBonus && game.bonus?.paw) {
+      this.bonusCamera = true;
+      const distance = Math.max(2.1, 1.6 / (Math.tan(THREE.MathUtils.degToRad(58 / 2)) * this.camera.aspect));
+      this.camera.position.set(0, 1.35, 1.35 + distance);
+      this.camera.zoom = 1; this.camera.lookAt(0, 1.35, 0);
+      this.camera.updateProjectionMatrix();
     } else if (game.inBonus) {
       this.bonusCamera = true;
       const halfWidth = Math.max(0.9, game.cats.length * 0.62);
@@ -371,6 +424,10 @@ export class World {
       this.camera.position.set(0, 1.65, 5.8); this.applyView();
     }
     const careDt = Math.max(0, Math.min(0.1, game.clock - this.lastCareClock));
+    const paw = game.inBonus ? game.bonus?.paw : undefined;
+    this.groomingPaw.root.visible = !!paw;
+    this.groomingBackdrop.visible = !!paw;
+    if (paw) this.groomingPaw.update(paw, game.cats.find(cat => cat.id === paw.selectedCatId) ?? game.cats[0], game.bonus!.won);
     if (game.clock < this.lastCareClock || game.inFreePlay || game.inBonus || ['title', 'adoption', 'upgrade'].includes(game.phase)) {
       for (const { mesh } of this.completedMesses.values()) { mesh.removeFromParent(); disposeMess(mesh); }
       this.completedMesses.clear();
@@ -414,13 +471,24 @@ export class World {
       }
       const { model, base } = resident;
       base.set(cat.position.x, cat.elevation > 0 ? cat.elevation + 0.012 : this.floorHeight(cat.position.x, cat.position.z), cat.position.z);
-      model.root.position.copy(base); model.root.rotation.y = cat.yaw; model.root.visible = !isPreview;
+      model.root.position.copy(base); model.root.rotation.y = cat.yaw;
+      model.root.visible = !isPreview && (!paw || cat.id === (paw.selectedCatId ?? game.cats[0]?.id));
       const event = game.events.find(e => e.catId === cat.id);
       const angry = !!event && game.urgency(event) === 'angry';
       const happy = cat.happyUntil > game.clock;
       model.root.scale.setScalar(ROOM.catScale);
       const attention = event?.kind === 'boredom' && this.carePointer?.eventId === event.id ? this.carePointer : undefined;
-      if (game.inBonus && game.bonus) {
+      if (paw) {
+        const shortView = this.viewport.h < 300;
+        model.root.position.set(0, shortView ? 1.4 : 1.65, -.05); model.root.rotation.y = 0; model.root.scale.setScalar(shortView ? .95 : 1.25);
+        animateCat(model, { ...cat, activity: 'idle' }, game.bonus!.clock, {
+          happy: game.bonus!.won, angry: paw.mood === 'moving',
+        });
+        if (paw.mood === 'warning') {
+          model.ears.forEach((ear,i) => ear.rotation.z += (i ? -1 : 1) * Math.sin(paw.clock*23)*.22);
+          updateBlenderCatRig(model.root);
+        }
+      } else if (game.inBonus && game.bonus) {
         model.root.position.set((index - (game.cats.length - 1) / 2) * 1.24, 0.07, 0);
         model.root.rotation.y = Math.PI; model.root.scale.setScalar(0.68);
         animateCat(model, { ...cat, activity: 'idle' }, game.bonus.clock, {

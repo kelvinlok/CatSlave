@@ -10,14 +10,18 @@ async function tap(page: Page, id: string) {
 }
 async function setup(page: Page, count: number) {
   await page.goto('/'); await page.waitForFunction(() => !!window.__CATSLAVE_TEST__);
-  await page.evaluate(count => {
+  await page.evaluate(async count => {
     const t = window.__CATSLAVE_TEST__, g = t.game; t.setManualClock(true); g.reset();
     for (let i = 1; i < count; i++) {
       g.cats.forEach(c => c.nextNeedAt = Infinity); g.tick(g.timeLeft); t.finishBonus();
       g.adopt(g.candidates[0].id);
       while (g.phase === 'upgrade') g.upgrade(g.availableTools.find(tool => tool.id !== 'vacuum' && g.levels[tool.id] < 3)!.id);
     }
-    g.cats.forEach(c => c.nextNeedAt = Infinity); g.tick(g.timeLeft); t.refresh();
+    g.cats.forEach(c => c.nextNeedAt = Infinity); g.tick(g.timeLeft);
+    // This suite specifically exercises Butt Pats; Pawdicure has its own input suite.
+    const modulePath = '/src/bonus.ts';
+    const { BonusRound } = await import(/* @vite-ignore */ modulePath);
+    g.bonus = new BonusRound('butt-pats', g.cats.map(c => c.id)); t.refresh();
   }, count);
 }
 async function tick(page: Page, seconds: number, effects = 0) {

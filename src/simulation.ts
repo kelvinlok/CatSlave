@@ -32,6 +32,7 @@ export class Game {
   lastStagePerfect = false;
   upgradesRemaining = 0;
   bonus?: BonusRound;
+  practiceBonus = false;
   private stageDamageStart = 0;
   selected: ToolId = 'sweeper';
   levels: Record<ToolId, number> = { sweeper: 1, mop: 1, brush: 1, food: 1, toy: 1, vacuum: 1 };
@@ -108,6 +109,7 @@ export class Game {
     this.completed = 0; this.stagesSurvived = 0; this.events = []; this.candidates = [];
     this.lastStagePerfect = false; this.upgradesRemaining = 0; this.stageDamageStart = 0;
     this.bonus = undefined;
+    this.practiceBonus = false;
     this.selected = 'sweeper'; this.tutorialStep = 0; this.tutorialDone = false;
     this.levels = { sweeper: 1, mop: 1, brush: 1, food: 1, toy: 1, vacuum: 1 };
     this.cats = [this.makeCat(PALETTE[0], 0)]; this.feedback = ''; this.damageSerial = 0; this.lastAttackCatId = undefined;
@@ -120,6 +122,7 @@ export class Game {
   startStage() {
     this.phase = 'playing'; this.stageElapsed = 0; this.events = []; this.feedback = '';
     this.bonus = undefined;
+    this.practiceBonus = false;
     this.stageDamageStart = this.damageSerial;
     this.cats.forEach((cat, i) => {
       cat.nextNeedAt = this.clock + 1.5 + i * 1.1; cat.attackUntil = 0;
@@ -179,9 +182,9 @@ export class Game {
         if (this.bonus.failedCatId !== undefined && failedBefore === undefined) {
           this.damageSerial++; this.lastAttackCatId = this.bonus.failedCatId;
         }
-        if (this.bonus.won) this.upgradesRemaining = 2;
         this.revision++;
       }
+      if (this.bonus.won && !this.practiceBonus) this.upgradesRemaining = 2;
       return;
     }
     if (!this.active || dt <= 0 || !Number.isFinite(dt)) return;
@@ -323,9 +326,10 @@ export class Game {
   say(message: string) { this.feedback = message; this.feedbackUntil = this.clock + 2; }
   pause(reason = 'A little breather') {
     if (!this.running) return;
+    if (this.bonus?.paw) this.bonus.paw.suspended = true;
     this.resumePhase = this.phase as 'playing' | 'tutorial' | 'bonus' | 'free-play'; this.phase = 'paused'; this.pauseReason = reason; this.revision++;
   }
-  resume() { if (this.phase === 'paused') { this.phase = this.resumePhase; this.revision++; } }
+  resume() { if (this.phase === 'paused') { this.phase = this.resumePhase; if (this.bonus?.paw) this.bonus.paw.suspended = false; this.revision++; } }
 
   private finishStage() {
     // The stage timer can cut care short; only HP loss disqualifies perfection.
@@ -334,19 +338,29 @@ export class Game {
     this.events = []; this.stagesSurvived++; this.feedback = '';
     if (this.stage === STAGES.length - 1) { this.phase = 'victory'; this.freePlayUnlocked = true; this.freePlayRoster = this.cats.map(cat => cat.name); this.revision++; return; }
     if (this.lastStagePerfect) {
-      this.bonus = new BonusRound(this.random.choose(BONUS_GAMES), this.cats.map(cat => cat.id));
+      this.bonus = new BonusRound(this.random.choose(BONUS_GAMES), this.cats.map(cat => cat.id), Math.floor(this.random.next() * 4294967296));
       this.phase = 'bonus'; this.revision++; return;
     }
     this.openAdoption();
   }
 
   startBonus() { if (this.phase === 'bonus') { this.bonus?.start(); this.revision++; } }
+  startPawdicurePractice() {
+    if (this.phase !== 'title' && !(this.practiceBonus && (this.phase === 'paused' || this.phase === 'bonus' && this.bonus?.status === 'result'))) return false;
+    this.reset();
+    this.cats = PALETTE.filter(cat => cat.appearance).map((cat, index) => this.makeCat(cat, index));
+    this.events = []; this.upgradesRemaining = 0; this.practiceBonus = true;
+    this.bonus = new BonusRound('pawdicure', this.cats.map(cat => cat.id), Math.floor(this.random.next() * 4294967296));
+    this.phase = 'bonus'; this.revision++; return true;
+  }
   pat(catId: number) {
     if (this.phase !== 'bonus' || !this.bonus?.pat(catId)) return false;
     this.revision++; return true;
   }
   continueBonus() {
     if (this.phase !== 'bonus' || this.bonus?.status !== 'result') return;
+    if (this.practiceBonus) { this.reset(); this.phase = 'title'; return; }
+    if (this.bonus.won) this.upgradesRemaining = 2;
     this.openAdoption();
   }
 

@@ -91,6 +91,13 @@ test('plays an accelerated five-stage run through real care, adoption, and upgra
     });
     if (stage < 4) {
       if ((await state(page)).phase === 'bonus') {
+        await page.evaluate(async () => {
+          // Keep this campaign test on its existing pat controls; Pawdicure is covered separately.
+          const modulePath = '/src/bonus.ts';
+          const { BonusRound } = await import(/* @vite-ignore */ modulePath);
+          const t = window.__CATSLAVE_TEST__;
+          t.game.bonus = new BonusRound('butt-pats', t.game.cats.map(c => c.id)); t.refresh();
+        });
         await tap(page, 'bonus-start');
         await page.evaluate(() => { const t = window.__CATSLAVE_TEST__; t.game.tick(3); t.refresh(); });
         const ids = await page.evaluate(() => window.__CATSLAVE_TEST__.game.bonus!.catIds);

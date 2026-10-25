@@ -44,6 +44,8 @@ try { await preloadBlenderCatAssets(); } finally { loadingStatus.remove(); }
 const game = new Game(import.meta.env.MODE === 'test' ? 42 : undefined);
 try { game.restoreFreePlay(JSON.parse(localStorage.getItem('catslave-free-play') ?? 'null')); } catch { /* Storage may be unavailable. */ }
 let savedFreeRoster = JSON.stringify(game.freePlayRoster);
+// Standalone entry is a test fixture; players encounter Pawdicure in bonus rounds.
+if (import.meta.env.MODE === 'test' && new URLSearchParams(location.search).get('minigame') === 'pawdicure') game.startPawdicurePractice();
 const world = new World();
 const hud = new Hud();
 const gesture = new Gesture();
@@ -130,11 +132,19 @@ function action(id: string) {
     hud.modal = undefined; hud.clearInteraction(); hud.draw(game, world, 0, true); return;
   }
   if (['learn', 'start', 'restart', 'home', 'confirm-restart', 'confirm-home'].includes(id)) { world.resetView(); gyro.recenter(world.camera.quaternion); }
-  if (id === 'confirm-restart') { if (game.resumePhase === 'free-play') { game.phase = 'title'; game.startFreePlay(); } else game.reset(game.resumePhase === 'tutorial'); }
+  if (id === 'confirm-restart') { if (game.practiceBonus) game.startPawdicurePractice(); else if (game.resumePhase === 'free-play') { game.phase = 'title'; game.startFreePlay(); } else game.reset(game.resumePhase === 'tutorial'); }
   else if (id === 'learn') { game.reset(true); }
   else if (id === 'start' || id === 'restart') { game.reset(); }
   else if (id === 'home' || id === 'confirm-home') { game.reset(); game.phase = 'title'; }
   else if (id === 'free-play') { if (game.startFreePlay()) world.resetView(); }
+  else if (id === 'pawdicure-practice') { game.startPawdicurePractice(); world.resetView(); }
+  else if (id.startsWith('paw-cat:')) { game.bonus?.paw?.selectCat(Number(id.slice(8))); game.revision++; }
+  else if (id === 'paw-clip') {
+    const result = game.bonus?.paw?.snip();
+    if (result === 'success') { audio.play('pat'); if (game.bonus?.won) audio.play('purr'); }
+    else if (result === 'miss') audio.play('reject');
+    game.revision++;
+  }
   else if (id.startsWith('free-cat:')) { game.chooseFreeCat(Number(id.slice(9))); const cat = game.cats.find(c => c.id === game.selectedFreeCatId); if (cat) world.focusOn(new THREE.Vector3(cat.position.x, cat.elevation + 0.5, cat.position.z)); }
   else if (id.startsWith('free-mode:') && game.phase === 'free-play') { game.freeInteraction = id.slice(10) as 'pet' | 'wand' | 'camera'; game.revision++; }
   else if (id.startsWith('free-move:') && game.phase === 'free-play') {
@@ -208,6 +218,7 @@ canvas.addEventListener('pointerdown', event => {
   hud.focusedId = undefined;
   if (hit?.disabled) return;
   if (game.phase === 'bonus' && hit?.id.startsWith('pat:')) { action(hit.id); return; }
+  if (game.phase === 'bonus' && hit?.id === 'paw-clip') { action(hit.id); return; }
   pointerId = event.pointerId; canvas.setPointerCapture(event.pointerId);
   if (game.phase === 'free-play' && !hit && p.x >= world.viewport.x && p.x <= world.viewport.x + world.viewport.w && p.y >= world.viewport.y && p.y <= world.viewport.y + world.viewport.h) {
     const catId = world.freeCatHit(p);
@@ -293,6 +304,7 @@ window.addEventListener('keydown', event => {
     return;
   }
   if ((event.key === 'Enter' || event.key === ' ') && hud.focusedId) { event.preventDefault(); action(hud.focusedId); return; }
+  if (event.key === ' ' && game.phase === 'bonus' && game.bonus?.paw) { event.preventDefault(); action('paw-clip'); return; }
   if (event.key === 'Escape') {
     event.preventDefault(); cancelGesture();
     if (hud.modal) { hud.modal = undefined; hud.clearInteraction(); }
@@ -331,7 +343,8 @@ window.visualViewport?.addEventListener('scroll', scheduleResize);
 function frame(now: number) {
   const realDt = Math.max(0, (now - lastTime) / 1000); lastTime = now;
   // Long stalls never silently consume a cat's patience.
-  if (realDt > 1 && game.running && !manualClock) { cancelGesture(); game.pause('A little interruption. Ready to continue?'); }
+  const timedPlay = game.running && !(game.phase === 'bonus' && ['intro', 'result'].includes(game.bonus?.status ?? ''));
+  if (realDt > 1 && timedPlay && !manualClock) { cancelGesture(); game.pause('A little interruption. Ready to continue?'); }
   const dt = Math.min(realDt, 0.1);
   if (!contextLost) {
     if (game.active && !hud.rotateRequired && gesture.route?.kind === 'care' && hud.pointer) {
@@ -373,15 +386,22 @@ function frame(now: number) {
   }
   requestAnimationFrame(frame);
 }
-resize(); requestAnimationFrame(frame);
+resize(); lastTime = performance.now(); requestAnimationFrame(frame);
 
 // Only a dedicated `vite --mode test` server exposes deterministic browser fixtures.
 // The production bundle eliminates this branch.
 if (import.meta.env.MODE === 'test') {
   const finishBonus = () => {
     if (game.phase !== 'bonus') return;
+    const paw = game.bonus?.paw;
+    if (paw) paw.selectCat(game.cats[0].id);
     game.startBonus(); game.tick(3);
-    for (let second = 0; second < 10; second++) { game.cats.forEach(cat => game.pat(cat.id)); game.tick(1); }
+    if (paw) {
+      for (let step = 0; step < 3000 && game.bonus?.status === 'playing'; step++) {
+        if (paw.canSnip && paw.aim > paw.safeStart + .04 && paw.aim < paw.safeEnd - .04) paw.snip();
+        else game.tick(.02);
+      }
+    } else for (let second = 0; second < 10; second++) { game.cats.forEach(cat => game.pat(cat.id)); game.tick(1); }
     game.continueBonus();
   };
   Object.assign(window, { __CATSLAVE_TEST__: {

@@ -6,9 +6,10 @@ import { needIcon } from './need-icons';
 import type { CareEvent, Point, ToolId } from './types';
 import { gameLayout, type GameLayout } from './layout';
 import { BONUS_DURATION, PAT_PATIENCE } from './bonus';
+import { PAWDICURE_DURATION } from './pawdicure';
 
 const C = { ink: '#493e38', muted: '#756658', paper: '#fff9eb', cream: '#f7efdf', line: '#e1d5bf', coral: '#a9583d', green: '#526b4c', paleGreen: '#e6eadb', red: '#ad4239' };
-export interface Hit { id: string; x: number; y: number; w: number; h: number; eventId?: number; tool?: ToolId; arch?: PlayArea; label?: string; disabled?: boolean; }
+export interface Hit { id: string; x: number; y: number; w: number; h: number; eventId?: number; tool?: ToolId; arch?: PlayArea; regions?: { x: number; y: number; rx: number; ry: number }[]; label?: string; disabled?: boolean; }
 export type HudModal = 'help' | 'restart' | 'home';
 
 function round(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number, fill: string, stroke?: string) {
@@ -196,7 +197,8 @@ export class Hud {
     this.camera.updateMatrixWorld(); this.scene.updateMatrixWorld(true);
     this.raycaster.setFromCamera(new THREE.Vector2(x / this.width * 2 - 1, 1 - y / this.height * 2), this.camera);
     const intersections = this.raycaster.intersectObjects(this.hitMeshes.filter(m => m.visible), false);
-    const hits = intersections.map(i => i.object.userData.hit as Hit).filter(h => !h.arch || inPlayArea(h.arch, { x, y }));
+    const hits = intersections.map(i => i.object.userData.hit as Hit).filter(h => (!h.arch || inPlayArea(h.arch, { x, y }))
+      && (!h.regions || h.regions.some(p => ((x - p.x) / p.rx) ** 2 + ((y - p.y) / p.ry) ** 2 <= 1)));
     const ui = hits.find(h => h.eventId === undefined);
     if (ui) return ui; // Disabled controls still block input to the world below them.
     // Nearby roaming cats can overlap in perspective. Prefer the selected tool,
@@ -271,6 +273,12 @@ export class Hud {
   }
 
   worldViewport(game: Game): GameLayout['room'] {
+    if (game.inBonus && game.bonus?.id === 'pawdicure') {
+      const y = this.top + 132;
+      const footer = game.bonus.status === 'intro' || game.bonus.status === 'result' ? 220 : 90;
+      return { x: this.left + 6, y, w: this.width - this.left - this.right - 12,
+        h: Math.max(90, this.height - this.bottom - footer - y) };
+    }
     if (game.inFreePlay) {
       const y = this.top + 110;
       return { x: this.left + 6, y, w: this.width - this.left - this.right - 12,
@@ -289,6 +297,7 @@ export class Hud {
 
   private bonusRound(game: Game, world: World) {
     const bonus = game.bonus!;
+    if (bonus.id === 'pawdicure') { this.pawRound(game, world); return; }
     const { ctx } = this, center = this.center, width = this.panelWidth;
     const urgent = bonus.status === 'playing' && bonus.timeLeft <= 3;
     text(ctx, 'BONUS · BUTT PATS', center, this.top + 15, 13, C.ink, 'center', 'bold');
@@ -344,6 +353,107 @@ export class Hud {
     } else {
       text(ctx, `${bonus.pats} ${bonus.pats === 1 ? 'pat' : 'pats'}`, center, bottom - 85, 24, C.ink, 'center', 'bold');
     }
+  }
+
+  private pawRound(game: Game, world: World) {
+    const bonus = game.bonus!, trim = bonus.paw!;
+    const { ctx } = this, center = this.center, width = this.panelWidth, x = center - width / 2;
+    const bottom = this.height - this.bottom;
+    const selected = game.cats.find(cat => cat.id === trim.selectedCatId);
+    const urgent = bonus.status === 'playing' && bonus.timeLeft <= 10;
+    text(ctx, 'PAWDICURE', x + 2, this.top + 18, 20, C.ink, 'left', 'serif');
+    text(ctx, game.practiceBonus ? 'MINI-GAME PRACTICE' : 'PERFECT-STAGE BONUS', x + 2, this.top + 42, 10, C.muted);
+    const pause = this.layout.pause;
+    this.button('pause', 'Ⅱ', pause.x, pause.y, pause.w, pause.h);
+    const timer = bonus.status === 'countdown' ? String(Math.ceil(bonus.countdown))
+      : bonus.status === 'result' ? bonus.won ? '✓' : '0' : String(Math.ceil(bonus.timeLeft));
+    text(ctx, timer, x + width - 26, this.top + 83, 35, urgent ? C.red : C.green, 'center', 'bold');
+    if (bonus.status !== 'countdown' && bonus.status !== 'result') text(ctx, 'SECONDS', x + width - 26, this.top + 110, 9, C.muted, 'center');
+    const pawsX = x + 17;
+    for (let i = 0; i < 4; i++) {
+      const done = trim.trimmed[i].every(Boolean), active = i === trim.pawIndex;
+      const px = pawsX + i * 35;
+      if (active && bonus.status !== 'intro') ellipse(ctx, px, this.top + 80, 17, 17, C.paleGreen);
+      paw(ctx, px, this.top + 80, 27, done ? C.green : active ? C.coral : C.line);
+      if (done) text(ctx, '✓', px, this.top + 80, 15, C.paper, 'center', 'bold');
+    }
+    text(ctx, `${trim.totalTrimmed} / 18 claws`, x + 2, this.top + 110, 12, C.muted);
+    if (bonus.status === 'intro') {
+      text(ctx, 'Choose your cat', center, bottom - 203, 17, C.ink, 'center', 'serif');
+      const gap = 6, cw = (width - gap * (game.cats.length - 1)) / game.cats.length;
+      game.cats.forEach((cat, i) => {
+        const bx = x + i * (cw + gap), chosen = cat.id === trim.selectedCatId;
+        round(ctx, bx, bottom - 182, cw, 46, 12, chosen ? C.paleGreen : C.paper, chosen ? C.green : C.line);
+        paw(ctx, bx + cw / 2, bottom - 169, 18, cat.color);
+        text(ctx, cat.name, bx + cw / 2, bottom - 147, 12, C.ink, 'center', chosen ? 'bold' : 'sans', cw - 8);
+        this.addHit({ id: `paw-cat:${cat.id}`, label: `Choose ${cat.name}`, x: bx, y: bottom - 182, w: cw, h: 46 });
+      });
+      text(ctx, 'Watch the ring around the toe.', center, bottom - 115, 14, C.ink, 'center', 'bold', width);
+      text(ctx, 'Tap the paw when the dot enters green.', center, bottom - 94, 12, C.muted, 'center', 'sans', width);
+      text(ctx, `Finish all four paws in ${PAWDICURE_DURATION} seconds.`, center, bottom - 74, 12, C.muted, 'center', 'sans', width);
+      ctx.save(); if (!selected) ctx.globalAlpha = 0.5;
+      this.button('bonus-start', selected ? `Ready, ${selected.name}  →` : 'Choose a cat first', x, bottom - 55, width, 48, true);
+      ctx.restore(); this.hits[this.hits.length - 1].disabled = !selected;
+      return;
+    }
+    const pawName = ['Front left', 'Front right', 'Back left', 'Back right'][Math.min(3, trim.pawIndex)];
+    text(ctx, `${selected?.name ?? ''} · ${pawName}`, center, this.top + 127, 12, C.muted, 'center', 'sans', width);
+    if (bonus.status === 'result') {
+      text(ctx, bonus.won ? 'Perfectly pampered!' : 'Time for a break', center, bottom - 190, 26, bonus.won ? C.green : C.ink, 'center', 'serif', width);
+      const reward = game.practiceBonus ? `${trim.totalTrimmed} of 18 claws trimmed` : bonus.won ? '+1 extra upgrade' : 'Your normal upgrade is still waiting';
+      text(ctx, reward, center, bottom - 155, 14, C.muted, 'center', 'sans', width);
+      if (game.practiceBonus) {
+        this.button('pawdicure-practice', 'Play again  →', x, bottom - 119, width, 48, true);
+        this.button('bonus-continue', 'Main menu', x, bottom - 57, width, 48);
+      } else this.button('bonus-continue', 'Adopt  →', x, bottom - 63, width, 52, true);
+      return;
+    }
+    if (bonus.status === 'countdown') {
+      text(ctx, 'One paw at a time', center, bottom - 62, 24, C.ink, 'center', 'serif', width);
+      text(ctx, 'Tap the paw when the dot enters green.', center, bottom - 29, 13, C.muted, 'center', 'sans', width);
+      return;
+    }
+    for (let i = 0; i < trim.clawCount; i++) {
+      const target = world.pawClawTarget(i);
+      if (!target) continue;
+      const done = trim.trimmed[trim.pawIndex]?.[i], active = trim.activeClaw === i;
+      if (done) {
+        ellipse(ctx, target.x, target.y, 10, 10, C.green);
+        text(ctx, '✓', target.x, target.y, 14, C.paper, 'center', 'bold');
+      } else if (!active) ellipse(ctx, target.x, target.y, 3, 3, 'rgba(255,249,235,.5)');
+    }
+    const timing = world.pawTimingTarget(trim), tapArea = world.pawTapArea();
+    if (tapArea) this.addHit({ id: 'paw-clip', label: 'Tap paw to snip', ...tapArea, disabled: !trim.canSnip });
+    if (timing) {
+      const { x: tx, y: ty, radius } = timing;
+      const angle = (value: number) => Math.PI * .75 + value * Math.PI * 1.5;
+      const arc = (start: number, end: number, color: string, thickness: number) => {
+        ctx.beginPath(); ctx.arc(tx, ty, radius, angle(start), angle(end));
+        ctx.strokeStyle = color; ctx.lineWidth = thickness; ctx.lineCap = 'round'; ctx.stroke();
+      };
+      ctx.save(); if (!trim.canSnip) ctx.globalAlpha = .55;
+      arc(0, 1, C.paper, this.focusedId === 'paw-clip' ? 15 : 13);
+      arc(0, 1, '#b6a98f', 7);
+      arc(trim.safeStart, trim.safeEnd, C.green, 10);
+      // End ticks make the reversal points explicit; the pad stays visible inside the ring.
+      for (const value of [0, 1]) {
+        const a = angle(value);
+        line(ctx, [[tx + Math.cos(a) * (radius - 6), ty + Math.sin(a) * (radius - 6)],
+          [tx + Math.cos(a) * (radius + 6), ty + Math.sin(a) * (radius + 6)]], C.ink, 2);
+      }
+      const a = angle(trim.aim), mx = tx + Math.cos(a) * radius, my = ty + Math.sin(a) * radius;
+      ellipse(ctx, mx, my, 8, 8, C.paper);
+      ellipse(ctx, mx, my, 5.5, 5.5, trim.aim >= trim.safeStart && trim.aim <= trim.safeEnd ? C.green : C.ink);
+      ctx.restore();
+      const note = trim.mood === 'moving' ? 'Wait…' : trim.mood === 'warning' ? 'Paw twitch' : trim.snipAge < .7 && trim.lastSnip ? (trim.lastSnip.success ? '✓ Snip!' : 'Try again') : '';
+      if (note) {
+        const v = world.viewport;
+        text(ctx, note, Math.max(v.x + 48, Math.min(v.x + v.w - 48, tx)), Math.min(v.y + v.h - 12, ty + radius + 21), 13,
+          trim.mood !== 'calm' || trim.lastSnip?.success === false ? C.red : C.green, 'center', 'bold');
+      }
+    }
+    text(ctx, 'Tap anywhere on the paw when the dot enters green.', center, bottom - 58, 13, C.ink, 'center', 'bold', width);
+    text(ctx, trim.combo > 1 ? `${trim.combo} clean snips · Space also works` : 'The next claw is selected for you · Space also works', center, bottom - 29, 12, C.muted, 'center', 'sans', width);
   }
 
   private freePlay(game: Game, world: World) {
@@ -643,6 +753,10 @@ export class Hud {
       if (game.inFreePlay) {
         const instructions = ['Choose an adopted cat above the room.', 'Pet: tap or stroke the cat’s butt.', 'Wand: drag in the room to play.', 'Camera: drag to look, right-drag to pan.', 'Wheel or + / − to zoom. WASD / Q E to move.', 'Use the six direction buttons on touchscreens.'];
         instructions.forEach((value, i) => text(ctx, value, center, y + 76 + i * 37, 12, C.ink, 'center', 'sans', width - 32));
+      } else if (game.inBonus && game.bonus?.id === 'pawdicure') {
+        paw(ctx, center, y + 95, 50, C.coral);
+        const instructions = ['Watch the ring around the active toe.', 'The dot sweeps back and forth.', 'Tap the paw or press Space when the dot is green.', 'Each claw has its own green arc.', 'Trim all four paws before time runs out.'];
+        instructions.forEach((value, i) => text(ctx, value, center, y + 148 + i * 31, 13, C.ink, 'center', 'sans', width - 32));
       } else if (game.inBonus) {
         paw(ctx, center, y + 100, 55, C.coral);
         text(ctx, 'Tap every cat’s butt.', center, y + 160, 16, C.ink, 'center', 'bold', width - 32);
@@ -666,7 +780,7 @@ export class Hud {
     const by = y + height - 258;
     this.button('resume', 'Resume  →', bx, by, bw, 52, true);
     this.button('help', 'Controls', bx, by + 65, bw, 48);
-    this.button('restart', game.inFreePlay ? 'Restart free play' : game.resumePhase === 'tutorial' ? 'Restart tutorial' : 'Restart shift', bx, by + 126, bw, 48);
+    this.button('restart', game.practiceBonus ? 'Restart Pawdicure' : game.inFreePlay ? 'Restart free play' : game.resumePhase === 'tutorial' ? 'Restart tutorial' : 'Restart shift', bx, by + 126, bw, 48);
     this.button('home', 'Main menu', bx, by + 187, bw, 48);
   }
 
@@ -706,7 +820,7 @@ export class Hud {
   private interactionStates() {
     const ctx = this.ctx;
     for (const hit of this.hits) {
-      if (hit.eventId !== undefined || hit.disabled) continue;
+      if (hit.eventId !== undefined || hit.disabled || hit.id === 'paw-clip') continue;
       const focused = hit.id === this.focusedId, pressed = hit.id === this.pressedId, hovered = hit.id === this.hoveredId;
       if (!focused && !pressed && !hovered) continue;
       round(ctx, hit.x + 2, hit.y + 2, hit.w - 4, hit.h - 4, 10, pressed ? 'rgba(73,62,56,0.18)' : 'rgba(73,62,56,0.05)');
