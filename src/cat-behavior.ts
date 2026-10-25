@@ -1,6 +1,7 @@
 import { AISLE_Z, FURNITURE, type Waypoint } from './furniture';
 import type { CatState } from './types';
 import { ROOM } from './config';
+import { JUMP_DURATION, jumpFlightProgress } from './cat-jump';
 
 export function beginVisit(cat: CatState, id: string, cats: CatState[]) {
   const spot = FURNITURE.find(s => s.id === id);
@@ -47,9 +48,10 @@ export function tickVisit(cat: CatState, clock: number, dt: number, cats: readon
   const turn = turnToward(yaw);
   cat.activity = jump ? 'jumping' : crawl ? 'crawling' : 'walking';
   if (visit.progress === 0 && Math.abs(turn) > 0.25) { cat.activity = crawl ? 'crawling' : 'idle'; return; }
-  const duration = jump ? 0.75 : Math.max(0.05, distance / (crawl ? 0.48 : 1.1));
+  const duration = jump ? JUMP_DURATION : Math.max(0.05, distance / (crawl ? 0.48 : 1.1));
   const previous = visit.progress;
-  const p = Math.min(1, visit.progress + dt / duration), smooth = jump ? p * p * (3 - 2 * p) : p;
+  const p = Math.min(1, visit.progress + dt / duration), flight = jumpFlightProgress(p);
+  const smooth = jump ? flight * flight * (3 - 2 * flight) : p;
   const next = { x: from.x + dx * smooth, z: from.z + dz * smooth };
   const blocker = !jump && from.height === 0 && cats.find(other => other !== cat && other.elevation < 0.3 &&
     Math.hypot(other.position.x - next.x, other.position.z - next.z) < 0.55 &&
@@ -70,7 +72,10 @@ export function tickVisit(cat: CatState, clock: number, dt: number, cats: readon
   }
   visit.progress = p;
   cat.position.x = next.x; cat.position.z = next.z;
-  cat.elevation = from.height + (target.height - from.height) * smooth + (jump ? Math.sin(p * Math.PI) * 0.28 : 0);
+  // Exact grounded heights matter: the renderer distinguishes a raised surface
+  // from the rug with elevation > 0, so sin(PI)'s tiny remainder is not harmless.
+  cat.elevation = jump && flight === 1 ? target.height : jump && flight === 0 ? from.height
+    : from.height + (target.height - from.height) * smooth + (jump ? Math.sin(flight * Math.PI) * 0.28 : 0);
   cat.pose = p; cat.stride += (p - previous) * distance * 10;
   if (p === 1) { visit.index++; visit.progress = 0; visit.from = { ...target }; }
 }

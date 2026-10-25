@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { clone as cloneRig } from 'three/addons/utils/SkeletonUtils.js';
 import type { CatDefinition } from './types';
+import { applyChocoAsset, hasChocoAsset } from './choco-asset';
 
 export interface CatModel {
   root: THREE.Group; body: THREE.Group; head: THREE.Group; tail: THREE.Group; anger: THREE.Group;
@@ -365,8 +366,13 @@ function buildCat(cat: Appearance) {
 
 /** Forward is +Z. Every cat shares an articulated rig and an independent pose. */
 export function createCat(cat: Appearance): CatModel {
-  const key = `${cat.appearance ?? 'primitive'}:${cat.color}:${cat.accent}`;
-  if (!templates.has(key)) templates.set(key, buildCat(cat));
+  const imported = cat.appearance === 'choco' && hasChocoAsset();
+  const key = `${cat.appearance ?? 'primitive'}:${cat.color}:${cat.accent}:${imported ? 'blender' : 'builtin'}`;
+  if (!templates.has(key)) {
+    const template = buildCat(cat);
+    if (imported) applyChocoAsset(template);
+    templates.set(key, template);
+  }
   const root = cloneRig(templates.get(key)!) as THREE.Group;
   const joint = (name: string) => root.getObjectByName(name) as THREE.Group;
   return { root, body: joint('body'), head: joint('head'), tail: joint('tail'), anger: joint('anger'),

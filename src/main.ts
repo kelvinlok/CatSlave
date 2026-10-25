@@ -9,6 +9,7 @@ import type { Point, ToolId } from './types';
 import { portraitViewport } from './layout';
 import { GyroLook } from './gyro';
 import { GameAudio, RoomSounds } from './sound';
+import { preloadChocoAsset } from './choco-asset';
 
 const canvas = document.querySelector<HTMLCanvasElement>('#game')!;
 let renderer: THREE.WebGLRenderer;
@@ -32,6 +33,13 @@ renderer.toneMappingExposure = 1.12;
 renderer.autoClear = false;
 renderer.info.autoReset = false;
 renderer.setClearColor('#f8f0df');
+renderer.clear();
+const loadingStatus = document.createElement('div');
+loadingStatus.id = 'model-loading'; loadingStatus.setAttribute('role', 'status');
+loadingStatus.textContent = 'Getting Choco ready…';
+loadingStatus.style.cssText = 'position:absolute;inset:0;display:grid;place-items:center;background:#f8f0df;color:#493e38;font:500 22px Georgia,serif;pointer-events:none';
+document.body.append(loadingStatus);
+try { await preloadChocoAsset(); } finally { loadingStatus.remove(); }
 
 const game = new Game(import.meta.env.MODE === 'test' ? 42 : undefined);
 const world = new World();

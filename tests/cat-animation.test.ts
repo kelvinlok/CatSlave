@@ -7,6 +7,7 @@ import { Game } from '../src/simulation';
 import { tickVisit } from '../src/cat-behavior';
 import { FURNITURE } from '../src/furniture';
 import type { CatActivity } from '../src/types';
+import { JUMP_DURATION, JUMP_TAKEOFF, JUMP_TOUCHDOWN } from '../src/cat-jump';
 
 function fixture(activity: CatActivity = 'idle') {
   const cat = new Game(5).cats[0]; cat.activity = activity;
@@ -175,6 +176,76 @@ describe('articulated cat animation', () => {
     expect(samples[1]).toBeLessThan(samples[0]); expect(samples[1]).toBeGreaterThan(samples[2]);
     expect(samples[3]).toBeGreaterThan(samples[2]); expect(samples[3]).toBeLessThan(samples[4]);
     expect(samples[4]).toBeCloseTo(model.eyeHeight);
+  });
+
+  it('compresses deeply, springs up with straight hind legs, then gathers them in flight', () => {
+    const { model, cat } = fixture('jumping');
+    const sample = (progress: number) => {
+      cat.pose = progress; animateCat(model, cat, 1 + progress * JUMP_DURATION);
+    };
+    sample(0); const rest = model.body.position.y;
+    sample(0.09); const compressed = model.body.position.y;
+    expect(rest - compressed).toBeGreaterThan(0.16);
+    for (const paw of model.paws.slice(2)) expect(footPosition(paw).y).toBeCloseTo(0.07 * 0.52, 6);
+    sample(0.26);
+    expect(model.body.position.y - compressed).toBeGreaterThan(0.27);
+    // The knee must actually straighten; moving bent legs farther back is insufficient.
+    for (const lower of model.lowerLegs.slice(2)) expect(Math.abs(lower.rotation.x)).toBeLessThan(0.15);
+    sample(0.54);
+    for (const lower of model.lowerLegs.slice(2)) expect(Math.abs(lower.rotation.x)).toBeGreaterThan(1);
+    sample(0.88); expect(model.body.position.y).toBeLessThan(rest - 0.12);
+    sample(1); expect(model.body.position.y).toBeCloseTo(rest);
+  });
+
+  it('leads with different front paws and lands the forelegs before gathering the hind legs', () => {
+    for (const id of [0, 1]) {
+      const { model, cat } = fixture('jumping'); cat.id = id;
+      const sample = (progress: number) => {
+        cat.pose = progress; animateCat(model, cat, 1 + progress * JUMP_DURATION);
+        return model.paws.map(footPosition);
+      };
+      const ground = 0.07 * 0.52;
+      const launch = sample(0.13);
+      expect(launch[id].y).toBeGreaterThan(launch[1 - id].y);
+      expect(launch[2].y).toBeCloseTo(ground, 6); expect(launch[3].y).toBeCloseTo(ground, 6);
+      const tuck = sample(0.5);
+      expect(Math.abs(tuck[0].y - tuck[1].y)).toBeGreaterThan(0.015);
+      expect(Math.abs(tuck[2].z - tuck[3].z)).toBeGreaterThan(0.015);
+      const contact = sample(JUMP_TOUCHDOWN);
+      expect(contact[id].y).toBeCloseTo(ground, 6);
+      expect(contact[1 - id].y).toBeGreaterThan(ground);
+      expect(contact[2].y).toBeGreaterThan(ground + 0.02);
+      expect(contact[3].y).toBeGreaterThan(ground + 0.02);
+      const landed = sample(0.95);
+      landed.forEach(foot => expect(foot.y).toBeCloseTo(ground, 6));
+      const frozen = snapshot(model.root); animateCat(model, cat, 1 + 0.95 * JUMP_DURATION);
+      expect(snapshot(model.root)).toEqual(frozen);
+      sample(1); expect(model.body.position.y).toBeCloseTo(-0.04);
+    }
+  });
+
+  it('holds the takeoff and landing surfaces for the paw contact phases on jumps up and down', () => {
+    for (const [fromHeight, toHeight] of [[0, 0.65], [0.65, 0]]) {
+      const { cat, model } = fixture('jumping'); cat.yaw = 0;
+      cat.position = { x: 0, z: 0 }; cat.elevation = fromHeight;
+      cat.visit = { id: 'tree', phase: 'approach', index: 0, progress: 0, until: 0, leaveRequested: false,
+        from: { x: 0, z: 0, height: fromHeight }, route: [{ x: 0, z: 0.6, height: toHeight }] };
+      for (let frame = 1; frame <= 121; frame++) {
+        const time = frame * JUMP_DURATION / 120;
+        tickVisit(cat, time, JUMP_DURATION / 120, [cat]);
+        model.root.position.set(cat.position.x, cat.elevation, cat.position.z);
+        animateCat(model, cat, time);
+        if (cat.pose < JUMP_TAKEOFF) {
+          expect(cat.position.z).toBe(0); expect(cat.elevation).toBe(fromHeight);
+          expect(footPosition(model.paws[2]).y).toBeCloseTo(fromHeight + 0.07 * 0.52, 6);
+        }
+        if (cat.pose >= JUMP_TOUCHDOWN) {
+          expect(cat.position.z).toBeCloseTo(0.6); expect(cat.elevation).toBe(toHeight);
+          expect(footPosition(model.paws[cat.id % 2]).y).toBeCloseTo(toHeight + 0.07 * 0.52, 6);
+        }
+      }
+      expect(cat.visit.index).toBe(1);
+    }
   });
 
   it('uses visible curved lids for happy squints and restores open eyes afterwards', () => {

@@ -5,3 +5,4 @@ playwright-report/
 artifacts/
 .vite/
 *.log
+*.blend1

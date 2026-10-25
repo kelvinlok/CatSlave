@@ -103,8 +103,8 @@ Browser campaign tests use a manually advanced simulation clock and shorten idle
 ## Prototype boundaries
 
 - Modern WebGL 2 browsers only; no native app packaging, backend, or account system.
-- All cats share a sculpted procedural rig with coat variations; Choco retains the reference photo's proportions and asymmetric markings. All cats have identical behavior profiles.
-- No permanent upgrades, economy, audio, or imported cat models.
+- Choco uses an imported Blender model with painted coat and fine fur detail, attached to the established animation rig. Editable source and rebuild instructions are in `assets/choco/README.md`; the game asset is `public/models/choco.glb`. Other cats keep their procedural models. All cats have identical behavior profiles.
+- No permanent upgrades or economy. Choco's earlier procedural appearance remains a fallback if its asset cannot load.
 - Text and controls are drawn in WebGL, so they do not have the screen-reader semantics of HTML controls. The canvas has an accessible description and keyboard shortcuts, but this is not a fully accessible UI.
 - Mobile browser emulation is not physical-device validation. Actual iOS Safari, Android Chrome, GPU performance, and safe-area behavior still need testing on real phones.
 

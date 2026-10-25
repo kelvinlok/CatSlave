@@ -4,6 +4,9 @@ import { animateCat } from '../../src/cat-animation';
 import { PALETTE } from '../../src/config';
 import { Game } from '../../src/simulation';
 import type { CatActivity } from '../../src/types';
+import { preloadChocoAsset } from '../../src/choco-asset';
+
+await preloadChocoAsset();
 
 /** Test-only inspection stage using the production rig, materials and animator. */
 export function mountCatStudio() {
@@ -35,7 +38,7 @@ export function mountCatStudio() {
       geometries: renderer.info.memory.geometries, textures: renderer.info.memory.textures };
   };
   pose('idle', 1);
-  return { pose, renderer, scene, variantCount: PALETTE.length, get model() { return model; } };
+  return { pose, renderer, scene, camera, variantCount: PALETTE.length, get model() { return model; } };
 }
 
 declare global { interface Window { __CAT_STUDIO__: ReturnType<typeof mountCatStudio>; } }

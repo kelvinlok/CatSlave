@@ -1,6 +1,7 @@
 import type { CatModel } from './cat-model';
 import type { CatState } from './types';
 import { ROOM } from './config';
+import { jumpCurve, JUMP_TAKEOFF, JUMP_TOUCHDOWN } from './cat-jump';
 
 const TAU = Math.PI * 2;
 const clamp = (n: number, min = 0, max = 1) => Math.max(min, Math.min(max, n));
@@ -123,10 +124,46 @@ function targetPose(model: CatModel, cat: CatState, time: number, angry: boolean
       break;
     }
     case 'jumping': {
-      const tuck = Math.sin(clamp(cat.pose) * Math.PI);
-      p.bodyPitch = -0.12 * Math.sin(clamp(cat.pose) * TAU);
-      p.headPitch = -0.08 * tuck; p.tailPitch = -0.85;
-      p.feet.forEach((foot, i) => { foot.y += tuck * 0.22; foot.z += (i < 2 ? 0.16 : -0.15) * tuck; });
+      const progress = clamp(cat.pose);
+      const curve = (keys: readonly (readonly [number, number])[]) => jumpCurve(progress, keys);
+      const crouch = curve([[0, 0], [0.09, 1], [0.18, 0], [1, 0]]);
+      const release = curve([[0, 0], [0.09, 0], [0.18, 1], [0.30, 1], [0.46, 0], [1, 0]]);
+      const landing = curve([[0, 0], [0.77, 0], [0.88, 1], [1, 0]]);
+      const airborne = curve([[0, 0], [0.25, 1], [0.72, 1], [1, 0]]);
+      p.hipY += -0.17 * crouch + 0.12 * release - 0.12 * landing;
+      p.frontHipDrop = 0.025 * landing;
+      p.bodyY += -0.18 * crouch + 0.11 * release - 0.14 * landing;
+      p.bodyZ = -0.08 * crouch + 0.045 * release + 0.025 * landing;
+      p.bodyPitch = curve([[0, 0], [0.10, -0.055], [0.25, -0.21], [0.51, -0.02], [0.76, 0.12], [0.9, 0.045], [1, 0]]);
+      // Carry the shoulders and hips with the pitched torso; otherwise folded
+      // upper legs can visibly pull away from the chest during takeoff.
+      p.hipY += p.bodyPitch * 0.55;
+      p.frontHipDrop += p.bodyPitch;
+      p.headY += -0.10 * crouch + 0.08 * release - 0.075 * landing;
+      p.headPitch -= 0.07 * airborne; p.headYaw *= 1 - airborne * 0.8;
+      p.tailPitch -= 0.35 * airborne; p.tailCurl += 0.09 * airborne;
+      // A cat favours one forepaw, then gathers its hind legs slightly out of sync.
+      // Reverse the lead between cats without changing it on each render.
+      const lead = cat.id % 2;
+      p.headRoll = (lead ? -1 : 1) * 0.025 * airborne;
+      p.tailSway += (lead ? 1 : -1) * 0.055 * airborne;
+      p.feet.forEach((foot, i) => {
+        const front = i < 2, first = i % 2 === (front ? lead : 1 - lead);
+        const delay = first ? 0 : 0.035;
+        if (front) {
+          foot.y += curve([[0, 0], [0.08 + delay, 0], [0.29 + delay, first ? 0.29 : 0.24],
+            [0.50 + delay, first ? 0.27 : 0.23], [0.70 + delay, 0.09], [JUMP_TOUCHDOWN + delay, 0], [1, 0]]);
+          foot.z += curve([[0, 0], [JUMP_TAKEOFF, 0.035], [0.32 + delay, first ? 0.04 : -0.025],
+            [0.65 + delay, first ? 0.22 : 0.16], [JUMP_TOUCHDOWN + delay, 0], [1, 0]]);
+        } else {
+          // Hold a long, nearly straight rear-leg push as the chest springs up.
+          // Only gather the hocks after that extension has had time to read.
+          foot.y += curve([[0, 0], [0.30 + delay, 0],
+            [0.49 + delay, first ? 0.28 : 0.23], [0.66 + delay, 0.22], [0.90 + delay, 0], [1, 0]]);
+          foot.z += curve([[0, 0], [JUMP_TAKEOFF, 0], [0.22 + delay, -0.20], [0.32 + delay, -0.22],
+            [0.52 + delay, first ? 0.19 : 0.13], [0.74 + delay, 0.12], [0.90 + delay, 0], [1, 0]]);
+        }
+      });
       break;
     }
     case 'sleeping':
@@ -290,7 +327,9 @@ export function animateCat(model: CatModel, cat: CatState, time: number, options
   if (state.key !== key) {
     state.from = state.current; state.key = key; state.changedAt = time;
   }
-  const p = blend(state.from, target, smooth((time - state.changedAt) / 0.20));
+  // Let the brief takeoff crouch read before the simulation leaves the floor.
+  const blendDuration = cat.activity === 'jumping' ? 0.07 : 0.20;
+  const p = blend(state.from, target, smooth((time - state.changedAt) / blendDuration));
   state.current = p; state.lastTime = time;
   model.root.rotation.x = 0; model.root.rotation.z = 0;
   const breath = Math.sin(time * (cat.activity === 'sleeping' ? 1.8 : 2.4) + cat.id) * 0.006;
