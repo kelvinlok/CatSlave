@@ -2,6 +2,7 @@ import type { CatModel } from './cat-model';
 import type { CatState } from './types';
 import { ROOM } from './config';
 import { jumpCurve, JUMP_TAKEOFF, JUMP_TOUCHDOWN } from './cat-jump';
+import { updateBlenderCatRig } from './blender-cat-rig';
 
 const TAU = Math.PI * 2;
 const clamp = (n: number, min = 0, max = 1) => Math.max(min, Math.min(max, n));
@@ -10,7 +11,7 @@ const cycle = (n: number, period = TAU) => ((n % period) + period) % period;
 const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
 
 interface Pose {
-  bodyY: number; bodyZ: number; bodyPitch: number; hipY: number; frontHipDrop: number;
+  rear: number; bodyY: number; bodyZ: number; bodyPitch: number; hipY: number; frontHipDrop: number;
   headY: number; headZ: number; headPitch: number; headYaw: number; headRoll: number;
   tailPitch: number; tailCurl: number; tailSway: number;
   earBack: number; eyeOpen: number;
@@ -24,14 +25,15 @@ interface AnimationState {
 interface Attention {
   yaw: number; pitch: number; strength: number;
   leftReach: number; rightReach: number; reachY: number; reachZ: number;
-  crouch: number; lean: number;
+  crouch: number; lean: number; rear: number;
 }
 interface AnimationOptions {
   angry?: boolean; happy?: boolean;
-  buttPat?: { lift: number; side: number };
+  buttPat?: { lift: number; side: number; lookBack?: boolean };
   /** Lure position in world space; independent of the model's render transform. */
   focus?: { x: number; y: number; z: number };
   engagement?: number;
+  excited?: boolean;
 }
 const states = new WeakMap<CatModel, AnimationState>();
 
@@ -72,7 +74,7 @@ function crawlDirection(cat: CatState) {
 
 function targetPose(model: CatModel, cat: CatState, time: number, angry: boolean, happy: boolean): Pose {
   const p: Pose = {
-    bodyY: -0.04, bodyZ: 0, bodyPitch: 0, hipY: 0.53, frontHipDrop: 0,
+    rear: 0, bodyY: -0.04, bodyZ: 0, bodyPitch: 0, hipY: 0.53, frontHipDrop: 0,
     headY: -0.035, headZ: 0, headPitch: Math.sin(time * 0.63 + cat.id) * 0.018,
     headYaw: Math.sin(time * 0.48 + cat.id * 2) * 0.045, headRoll: 0,
     tailPitch: -0.48, tailCurl: 0.20, tailSway: Math.sin(time * 1.5 + cat.id) * 0.09,
@@ -113,7 +115,11 @@ function targetPose(model: CatModel, cat: CatState, time: number, angry: boolean
       const stretch = smooth(progress / 0.30) * (1 - smooth((progress - 0.70) / 0.30));
       p.bodyPitch = 0.35 * stretch; p.bodyY -= 0.035 * stretch; p.bodyZ = -0.20 * stretch;
       p.hipY += 0.015 * stretch; p.frontHipDrop = 0.24 * stretch;
-      p.headY -= 0.40 * stretch; p.headZ = 0.24 * stretch;
+      // Keep the continuous neck within its deformation range while the
+      // shoulders and planted forepaws carry the deeper part of the bow.
+      const nativeSkin = model.root.userData.modelRig === 'blender-armature';
+      p.headY -= (nativeSkin ? 0.22 : 0.40) * stretch;
+      p.headZ = (nativeSkin ? 0.14 : 0.24) * stretch;
       p.headPitch = lerp(p.headPitch, 0.15, stretch); p.headYaw *= 1 - stretch;
       p.eyeOpen = lerp(p.eyeOpen, 0.06, stretch); p.earBack = 0.06 * stretch;
       p.tailPitch = lerp(p.tailPitch, -0.25, stretch); p.tailCurl += 0.12 * stretch; p.tailSway *= 1 - stretch * 0.8;
@@ -217,8 +223,8 @@ function targetPose(model: CatModel, cat: CatState, time: number, angry: boolean
 
 function trackAttention(cat: CatState, pose: Pose, time: number, options: AnimationOptions,
   previous: AnimationState | undefined, headRestY: number, headRestZ: number): Attention {
-  const next: Attention = { yaw: 0, pitch: 0, strength: 0, leftReach: 0, rightReach: 0, reachY: 0, reachZ: 0, crouch: 0, lean: 0 };
-  const focus = options.focus;
+  const next: Attention = { yaw: 0, pitch: 0, strength: 0, leftReach: 0, rightReach: 0, reachY: 0, reachZ: 0, crouch: 0, lean: 0, rear: 0 };
+  const focus = options.buttPat ? undefined : options.focus;
   if (focus && [focus.x, focus.y, focus.z].every(Number.isFinite)) {
     const dx = (focus.x - cat.position.x) / ROOM.catScale;
     const dz = (focus.z - cat.position.z) / ROOM.catScale;
@@ -243,6 +249,14 @@ function trackAttention(cat: CatState, pose: Pose, time: number, options: Animat
     next.reachZ = clamp(z - 0.485, 0.12, 0.32);
     next.crouch = invitation * prepare;
     next.lean = invitation * swat;
+    if (options.excited) {
+      // Rise, hold a two-paw catch, then settle before the next eager reach.
+      const reachPhase = cycle(time * 0.85 + cat.id * 0.13, 1);
+      const rise = smooth(reachPhase / 0.18) * (1 - smooth((reachPhase - 0.68) / 0.26));
+      next.rear = invitation * rise * smooth((y - 0.65) / 0.65);
+      next.leftReach = Math.max(next.leftReach, next.rear * (0.65 + Math.sin(time * 12) * 0.16));
+      next.rightReach = Math.max(next.rightReach, next.rear * (0.65 - Math.sin(time * 12) * 0.16));
+    }
   }
   if (!previous || time < previous.lastTime) return next;
   const dt = Math.max(0, time - previous.lastTime);
@@ -266,6 +280,7 @@ function applyAttention(pose: Pose, attention: Attention, time: number, cat: Cat
   pose.tailSway = lerp(pose.tailSway, Math.sin(time * 3.8 + cat.id) * 0.045, weight);
   pose.tailCurl = lerp(pose.tailCurl, 0.32, weight);
   if (cat.activity === 'playing') {
+    pose.rear = attention.rear;
     // Shift the rig above its planted supports; the gameplay root never moves.
     pose.hipY -= attention.crouch * 0.055;
     pose.bodyY += attention.lean * 0.018 - attention.crouch * 0.065;
@@ -301,15 +316,20 @@ function placeFoot(model: CatModel, i: number, hipY: number, y: number, z: numbe
 /** Evaluate from simulation time, so pause/repeated renders never advance or drift. */
 export function animateCat(model: CatModel, cat: CatState, time: number, options: AnimationOptions = {}) {
   const angry = options.angry ?? false, happy = options.happy ?? false;
-  const key = `${cat.activity}:${angry}:${happy}:${!!options.buttPat}`;
+  const key = `${cat.activity}:${angry}:${happy}:${!!options.buttPat}:${options.buttPat?.lookBack !== false}`;
   const target = targetPose(model, cat, time, angry, happy);
   if (options.buttPat) {
+    const nativeSkin = model.root.userData.modelRig === 'blender-armature';
     const lift = options.buttPat.lift;
     target.bodyY = 0.02 + lift * 0.055; target.bodyZ = 0; target.bodyPitch = 0.03 + lift * 0.16;
     // Extend the rear legs within their reach so the paws stay planted.
     target.hipY = 0.53 + lift * 0.035; target.frontHipDrop = lift * 0.035;
-    target.headY = 0.24 + lift * 0.05; target.headZ = -0.10;
-    target.headYaw = options.buttPat.side * 2.55; target.headPitch = -0.06; target.headRoll = options.buttPat.side * 0.1;
+    // A continuous neck needs anatomical reach limits; the older detached head
+    // could rotate 146 degrees and rise almost a whole neck length independently.
+    target.headY = nativeSkin ? 0.06 + lift * 0.03 : 0.24 + lift * 0.05;
+    target.headZ = nativeSkin ? -0.03 : -0.10;
+    target.headYaw = options.buttPat.lookBack === false ? 0 : options.buttPat.side * (nativeSkin ? 0.9 : 2.55);
+    target.headPitch = -0.06; target.headRoll = options.buttPat.lookBack === false ? 0 : options.buttPat.side * 0.1;
     target.tailPitch = -0.9; target.tailCurl = 0.45; target.tailSway = options.buttPat.side * 0.48;
     target.feet = Array.from({ length: 4 }, () => ({ y: 0.07, z: 0.085 }));
   }
@@ -317,7 +337,8 @@ export function animateCat(model: CatModel, cat: CatState, time: number, options
   const headRestY = state?.headRestY ?? model.head.position.y;
   const headRestZ = state?.headRestZ ?? model.head.position.z;
   const attention = trackAttention(cat, target, time, options, state, headRestY, headRestZ);
-  applyAttention(target, attention, time, cat);
+  // A pat owns its head pose, even while residual wand attention fades.
+  if (!options.buttPat) applyAttention(target, attention, time, cat);
   if (!state || time < state.lastTime) {
     state = { key, changedAt: time - 1, lastTime: time, from: target, current: target,
       headRestY, headRestZ, attention };
@@ -336,7 +357,8 @@ export function animateCat(model: CatModel, cat: CatState, time: number, options
   model.body.position.y = p.bodyY; model.body.position.z = p.bodyZ;
   model.body.rotation.set(p.bodyPitch, 0, 0); model.body.scale.set(1 + breath * 0.45, 1 + breath, 1);
   model.head.position.y = state.headRestY + p.headY + breath * 0.20;
-  model.head.position.x = options.buttPat ? options.buttPat.side * 0.24 : 0;
+  model.head.position.x = options.buttPat && options.buttPat.lookBack !== false
+    ? options.buttPat.side * (model.root.userData.modelRig === 'blender-armature' ? 0.07 : 0.24) : 0;
   model.head.position.z = state.headRestZ + p.headZ;
   model.head.rotation.set(p.headPitch, p.headYaw, p.headRoll);
   model.eyes.forEach((eye, i) => {
@@ -361,6 +383,22 @@ export function animateCat(model: CatModel, cat: CatState, time: number, options
     const twitch = twitchPhase < 0.34 ? Math.sin(twitchPhase / 0.34 * TAU) * 0.13 : 0;
     ear.rotation.set(-p.earBack * 0.35, (i ? -1 : 1) * p.earBack * 0.38, (i ? 1 : -1) * p.earBack + twitch);
   });
+  // Rotate the upper rig around the rear hips. Hind legs stay in their IK pose,
+  // so both rear paws remain planted while the chest and front paws rise together.
+  // Restore front-hip depth every frame because the rig objects are reused.
+  model.legs[0].position.z = model.legs[1].position.z = 0.4;
+  if (p.rear > 0) {
+    const angle = -p.rear * 1.02, cosine = Math.cos(angle), sine = Math.sin(angle);
+    for (const part of [model.body, model.head, model.tail, model.legs[0], model.legs[1]]) {
+      const y = part.position.y - p.hipY, z = part.position.z + 0.62;
+      part.position.y = p.hipY + y * cosine - z * sine;
+      part.position.z = -0.62 + y * sine + z * cosine;
+      part.rotation.x += angle;
+    }
+    // Keep the eyes on the lure as the torso rises beneath the head.
+    model.head.rotation.x -= angle * 0.75;
+  }
+  updateBlenderCatRig(model.root);
 }
 
 /** Kept for callers outside World; the animator now owns the complete pose. */

@@ -257,23 +257,29 @@ export class Hud {
     text(ctx, 'Rotate to portrait', x, y + 15, Math.min(27, w * 0.055), C.ink, 'center', 'serif');
   }
 
-  private title() {
+  private title(game: Game) {
     const { height: h, ctx } = this;
     this.backdrop(); this.brand();
     const center = this.center, panel = this.panelWidth, x = center - panel / 2;
     const titleY = this.top + (this.compact ? 64 : Math.min(155, h * 0.18));
     text(ctx, 'CatSlave.', center, titleY, Math.min(72, panel * 0.2), C.ink, 'center', 'serif');
-    const bottomY = h - this.bottom - 168;
+    const bottomY = h - this.bottom - (game.freePlayUnlocked ? 226 : 168);
     this.button('sound', this.soundLabel, x, bottomY - 24, panel, 44);
     this.button('start', 'Play  →', x, bottomY + 34, panel, 52, true);
     this.button('learn', 'Practice', x, bottomY + 98, panel, 48);
+    if (game.freePlayUnlocked) this.button('free-play', 'Free play →', x, bottomY + 156, panel, 48);
   }
 
   worldViewport(game: Game): GameLayout['room'] {
+    if (game.inFreePlay) {
+      const y = this.top + 110;
+      return { x: this.left + 6, y, w: this.width - this.left - this.right - 12,
+        h: Math.max(90, this.height - this.bottom - 224 - y) };
+    }
     if (game.phase === 'victory') {
       const y = this.top + 96;
       return { x: this.left + 6, y, w: this.width - this.left - this.right - 12,
-        h: Math.max(90, this.height - this.bottom - 146 - y) };
+        h: Math.max(90, this.height - this.bottom - 204 - y) };
     }
     if (!game.inBonus) return this.layout.room;
     const y = this.top + 120;
@@ -338,6 +344,57 @@ export class Hud {
     } else {
       text(ctx, `${bonus.pats} ${bonus.pats === 1 ? 'pat' : 'pats'}`, center, bottom - 85, 24, C.ink, 'center', 'bold');
     }
+  }
+
+  private freePlay(game: Game, world: World) {
+    const { ctx, layout } = this, center = this.center, width = this.panelWidth, x = center - width / 2;
+    const { header, pause } = layout;
+    round(ctx, header.x, header.y, header.w, header.h, 12, C.paper, C.line);
+    text(ctx, 'FREE PLAY', header.x + 14, header.y + 17, 14, C.green, 'left', 'bold');
+    text(ctx, 'No mess · always-fed cats', header.x + 14, header.y + 35, 11, C.muted);
+    this.button('pause', 'Ⅱ', pause.x, pause.y, pause.w, pause.h);
+    const catWidth = width / Math.max(1, game.cats.length);
+    game.cats.forEach((cat, i) => {
+      const cx = x + i * catWidth, selected = cat.id === game.selectedFreeCatId;
+      round(ctx, cx + 2, this.top + 55, catWidth - 4, 44, 10, selected ? C.green : C.paper, C.line);
+      ellipse(ctx, cx + catWidth / 2, this.top + 66, 4, 4, cat.color);
+      text(ctx, cat.name, cx + catWidth / 2, this.top + 84, 11, selected ? C.paper : C.ink, 'center', 'bold', catWidth - 8);
+      this.addHit({ id: `free-cat:${cat.id}`, label: `Choose ${cat.name}${selected ? ', selected' : ''}`, x: cx + 2, y: this.top + 55, w: catWidth - 4, h: 44 });
+    });
+    const room = this.worldViewport(game);
+    ctx.save(); ctx.beginPath(); ctx.rect(room.x, room.y, room.w, room.h); ctx.clip();
+    const cat = game.cats.find(c => c.id === game.selectedFreeCatId);
+    if (cat) {
+      const rump = game.freeInteraction === 'pet' ? world.bonusPatTarget(cat.id) : undefined;
+      if (rump?.visible) {
+        ellipse(ctx, rump.x, rump.y, 20, 20, 'rgba(255,249,235,0.45)');
+        ctx.beginPath(); ctx.arc(rump.x, rump.y, 21, 0, Math.PI * 2);
+        ctx.strokeStyle = C.green; ctx.lineWidth = 2; ctx.stroke();
+        paw(ctx, rump.x, rump.y, 24, C.green);
+      }
+      const anchor = world.catLabelPosition(cat.id), point = anchor && world.project(anchor);
+      if (point?.visible) {
+        round(ctx, point.x - 40, point.y - 18, 80, 24, 9, C.paper, C.green);
+        text(ctx, cat.name, point.x, point.y - 6, 12, C.green, 'center', 'bold');
+        if (cat.happyUntil > game.clock) heart(ctx, point.x + 47, point.y - 7, 16);
+      }
+    }
+    ctx.restore();
+    const y = this.height - this.bottom - 212;
+    const modeWidth = width / 3;
+    ([['pet', 'Butt pats'], ['wand', 'Wand'], ['camera', 'Camera']] as const).forEach(([id, label], i) =>
+      this.button(`free-mode:${id}`, label, x + i * modeWidth + 2, y, modeWidth - 4, 44, game.freeInteraction === id));
+    const directionWidth = width / 6;
+    ([['left', '←'], ['right', '→'], ['up', '↑'], ['down', '↓'], ['forward', 'Near'], ['back', 'Far']] as const).forEach(([id, label], i) =>
+      this.button(`free-move:${id}`, label, x + i * directionWidth + 2, y + 52, directionWidth - 4, 44));
+    const viewWidth = width / 3;
+    ([['out', '− Zoom'], ['in', '+ Zoom'], ['reset', 'Reset view']] as const).forEach(([id, label], i) =>
+      this.button(`view:${id}`, label, x + i * viewWidth + 2, y + 104, viewWidth - 4, 44));
+    const instruction = game.freeInteraction === 'pet' ? 'Tap or stroke the selected cat’s butt.'
+      : game.freeInteraction === 'wand' ? 'Wave near any cat to catch its attention.' : 'Drag to look · right-drag to pan';
+    text(ctx, instruction, center, y + 165, 12, C.ink, 'center', 'sans', width);
+    text(ctx, 'Wheel: zoom · WASD / Q E: move · arrows above: move', center, y + 187, 11, C.muted, 'center', 'sans', width);
+    if (game.feedbackUntil > game.clock) text(ctx, game.feedback, center, y + 207, 11, C.green, 'center', 'sans', width);
   }
 
   private gameplay(game: Game, world: World) {
@@ -583,7 +640,10 @@ export class Hud {
     const bx = x + 18, bw = width - 36;
     if (this.modal === 'help') {
       text(ctx, 'Controls', center, y + 30, 24, C.ink, 'center', 'serif', width - 24);
-      if (game.inBonus) {
+      if (game.inFreePlay) {
+        const instructions = ['Choose an adopted cat above the room.', 'Pet: tap or stroke the cat’s butt.', 'Wand: drag in the room to play.', 'Camera: drag to look, right-drag to pan.', 'Wheel or + / − to zoom. WASD / Q E to move.', 'Use the six direction buttons on touchscreens.'];
+        instructions.forEach((value, i) => text(ctx, value, center, y + 76 + i * 37, 12, C.ink, 'center', 'sans', width - 32));
+      } else if (game.inBonus) {
         paw(ctx, center, y + 100, 55, C.coral);
         text(ctx, 'Tap every cat’s butt.', center, y + 160, 16, C.ink, 'center', 'bold', width - 32);
         text(ctx, 'Pat each cat at least once every 3 seconds.', center, y + 192, 12, C.ink, 'center', 'sans', width - 32);
@@ -596,7 +656,7 @@ export class Hud {
       const home = this.modal === 'home';
       paw(ctx, center, y + 52, 40, C.coral);
       text(ctx, home ? 'Main menu?' : 'Restart?', center, y + 105, 30, C.ink, 'center', 'serif');
-      text(ctx, 'Progress will be reset.', center, y + 146, 13, C.muted, 'center', 'sans', width - 32);
+      text(ctx, game.inFreePlay ? 'Your free play unlock and cats are saved.' : 'Progress will be reset.', center, y + 146, 13, C.muted, 'center', 'sans', width - 32);
       this.button('back', 'Cancel', bx, y + height - 130, bw, 48, true);
       this.button(home ? 'confirm-home' : 'confirm-restart', home ? 'Main menu' : 'Restart', bx, y + height - 68, bw, 48);
       return;
@@ -606,7 +666,7 @@ export class Hud {
     const by = y + height - 258;
     this.button('resume', 'Resume  →', bx, by, bw, 52, true);
     this.button('help', 'Controls', bx, by + 65, bw, 48);
-    this.button('restart', game.resumePhase === 'tutorial' ? 'Restart tutorial' : 'Restart shift', bx, by + 126, bw, 48);
+    this.button('restart', game.inFreePlay ? 'Restart free play' : game.resumePhase === 'tutorial' ? 'Restart tutorial' : 'Restart shift', bx, by + 126, bw, 48);
     this.button('home', 'Main menu', bx, by + 187, bw, 48);
   }
 
@@ -621,9 +681,10 @@ export class Hud {
       heart(ctx, point.x + Math.sin(cycle * 4 + i) * 9, point.y - cycle * 27, 11 + Math.sin(cycle * Math.PI) * 5);
       ctx.restore();
     });
-    const x = center - width / 2, y = this.height - this.bottom - 132;
-    this.button('restart', 'Play again  →', x, y, width, 52, true);
-    this.button('home', 'Main menu', x, y + 64, width, 48);
+    const x = center - width / 2, y = this.height - this.bottom - 190;
+    this.button('free-play', 'Free play unlocked →', x, y, width, 52, true);
+    this.button('restart', 'Play again', x, y + 64, width, 48);
+    this.button('home', 'Main menu', x, y + 122, width, 48);
   }
 
   private ending(game: Game) {
@@ -710,13 +771,14 @@ export class Hud {
     const ctx = this.ctx;
     ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0); ctx.clearRect(0, 0, this.width, this.height); this.hits = [];
     if (this.rotateRequired) this.rotationScreen();
-    else if (game.phase === 'title') this.title();
+    else if (game.phase === 'title') this.title(game);
     else if (game.phase === 'adoption') this.adoption(game);
     else if (game.phase === 'upgrade') this.upgrade(game);
     else if (game.phase === 'victory') this.victory(game, world);
     else if (game.phase === 'game-over') this.ending(game);
     else {
-      if (game.inBonus) this.bonusRound(game, world);
+      if (game.inFreePlay) this.freePlay(game, world);
+      else if (game.inBonus) this.bonusRound(game, world);
       else this.gameplay(game, world);
       if (game.phase === 'paused') { this.hits = []; this.pause(game); }
     }

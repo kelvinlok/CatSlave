@@ -1,0 +1,102 @@
+import { expect, test } from '@playwright/test';
+import type * as THREE from 'three';
+
+for (const [variant, name] of ['Choco', 'Latte'].entries()) {
+test(`${name} loads an authored skeleton and continuously deforms its exported skin`, async ({ page }) => {
+  const errors: string[] = [];
+  page.on('pageerror', error => errors.push(error.message));
+  await page.setViewportSize({ width: 1200, height: 700 });
+  await page.goto('/tests/browser/cat-studio.html');
+  await page.waitForFunction(() => !!window.__CAT_STUDIO__);
+  const report = await page.evaluate(variant => {
+    const s = window.__CAT_STUDIO__;
+    s.pose('idle', 1, variant);
+    const skins: THREE.SkinnedMesh[] = [], bones: THREE.Bone[] = [];
+    s.model.root.traverse(object => {
+      if ((object as THREE.SkinnedMesh).isSkinnedMesh) skins.push(object as THREE.SkinnedMesh);
+      if ((object as THREE.Bone).isBone && object.name.startsWith('DEF_')) bones.push(object as THREE.Bone);
+    });
+    const skin = skins.find(mesh => mesh.name.endsWith('_ContinuousSkin'));
+    if (!skin) return { rig: s.model.root.userData.modelRig, skins: 0, bones: bones.length, errors: ['No exported skin'] };
+    const weights = skin.geometry.getAttribute('skinWeight'), indices = skin.geometry.getAttribute('skinIndex');
+    const sampleIndices = Array.from({ length: 48 }, (_, i) => Math.floor(i * (weights.count - 1) / 47));
+    const weightSnapshot = sampleIndices.map(i => [weights.getX(i), weights.getY(i), weights.getZ(i), weights.getW(i)]);
+    const points = () => sampleIndices.map(i => skin.getVertexPosition(i, skin.position.clone()).applyMatrix4(skin.matrixWorld).toArray());
+    const idle = points();
+    s.pose('stretching', 2, variant, 2, 0.5); s.pose('stretching', 2.4, variant, 2, 0.5);
+    const stretch = points();
+    s.pose('stretching', 2.4, variant, 2, 0.5);
+    const frozen = points();
+    s.pose('walking', 3, variant, 2); s.pose('walking', 3.4, variant, 4);
+    const walk = points();
+    return {
+      rig: s.model.root.userData.modelRig, skins: skins.length, bones: bones.length,
+      asset: s.model.root.userData.modelAsset,
+      continuous: skin.userData.surfaceComponents === 1 && skin.userData.nonManifoldEdges === 0,
+      neckBones: ['DEF_neckBase', 'DEF_neckTop'].every(name => bones.some(bone => bone.name === name)),
+      palettes: new Set(skins.map(mesh => mesh.skeleton)).size,
+      allNative: skins.every(mesh => mesh.skeleton.bones.every(bone => bone.name.startsWith('DEF_'))),
+      finite: [idle, stretch, frozen, walk].every(pose => pose.flat().every(Number.isFinite)),
+      changed: stretch.filter((p, i) => p.some((x, c) => Math.abs(x - idle[i][c]) > 0.01)).length,
+      frozenDelta: Math.max(...frozen.flatMap((p, i) => p.map((x, c) => Math.abs(x - stretch[i][c])))),
+      unchangedWeights: JSON.stringify(weightSnapshot) === JSON.stringify(sampleIndices.map(i => [weights.getX(i), weights.getY(i), weights.getZ(i), weights.getW(i)])),
+      weightCount: weights.count, indexCount: indices.count,
+      errors: [],
+    };
+  }, variant);
+  expect(report.errors).toEqual([]);
+  expect(report.rig).toBe('blender-armature');
+  expect(report.skins).toBeGreaterThan(0);
+  expect(report.asset).toBe(`models/${name.toLowerCase()}.glb`);
+  expect(report.bones).toBe(28);
+  expect(report.neckBones).toBe(true);
+  expect(report.continuous).toBe(true);
+  expect(report.palettes).toBe(1);
+  expect(report.allNative).toBe(true);
+  expect(report.finite).toBe(true);
+  expect(report.changed).toBeGreaterThan(12);
+  expect(report.frozenDelta).toBeLessThan(1e-6);
+  expect(report.unchangedWeights).toBe(true);
+  expect(report.weightCount).toBe(report.indexCount);
+  expect(errors).toEqual([]);
+});
+}
+
+test('Choco and Latte native skeletons keep independent animated poses', async ({ page }) => {
+  await page.goto('/tests/browser/cat-studio.html');
+  await page.waitForFunction(() => !!window.__CAT_STUDIO__);
+  const report = await page.evaluate(async () => {
+    const modelPath = '/src/cat-model.ts', configPath = '/src/config.ts';
+    const animationPath = '/src/cat-animation.ts', simulationPath = '/src/simulation.ts';
+    const { createCat, disposeCat } = await import(modelPath) as typeof import('../../src/cat-model');
+    const { PALETTE } = await import(configPath) as typeof import('../../src/config');
+    const { animateCat } = await import(animationPath) as typeof import('../../src/cat-animation');
+    const { Game } = await import(simulationPath) as typeof import('../../src/simulation');
+    const choco = createCat(PALETTE[0]), latte = createCat(PALETTE[1]), twin = createCat(PALETTE[0]);
+    const models = [choco, latte, twin];
+    const snapshots = () => models.map(model => model.root.getObjectByName('DEF_head')!.matrixWorld.elements.slice());
+    const initial = snapshots();
+    const cat = new Game(5).cats[0]; cat.activity = 'stretching'; cat.pose = 0.5;
+    animateCat(choco, cat, 1);
+    const posed = snapshots();
+    const palettes = models.map(model => {
+      const skins: THREE.SkinnedMesh[] = [];
+      model.root.traverse(object => { if ((object as THREE.SkinnedMesh).isSkinnedMesh) skins.push(object as THREE.SkinnedMesh); });
+      return skins[0].skeleton;
+    });
+    const result = {
+      rigs: models.map(model => model.root.userData.modelRig),
+      distinctPalettes: new Set(palettes).size,
+      distinctHeads: new Set(models.map(model => model.root.getObjectByName('DEF_head'))).size,
+      changedChoco: JSON.stringify(posed[0]) !== JSON.stringify(initial[0]),
+      unchangedOthers: [1, 2].every(i => JSON.stringify(posed[i]) === JSON.stringify(initial[i])),
+    };
+    models.forEach(disposeCat);
+    return result;
+  });
+  expect(report.rigs).toEqual(['blender-armature', 'blender-armature', 'blender-armature']);
+  expect(report.distinctPalettes).toBe(3);
+  expect(report.distinctHeads).toBe(3);
+  expect(report.changedChoco).toBe(true);
+  expect(report.unchangedOthers).toBe(true);
+});

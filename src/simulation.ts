@@ -2,6 +2,7 @@ import { ATTACK_DAMAGE, ATTACK_INTERVAL, ATTACK_WARNING, CLEANING_TOOLS, EFFICIE
 import type { CareEvent, CatDefinition, CatState, EventKind, Phase, ToolId } from './types';
 import { FURNITURE } from './furniture';
 import { beginVisit, tickVisit } from './cat-behavior';
+import { FreeRoam } from './free-roam';
 import { BONUS_GAMES, BonusRound } from './bonus';
 
 export class Random {
@@ -13,7 +14,14 @@ export class Random {
 
 export class Game {
   phase: Phase = 'title';
-  resumePhase: 'playing' | 'tutorial' | 'bonus' = 'playing';
+  resumePhase: 'playing' | 'tutorial' | 'bonus' | 'free-play' = 'playing';
+  freePlayUnlocked = false;
+  freePlayRoster: string[] = [];
+  selectedFreeCatId?: number;
+  freeInteraction: 'pet' | 'wand' | 'camera' = 'pet';
+  freePatUntil = 0;
+  readonly freeRoam = new FreeRoam();
+  get inFreePlay() { return this.phase === 'free-play' || this.phase === 'paused' && this.resumePhase === 'free-play'; }
   pauseReason = 'A little breather';
   hp = 100;
   stage = 0;
@@ -45,7 +53,7 @@ export class Game {
   constructor(seed = Date.now()) { this.random = new Random(seed); this.movementRandom = new Random(seed ^ 0x51ca7); this.cats = [this.makeCat(PALETTE[0], 0)]; }
   get config() { return STAGES[this.stage]; }
   get active() { return this.phase === 'playing' || this.phase === 'tutorial'; }
-  get running() { return this.active || this.phase === 'bonus'; }
+  get running() { return this.active || this.phase === 'bonus' || this.phase === 'free-play'; }
   get inBonus() { return this.phase === 'bonus' || this.phase === 'paused' && this.resumePhase === 'bonus'; }
   get vacuumUnlocked() { return CLEANING_TOOLS.every(id => this.levels[id] >= 3); }
   get availableTools() { return this.vacuumUnlocked ? [VACUUM, TOOL_BY_ID.food, TOOL_BY_ID.toy] : TOOLS; }
@@ -56,6 +64,43 @@ export class Game {
     return { ...palette, id: this.nextId++, appearance: palette.appearance ?? 'primitive', behavior: { needRate: 1, patience: 1 },
       nextNeedAt: 0, happyUntil: 0, attackUntil: 0,
       position: { x: 0, z: -1.2 }, destination: { x: 0, z: -1.2 }, yaw: 0.65, stride: 0, activity: 'idle', decisionAt: 0.6, elevation: 0, pose: 0 };
+  }
+
+  restoreFreePlay(names: unknown) {
+    if (!Array.isArray(names) || names.length !== STAGES.length || new Set(names).size !== names.length
+      || !names.every(name => PALETTE.some(p => p.name === name))) return;
+    this.freePlayRoster = [...names]; this.freePlayUnlocked = true;
+  }
+
+  startFreePlay() {
+    if (!this.freePlayUnlocked || !['title', 'victory'].includes(this.phase)) return false;
+    if (this.phase === 'title') this.cats = this.freePlayRoster.map((name, i) => this.makeCat(PALETTE.find(p => p.name === name)!, i));
+    this.startStage(); this.phase = 'free-play'; this.events = []; this.bonus = undefined;
+    this.hp = 100; this.selectedFreeCatId = this.cats[0]?.id; this.freeInteraction = 'pet';
+    this.cats.forEach((cat, i) => { cat.nextNeedAt = Infinity; cat.pendingNeed = undefined; cat.decisionAt = this.clock + 5 + i * 2; });
+    this.freeRoam.reset(this.cats, this.clock);
+    this.revision++; return true;
+  }
+
+  chooseFreeCat(id: number) {
+    if (this.phase !== 'free-play' || !this.cats.some(cat => cat.id === id)) return;
+    this.selectedFreeCatId = id; this.revision++;
+  }
+
+  interactFreeCat(kind: 'pet' | 'wand', catId = this.selectedFreeCatId) {
+    if (this.phase !== 'free-play') return false;
+    const cat = this.cats.find(c => c.id === catId);
+    if (!cat) return false;
+    this.freeRoam.cancel(cat.id, this.cats, this.clock);
+    cat.happyUntil = this.clock + 2;
+    if (kind === 'wand' && cat.visit) cat.visit.leaveRequested = true;
+    if (kind === 'pet') this.freePatUntil = this.clock + 0.6;
+    if (!cat.visit) {
+      cat.activity = kind === 'wand' ? 'playing' : 'idle'; cat.decisionAt = this.clock + 4;
+      cat.stretchStartedAt = undefined; cat.pose = 0;
+    }
+    this.say(kind === 'pet' ? `${cat.name} loves those butt pats.` : `${cat.name} is chasing the wand!`);
+    this.revision++; return true;
   }
 
   reset(tutorial = false) {
@@ -95,6 +140,7 @@ export class Game {
   }
 
   spawn(cat: CatState, kind?: EventKind) {
+    if (this.inFreePlay) return;
     if (this.events.some(e => e.catId === cat.id)) return;
     // Needs never leave a bowl or mess suspended inside furniture. Finish the
     // visit and return to the floor before scheduling the next care event.
@@ -118,6 +164,13 @@ export class Game {
   }
 
   tick(dt: number) {
+    if (this.phase === 'free-play') {
+      if (dt <= 0 || !Number.isFinite(dt)) return;
+      for (let remaining = dt; remaining > 0.000001;) {
+        const step = Math.min(remaining, 0.05); remaining -= step; this.clock += step; this.moveCats(step);
+      }
+      return;
+    }
     if (this.phase === 'bonus' && this.bonus) {
       const before = this.bonus.status;
       const failedBefore = this.bonus.failedCatId;
@@ -159,9 +212,11 @@ export class Game {
   }
 
   private moveCats(dt: number) {
+    if (this.inFreePlay) this.freeRoam.update(this.cats, this.clock, dt, this.movementRandom);
     for (const cat of this.cats) {
+      if (this.inFreePlay && this.freeRoam.busy(cat.id)) continue;
       const need = this.events.find(e => e.catId === cat.id);
-      if (cat.visit) { cat.stretchStartedAt = undefined; tickVisit(cat, this.clock, dt, this.cats); continue; }
+      if (cat.visit) { cat.stretchStartedAt = undefined; tickVisit(cat, this.clock, dt, this.cats, this.inFreePlay ? { rest: 8, durationScale: 3 } : undefined); continue; }
       // Bowls and play stay reachable. Cleaning messes remain behind as the cat wanders.
       const waiting = need && (need.kind === 'hunger' || need.kind === 'boredom');
       if (waiting || cat.attackUntil > this.clock) {
@@ -176,12 +231,13 @@ export class Game {
         cat.pose = Math.min(1, (this.clock - cat.stretchStartedAt) / STRETCH_DURATION);
         if (cat.pose >= 1) {
           cat.activity = 'idle'; cat.pose = 0; cat.stretchStartedAt = undefined;
-          cat.decisionAt = this.clock + 0.7;
+          cat.decisionAt = this.clock + (this.inFreePlay ? 7 : 0.7);
         }
         continue;
       }
       // Stretch only during an unhurried floor pause, with room to reach forward.
       if (!need && cat.elevation === 0 && (cat.activity === 'idle' || cat.activity === 'sniffing')
+        && (!this.inFreePlay || this.clock >= cat.decisionAt)
         && this.clock >= (cat.nextStretchAt ?? Infinity) && cat.nextNeedAt > this.clock + STRETCH_DURATION) {
         const reach = { x: cat.position.x + Math.sin(cat.yaw) * 0.7, z: cat.position.z + Math.cos(cat.yaw) * 0.7 };
         const clear = reach.x > ROOM.minX && reach.x < ROOM.maxX && reach.z > ROOM.minZ && reach.z < ROOM.maxZ
@@ -192,8 +248,11 @@ export class Game {
           continue;
         }
       }
+      if (this.inFreePlay && cat.activity === 'playing' && this.clock >= cat.decisionAt) {
+        cat.activity = 'idle'; cat.decisionAt = this.clock + 7; continue;
+      }
       if (cat.activity !== 'walking' && this.clock >= cat.decisionAt) {
-        if (!need && cat.nextNeedAt > this.clock + 2 && this.movementRandom.next() < 0.8) {
+        if (!need && cat.nextNeedAt > this.clock + 2 && this.movementRandom.next() < (this.inFreePlay ? 0.45 : 0.8)) {
           const spots = FURNITURE.filter(spot => spot.id !== cat.lastFurniture && !this.cats.some(other => other.visit?.id === spot.id));
           if (spots.length && this.visitFurniture(cat.id, this.movementRandom.choose(spots).id)) continue;
         }
@@ -219,14 +278,14 @@ export class Game {
       }
       if (distance < 0.025) {
         cat.activity = this.movementRandom.next() < 0.45 ? 'sniffing' : 'idle';
-        cat.decisionAt = this.clock + this.movementRandom.between(1.2, 3.8);
+        cat.decisionAt = this.clock + (this.inFreePlay ? this.movementRandom.between(6, 12) : this.movementRandom.between(1.2, 3.8));
       }
     }
   }
 
   visitFurniture(catId: number, id: string) {
     const cat = this.cats.find(c => c.id === catId);
-    if (!this.active || !cat || this.events.some(e => e.catId === catId)) return false;
+    if ((!this.active && this.phase !== 'free-play') || !cat || this.inFreePlay && this.freeRoam.busy(catId) || this.events.some(e => e.catId === catId)) return false;
     return beginVisit(cat, id, this.cats);
   }
 
@@ -264,7 +323,7 @@ export class Game {
   say(message: string) { this.feedback = message; this.feedbackUntil = this.clock + 2; }
   pause(reason = 'A little breather') {
     if (!this.running) return;
-    this.resumePhase = this.phase as 'playing' | 'tutorial' | 'bonus'; this.phase = 'paused'; this.pauseReason = reason; this.revision++;
+    this.resumePhase = this.phase as 'playing' | 'tutorial' | 'bonus' | 'free-play'; this.phase = 'paused'; this.pauseReason = reason; this.revision++;
   }
   resume() { if (this.phase === 'paused') { this.phase = this.resumePhase; this.revision++; } }
 
@@ -273,7 +332,7 @@ export class Game {
     this.lastStagePerfect = this.damageSerial === this.stageDamageStart;
     this.upgradesRemaining = this.stage < STAGES.length - 1 ? 1 : 0;
     this.events = []; this.stagesSurvived++; this.feedback = '';
-    if (this.stage === STAGES.length - 1) { this.phase = 'victory'; this.revision++; return; }
+    if (this.stage === STAGES.length - 1) { this.phase = 'victory'; this.freePlayUnlocked = true; this.freePlayRoster = this.cats.map(cat => cat.name); this.revision++; return; }
     if (this.lastStagePerfect) {
       this.bonus = new BonusRound(this.random.choose(BONUS_GAMES), this.cats.map(cat => cat.id));
       this.phase = 'bonus'; this.revision++; return;

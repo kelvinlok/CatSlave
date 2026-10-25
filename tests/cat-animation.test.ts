@@ -33,6 +33,28 @@ describe('articulated cat animation', () => {
     animateCat(model, cat, 3, { buttPat: { lift: 0, side: 1 } });
     expect(model.body.position.y).toBeCloseTo(rest);
   });
+  it('gives butt pats priority over lingering wand attention', () => {
+    const { model, cat } = fixture('playing');
+    const focus = { x: 0.4, y: 0.8, z: 0.8 };
+    animateCat(model, cat, 0, { focus, engagement: 1 });
+    for (let i = 1; i <= 30; i++) animateCat(model, cat, i / 60, {
+      focus, engagement: 1, buttPat: { lift: 0.5, side: -1 },
+    });
+    expect(model.head.rotation.y).toBeCloseTo(-2.55);
+  });
+  it('keeps the head facing forward during free-play pats while lifting the rump', () => {
+    const { model, cat } = fixture();
+    animateCat(model, cat, 0, { buttPat: { lift: 0, side: 1, lookBack: false } });
+    const rest = model.body.position.y;
+    for (let frame = 1; frame <= 60; frame++) {
+      animateCat(model, cat, frame / 60, {
+        buttPat: { lift: Math.sin(frame / 60 * Math.PI / 2), side: 1, lookBack: false },
+      });
+      expect(model.head.rotation.y).toBeCloseTo(0);
+      expect(model.head.position.x).toBe(0);
+    }
+    expect(model.body.position.y).toBeGreaterThan(rest);
+  });
   it('keeps planted paws level and stationary in world space throughout a full walking cycle', () => {
     const { model, cat } = fixture('walking');
     const offsets = [0, 0.5, 0.75, 0.25];

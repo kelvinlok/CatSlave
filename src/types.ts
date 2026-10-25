@@ -1,6 +1,6 @@
 export type ToolId = 'sweeper' | 'mop' | 'brush' | 'food' | 'toy' | 'vacuum';
 export type EventKind = 'poop' | 'vomit' | 'fur' | 'hunger' | 'boredom';
-export type Phase = 'title' | 'tutorial' | 'playing' | 'bonus' | 'paused' | 'adoption' | 'upgrade' | 'game-over' | 'victory';
+export type Phase = 'title' | 'tutorial' | 'playing' | 'bonus' | 'paused' | 'adoption' | 'upgrade' | 'game-over' | 'victory' | 'free-play';
 export interface BehaviorProfile { needRate: number; patience: number; }
 export interface CatDefinition {
   id: number; name: string; color: string; accent: string;

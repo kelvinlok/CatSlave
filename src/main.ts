@@ -9,7 +9,7 @@ import type { Point, ToolId } from './types';
 import { portraitViewport } from './layout';
 import { GyroLook } from './gyro';
 import { GameAudio, RoomSounds } from './sound';
-import { preloadChocoAsset } from './choco-asset';
+import { preloadBlenderCatAssets } from './blender-cat-asset';
 
 const canvas = document.querySelector<HTMLCanvasElement>('#game')!;
 let renderer: THREE.WebGLRenderer;
@@ -36,16 +36,19 @@ renderer.setClearColor('#f8f0df');
 renderer.clear();
 const loadingStatus = document.createElement('div');
 loadingStatus.id = 'model-loading'; loadingStatus.setAttribute('role', 'status');
-loadingStatus.textContent = 'Getting Choco ready…';
+loadingStatus.textContent = 'Getting the cats ready…';
 loadingStatus.style.cssText = 'position:absolute;inset:0;display:grid;place-items:center;background:#f8f0df;color:#493e38;font:500 22px Georgia,serif;pointer-events:none';
 document.body.append(loadingStatus);
-try { await preloadChocoAsset(); } finally { loadingStatus.remove(); }
+try { await preloadBlenderCatAssets(); } finally { loadingStatus.remove(); }
 
 const game = new Game(import.meta.env.MODE === 'test' ? 42 : undefined);
+try { game.restoreFreePlay(JSON.parse(localStorage.getItem('catslave-free-play') ?? 'null')); } catch { /* Storage may be unavailable. */ }
+let savedFreeRoster = JSON.stringify(game.freePlayRoster);
 const world = new World();
 const hud = new Hud();
 const gesture = new Gesture();
 const audio = new GameAudio();
+audio.bindTouchUnlock(canvas);
 const roomSounds = new RoomSounds();
 hud.soundLabel = audio.label;
 const gyro = new GyroLook(() => { hud.gyroStatus = gyro.status; hud.invalidate(); }, () => world.camera.quaternion);
@@ -58,7 +61,10 @@ let width = innerWidth, height = innerHeight;
 let fpsFrames = 0, fpsTime = 0, fps = 60;
 let manualClock = false;
 
+let freeDrag: { point: Point; pan: boolean; mode: 'camera' | 'pet' | 'wand' } | undefined;
+const movementKeys = new Set<string>();
 function cancelGesture() {
+  freeDrag = undefined; world.setFreePointer(undefined); movementKeys.clear();
   gesture.cancel(); hud.pointer = undefined; hud.pointerTool = undefined;
   hud.pressedId = undefined;
   world.carePointer = undefined;
@@ -124,10 +130,17 @@ function action(id: string) {
     hud.modal = undefined; hud.clearInteraction(); hud.draw(game, world, 0, true); return;
   }
   if (['learn', 'start', 'restart', 'home', 'confirm-restart', 'confirm-home'].includes(id)) { world.resetView(); gyro.recenter(world.camera.quaternion); }
-  if (id === 'confirm-restart') { game.reset(game.resumePhase === 'tutorial'); }
+  if (id === 'confirm-restart') { if (game.resumePhase === 'free-play') { game.phase = 'title'; game.startFreePlay(); } else game.reset(game.resumePhase === 'tutorial'); }
   else if (id === 'learn') { game.reset(true); }
   else if (id === 'start' || id === 'restart') { game.reset(); }
   else if (id === 'home' || id === 'confirm-home') { game.reset(); game.phase = 'title'; }
+  else if (id === 'free-play') { if (game.startFreePlay()) world.resetView(); }
+  else if (id.startsWith('free-cat:')) { game.chooseFreeCat(Number(id.slice(9))); const cat = game.cats.find(c => c.id === game.selectedFreeCatId); if (cat) world.focusOn(new THREE.Vector3(cat.position.x, cat.elevation + 0.5, cat.position.z)); }
+  else if (id.startsWith('free-mode:') && game.phase === 'free-play') { game.freeInteraction = id.slice(10) as 'pet' | 'wand' | 'camera'; game.revision++; }
+  else if (id.startsWith('free-move:') && game.phase === 'free-play') {
+    const moves: Record<string, [number, number, number]> = { left: [-0.5,0,0], right: [0.5,0,0], up: [0,0.5,0], down: [0,-0.5,0], forward: [0,0,-0.5], back: [0,0,0.5] };
+    const move = moves[id.slice(10)]; if (move) world.translateView(...move);
+  }
   else if (id === 'pause') game.pause();
   else if (id === 'resume' && !contextLost && !document.hidden) { game.resume(); lastTime = performance.now(); }
   else if (id === 'tutorial-next') { game.advanceTutorial(); }
@@ -140,11 +153,11 @@ function action(id: string) {
   else if (id.startsWith('tool:')) game.select(id.slice(5) as ToolId);
   else if (id.startsWith('adopt:')) game.adopt(Number(id.slice(6)));
   else if (id.startsWith('upgrade:')) { game.upgrade(id.slice(8) as ToolId); }
-  else if (game.active && id === 'view:in') world.zoomView(0.2);
-  else if (game.active && id === 'view:out') world.zoomView(-0.2);
-  else if (game.active && id === 'view:reset') { world.resetView(); gyro.recenter(world.camera.quaternion); }
-  else if (game.active && id === 'view:gyro') void gyro.toggle();
-  else if (game.active && id.startsWith('focus:')) {
+  else if ((game.active || game.phase === 'free-play') && id === 'view:in') world.zoomView(0.2);
+  else if ((game.active || game.phase === 'free-play') && id === 'view:out') world.zoomView(-0.2);
+  else if ((game.active || game.phase === 'free-play') && id === 'view:reset') { world.resetView(); gyro.recenter(world.camera.quaternion); }
+  else if ((game.active || game.phase === 'free-play') && id === 'view:gyro') void gyro.toggle();
+  else if ((game.active || game.phase === 'free-play') && id.startsWith('focus:')) {
     const care = game.events.find(e => e.id === Number(id.slice(6)));
     if (care) { world.focusOn(world.eventPosition(care)); gyro.recenter(world.camera.quaternion); }
   }
@@ -181,9 +194,13 @@ function updateCarePointer(p: Point, movement = 0) {
   if (!care || !toolMatches(route.tool, care.kind)) { world.carePointer = undefined; return; }
   world.setCarePointer(care, p, careTarget(care.id, p), movement);
 }
+function waveWand(p: Point) {
+  world.setFreePointer(p);
+  for (const target of world.freeWandTargets(game, p)) game.interactFreeCat('wand', target.catId);
+}
 function point(event: PointerEvent): Point { const rect = canvas.getBoundingClientRect(); return { x: event.clientX - rect.left, y: event.clientY - rect.top }; }
 canvas.addEventListener('pointerdown', event => {
-  if (hud.rotateRequired || pointerId !== undefined || !event.isPrimary || (event.pointerType === 'mouse' && event.button !== 0) || contextLost) return;
+  if (hud.rotateRequired || pointerId !== undefined || !event.isPrimary || (event.pointerType === 'mouse' && event.button !== 0 && !(game.phase === 'free-play' && event.button === 2)) || contextLost) return;
   event.preventDefault(); canvas.focus({ preventScroll: true });
   audio.unlock();
   hud.draw(game, world, 0, true);
@@ -192,6 +209,16 @@ canvas.addEventListener('pointerdown', event => {
   if (hit?.disabled) return;
   if (game.phase === 'bonus' && hit?.id.startsWith('pat:')) { action(hit.id); return; }
   pointerId = event.pointerId; canvas.setPointerCapture(event.pointerId);
+  if (game.phase === 'free-play' && !hit && p.x >= world.viewport.x && p.x <= world.viewport.x + world.viewport.w && p.y >= world.viewport.y && p.y <= world.viewport.y + world.viewport.h) {
+    const catId = world.freeCatHit(p);
+    if (catId !== undefined && game.freeInteraction === 'pet') game.chooseFreeCat(catId);
+    const mode = event.button === 2 ? 'camera' : game.freeInteraction;
+    freeDrag = { point: p, pan: event.button === 2 || event.shiftKey, mode };
+    if (mode === 'pet' && game.selectedFreeCatId !== undefined && world.freePetHit(game.selectedFreeCatId, p)) {
+      game.interactFreeCat('pet'); world.freePat(game.selectedFreeCatId); audio.play('pat'); audio.play('purr');
+    } else if (mode === 'wand') { waveWand(p); }
+    return;
+  }
   let eventId = hit?.eventId;
   if (!hit && game.active) {
     eventId = game.events.find(e => e.kind === 'boredom' && world.toyHit(e, p))?.id;
@@ -216,6 +243,17 @@ canvas.addEventListener('pointermove', event => {
     hud.invalidate();
   }
   if (event.pointerId !== pointerId) return;
+  if (freeDrag && game.phase === 'free-play') {
+    const dx = p.x - freeDrag.point.x, dy = p.y - freeDrag.point.y;
+    if (freeDrag.mode === 'camera') {
+      if (freeDrag.pan) world.translateView(-dx * 0.012, dy * 0.012, 0);
+      else world.lookView(dx, dy);
+    } else if (freeDrag.mode === 'wand') { waveWand(p); }
+    else if (game.selectedFreeCatId !== undefined && world.freePetHit(game.selectedFreeCatId, p) && game.clock >= game.freePatUntil) {
+      game.interactFreeCat('pet'); world.freePat(game.selectedFreeCatId); audio.play('pat'); audio.play('purr');
+    }
+    freeDrag.point = p; hud.invalidate(); return;
+  }
   const route = gesture.route;
   if (route?.kind === 'ui') { hud.pressedId = hover?.id === route.id ? route.id : undefined; hud.invalidate(); }
   const inTarget = route?.kind === 'care' && careTarget(route.eventId, p);
@@ -234,7 +272,16 @@ canvas.addEventListener('pointercancel', event => { if (event.pointerId === poin
 canvas.addEventListener('lostpointercapture', event => { if (event.pointerId === pointerId) cancelGesture(); });
 canvas.addEventListener('pointerleave', () => { hud.hoveredId = undefined; hud.invalidate(); });
 canvas.addEventListener('contextmenu', event => event.preventDefault());
+canvas.addEventListener('wheel', event => {
+  if (game.phase !== 'free-play') return;
+  event.preventDefault(); world.zoomView(-event.deltaY * 0.002); hud.invalidate();
+}, { passive: false });
+window.addEventListener('keyup', event => movementKeys.delete(event.key.toLowerCase()));
 window.addEventListener('keydown', event => {
+  if (hud.rotateRequired || contextLost || document.hidden) return;
+  if (game.phase === 'free-play' && !event.ctrlKey && !event.metaKey && !event.altKey && ['w','a','s','d','q','e'].includes(event.key.toLowerCase())) {
+    event.preventDefault(); movementKeys.add(event.key.toLowerCase()); return;
+  }
   if (event.repeat || hud.rotateRequired || contextLost || document.hidden || event.ctrlKey || event.metaKey || event.altKey) return;
   audio.unlock();
   hud.draw(game, world, 0, true);
@@ -293,9 +340,20 @@ function frame(now: number) {
       const held = gesture.hold(dt, inside);
       if (held.work) applyGesture(held);
     }
+    if (game.phase === 'free-play' && freeDrag?.mode === 'wand') waveWand(freeDrag.point);
     if (!manualClock && !hud.rotateRequired) game.tick(dt);
     audio.setBlocked(!game.running || document.hidden || hud.rotateRequired);
     roomSounds.update(game, audio);
+    if (game.phase === 'free-play') {
+      const speed = dt * 4;
+      world.translateView((Number(movementKeys.has('d')) - Number(movementKeys.has('a'))) * speed,
+        (Number(movementKeys.has('e')) - Number(movementKeys.has('q'))) * speed,
+        (Number(movementKeys.has('s')) - Number(movementKeys.has('w'))) * speed);
+    }
+    const roster = JSON.stringify(game.freePlayRoster);
+    if (game.freePlayUnlocked && roster !== savedFreeRoster) {
+      try { localStorage.setItem('catslave-free-play', roster); savedFreeRoster = roster; } catch { /* Keep the unlock for this session. */ }
+    }
     if (game.phase !== previousPhase) {
       cancelGesture();
       if (game.phase === 'adoption' || game.phase === 'victory' || (game.phase === 'playing' && previousPhase === 'upgrade')) {

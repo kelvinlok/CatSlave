@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { Game } from './simulation';
 import type { CareEvent, Point } from './types';
+import { freeBowlPosition } from './free-roam';
 import { ROOM } from './config';
 import { createCat, disposeCat, type CatModel } from './cat-model';
 import { createMess, updateMess, disposeMess } from './messes';
@@ -94,6 +95,11 @@ export class World {
   private previewStartedAt = 0;
   private victoryCamera = false;
   private bonusCamera = false;
+  private freeCamera = false;
+  private freePointer?: Point;
+  private freeWand = new THREE.Group();
+  private freeBowls = new Map<number, THREE.Group>();
+  private freePats = new Map<number, number>();
 
   constructor() {
     this.attackScene.add(new THREE.HemisphereLight('#fff2e7', '#604540', 3));
@@ -169,13 +175,21 @@ export class World {
     }
     batchMeshes(this.scene);
     this.scene.add(this.previews);
+    this.freeWand.name = 'free-play-wand';
+    rod(this.freeWand, '#8b6650', new THREE.Vector3(0.14, 0.5, 0), new THREE.Vector3(0.75, 1.05, 0), 0.018);
+    rod(this.freeWand, '#e5d8be', new THREE.Vector3(0.14, 0.5, 0), new THREE.Vector3(0, 0.06, 0), 0.008);
+    for (let i = 0; i < 3; i++) {
+      const feather = ball(this.freeWand, ['#b2b7d9', '#e7b095', '#95bdad'][i], [(i - 1) * 0.065, 0, 0], [0.045, 0.15, 0.025]);
+      feather.rotation.z = (i - 1) * -0.45;
+    }
+    this.freeWand.visible = false; this.scene.add(this.freeWand);
   }
 
   resize(width: number, height: number, viewport = gameLayout(width, height).room) {
     this.width = width; this.height = height; this.viewport = viewport;
     this.camera.aspect = viewport.w / viewport.h;
     // A fixed eye position at the front of the room: swipes turn your head.
-    this.camera.position.set(0, 1.65, 5.8);
+    if (!this.freeCamera) this.camera.position.set(0, 1.65, 5.8);
     this.camera.fov = 65;
     this.attackCamera.aspect = width / height; this.attackCamera.updateProjectionMatrix();
     const firstResize = !this.viewReady;
@@ -185,18 +199,39 @@ export class World {
   }
   private applyView() {
     if (!this.viewReady) return;
-    this.viewYaw = THREE.MathUtils.clamp(this.viewYaw, -Math.PI * 5 / 12, Math.PI * 5 / 12);
-    this.viewPitch = THREE.MathUtils.clamp(this.viewPitch, -Math.PI / 9, Math.PI * 13 / 36);
+    if (!this.freeCamera) this.viewYaw = THREE.MathUtils.clamp(this.viewYaw, -Math.PI * 5 / 12, Math.PI * 5 / 12);
+    this.viewPitch = this.freeCamera
+      ? THREE.MathUtils.clamp(this.viewPitch, -Math.PI / 2 + 0.01, Math.PI / 2 - 0.01)
+      : THREE.MathUtils.clamp(this.viewPitch, -Math.PI / 9, Math.PI * 13 / 36);
     this.camera.rotation.set(-this.viewPitch, -this.viewYaw, 0, 'YXZ');
     this.applyProjection();
   }
   private applyProjection() {
+    if (this.freeCamera) {
+      // Keep even a very wide resized viewport's near plane small enough to fit
+      // inside the room. Ordinary portrait/desktop views retain the full zoom range.
+      const near = this.camera.near;
+      const minimumZoom = near * Math.tan(THREE.MathUtils.degToRad(this.camera.fov / 2))
+        * Math.hypot(1, this.camera.aspect) / Math.sqrt(1.5 ** 2 - near ** 2);
+      this.viewZoom = Math.max(this.viewZoom, minimumZoom);
+    }
     this.camera.zoom = this.viewZoom;
-    this.camera.updateProjectionMatrix(); this.camera.updateMatrixWorld();
+    this.camera.updateProjectionMatrix();
+    this.boundFreeCamera(); this.camera.updateMatrixWorld();
+  }
+  private boundFreeCamera() {
+    if (!this.freeCamera) return;
+    // Enclose the entire near plane in a sphere, so looking down or zooming out
+    // cannot cut through the floor, walls, or the edge of the open doorway.
+    const halfHeight = this.camera.near * Math.tan(THREE.MathUtils.degToRad(this.camera.fov / 2)) / this.camera.zoom;
+    const clearance = Math.max(0.28, Math.hypot(this.camera.near, halfHeight, halfHeight * this.camera.aspect) + 0.08);
+    this.camera.position.x = THREE.MathUtils.clamp(this.camera.position.x, -4.8 + clearance, 4.8 - clearance);
+    this.camera.position.y = THREE.MathUtils.clamp(this.camera.position.y, 0.07 + clearance, 5.25 - clearance);
+    this.camera.position.z = THREE.MathUtils.clamp(this.camera.position.z, -7.75 + clearance, 7.7 - clearance);
   }
   setViewOrientation(orientation: THREE.Quaternion) {
     this.camera.quaternion.copy(orientation);
-    this.camera.updateMatrixWorld();
+    this.boundFreeCamera(); this.camera.updateMatrixWorld();
     this.viewYaw = -this.camera.rotation.y; this.viewPitch = -this.camera.rotation.x;
   }
   lookView(dx: number, dy: number) {
@@ -205,9 +240,41 @@ export class World {
     this.applyView();
   }
   zoomView(delta: number) {
-    this.viewZoom = THREE.MathUtils.clamp(this.viewZoom + delta, 1, 2.5); this.applyProjection();
+    if (!Number.isFinite(delta)) return;
+    this.viewZoom = THREE.MathUtils.clamp(this.viewZoom + delta, this.freeCamera ? 0.2 : 1, this.freeCamera ? 12 : 2.5); this.applyProjection();
   }
-  resetView(zoom = 1.65) { this.viewYaw = 0; this.viewPitch = Math.atan2(1.2, 7); this.viewZoom = zoom; this.applyView(); }
+  resetView(zoom = 1.65) { this.camera.position.set(0, 1.65, 5.8); this.viewYaw = 0; this.viewPitch = Math.atan2(1.2, 7); this.viewZoom = zoom; this.applyView(); }
+  /** Camera-local movement, constrained to the room with near-plane clearance. */
+  translateView(dx: number, dy: number, dz: number) {
+    if (!this.freeCamera || ![dx, dy, dz].every(Number.isFinite)) return;
+    this.camera.position.add(new THREE.Vector3(dx, dy, dz).applyQuaternion(this.camera.quaternion));
+    this.boundFreeCamera(); this.camera.updateMatrixWorld();
+  }
+  freeWandTargets(game: Game, point: Point) {
+    const v = this.viewport;
+    if (point.x < v.x || point.x > v.x + v.w || point.y < v.y || point.y > v.y + v.h) return [];
+    this.camera.updateMatrixWorld();
+    this.raycaster.setFromCamera(new THREE.Vector2((point.x - v.x) / v.w * 2 - 1, 1 - (point.y - v.y) / v.h * 2), this.camera);
+    const normal = this.camera.getWorldDirection(new THREE.Vector3());
+    return game.cats.flatMap(cat => {
+      const origin = new THREE.Vector3(cat.position.x, cat.elevation + 0.65, cat.position.z);
+      const screen = this.project(origin);
+      if (!screen.visible) return [];
+      const focus = this.raycaster.ray.intersectPlane(new THREE.Plane().setFromNormalAndCoplanarPoint(normal, origin), new THREE.Vector3());
+      if (!focus) return [];
+      const distance = Math.hypot(screen.x - point.x, screen.y - point.y);
+      // A small touch allowance keeps distant cats reachable without selecting them.
+      if (focus.distanceTo(origin) > 1.25 && distance > 65) return [];
+      return [{ catId: cat.id, focus, distance }];
+    }).sort((a, b) => a.distance - b.distance);
+  }
+  freeCatHit(point: Point) { return this.pickCat(point.x, point.y); }
+  freePetHit(catId: number, point: Point) {
+    const target = this.bonusPatTarget(catId);
+    return !!target?.visible && Math.hypot(target.x - point.x, target.y - point.y) <= 44;
+  }
+  setFreePointer(point?: Point) { this.freePointer = point ? { ...point } : undefined; }
+  freePat(catId: number) { this.freePats.set(catId, this.lastCareClock); }
   focusOn(position: THREE.Vector3) {
     const dx = position.x - this.camera.position.x, dz = this.camera.position.z - position.z;
     this.viewYaw = Math.atan2(dx, dz);
@@ -280,6 +347,11 @@ export class World {
   }
 
   update(game: Game, dt: number, time: number, effectsDt = dt) {
+    if (this.freeCamera !== game.inFreePlay) {
+      this.freeCamera = game.inFreePlay;
+      this.freePointer = undefined; this.freePats.clear();
+      this.resetView();
+    }
     if (game.phase === 'victory') {
       this.victoryCamera = true;
       // Sit with the cats. Keep the entire semicircle in view on narrow phones.
@@ -299,7 +371,7 @@ export class World {
       this.camera.position.set(0, 1.65, 5.8); this.applyView();
     }
     const careDt = Math.max(0, Math.min(0.1, game.clock - this.lastCareClock));
-    if (game.clock < this.lastCareClock || game.inBonus || ['title', 'adoption', 'upgrade'].includes(game.phase)) {
+    if (game.clock < this.lastCareClock || game.inFreePlay || game.inBonus || ['title', 'adoption', 'upgrade'].includes(game.phase)) {
       for (const { mesh } of this.completedMesses.values()) { mesh.removeFromParent(); disposeMess(mesh); }
       this.completedMesses.clear();
     }
@@ -307,6 +379,28 @@ export class World {
     if (!game.active || !game.events.some(e => e.id === this.carePointer?.eventId)) this.carePointer = undefined;
     if (this.carePointer) this.carePointer.energy *= Math.exp(-careDt * 7);
     this.camera.updateMatrixWorld();
+    const wandTargets = game.inFreePlay && game.freeInteraction === 'wand' && this.freePointer
+      ? this.freeWandTargets(game, this.freePointer) : [];
+    this.freeWand.visible = game.inFreePlay && game.freeInteraction === 'wand' && !!this.freePointer;
+    if (this.freeWand.visible && this.freePointer) {
+      const v = this.viewport;
+      this.raycaster.setFromCamera(new THREE.Vector2((this.freePointer.x - v.x) / v.w * 2 - 1, 1 - (this.freePointer.y - v.y) / v.h * 2), this.camera);
+      const focus = wandTargets[0]?.focus ?? this.raycaster.ray.at(3, new THREE.Vector3());
+      this.freeWand.position.copy(focus); this.freeWand.quaternion.copy(this.camera.quaternion);
+    }
+    for (const [id, bowl] of this.freeBowls) {
+      if (!game.inFreePlay || !game.cats.some(cat => cat.id === id)) {
+        bowl.removeFromParent(); disposeMess(bowl); this.freeBowls.delete(id);
+      }
+    }
+    if (game.inFreePlay) game.cats.forEach((cat, index) => {
+      if (this.freeBowls.has(cat.id)) return;
+      const event: CareEvent = { id: -cat.id, catId: cat.id, kind: 'hunger', progress: 1,
+        createdAt: 0, deadline: Infinity, nextAttackAt: Infinity, attacks: 0, position: freeBowlPosition(index, game.cats.length) };
+      const bowl = createMess(event, cat); bowl.name = `free-food-${cat.id}`;
+      bowl.position.set(event.position.x, this.floorHeight(event.position.x, event.position.z), event.position.z);
+      bowl.scale.setScalar(0.8); this.scene.add(bowl); this.freeBowls.set(cat.id, bowl);
+    });
     const isPreview = ['title', 'adoption', 'game-over', 'victory'].includes(game.phase);
     this.camera.updateMatrixWorld();
     for (const [id, resident] of this.residents) if (!game.cats.some(cat => cat.id === id)) {
@@ -333,7 +427,17 @@ export class World {
           angry: game.bonus.failedCatId === cat.id,
           buttPat: { lift: game.bonus.lift(cat.id), side: index < (game.cats.length - 1) / 2 ? -1 : 1 },
         });
-      } else animateCat(model, cat, game.clock, { angry, happy, focus: attention?.working ? attention.focus : undefined, engagement: attention?.working ? 1 : 0 });
+      } else {
+        const patAge = game.clock - (this.freePats.get(cat.id) ?? -Infinity);
+        const patting = game.inFreePlay && patAge >= 0 && patAge < 1.2;
+        const lift = patting ? Math.sin(Math.PI * patAge / 1.2) : 0;
+        const partner = game.inFreePlay ? game.cats.find(other => other.id === game.freeRoam.playmate(cat.id)) : undefined;
+        const socialFocus = partner ? new THREE.Vector3(partner.position.x, partner.elevation + 0.45, partner.position.z) : undefined;
+        const focus = game.inFreePlay ? wandTargets.find(target => target.catId === cat.id)?.focus ?? socialFocus : attention?.working ? attention.focus : undefined;
+        const cameraSide = Math.cos(cat.yaw) * (this.camera.position.x - cat.position.x) - Math.sin(cat.yaw) * (this.camera.position.z - cat.position.z);
+        animateCat(model, cat, game.clock, { angry, happy, focus, engagement: focus ? 1 : 0, excited: game.inFreePlay && !partner,
+          buttPat: patting ? { lift, side: cameraSide < 0 ? -1 : 1, lookBack: false } : undefined });
+      }
 
     }
     for (const [id, mesh] of this.messes) if (!game.events.some(e => e.id === id)) {
@@ -377,7 +481,7 @@ export class World {
   }
 
   private updateAttack(game: Game, dt: number) {
-    if (game.phase === 'victory') {
+    if (game.phase === 'victory' || game.inFreePlay) {
       // A scratch at the final buzzer must not cover the happy reunion.
       this.lastDamage = game.damageSerial; this.attackAge = 2;
       if (this.attackModel) this.attackModel.root.visible = false;

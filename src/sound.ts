@@ -63,6 +63,9 @@ export class GameAudio implements SoundSink {
   private failed = 0;
   private played = 0;
   private counts: Partial<Record<SoundId, number>> = {};
+  private primer?: AudioBufferSourceNode;
+  private outputPrimed = false;
+  private unlockError?: string;
   constructor() {
     try {
       const saved = localStorage.getItem('catslave.sound-volume');
@@ -70,19 +73,51 @@ export class GameAudio implements SoundSink {
     } catch { /* Storage may be unavailable in private browsing. */ }
   }
   get label() { return this.volume === 0 ? 'Sound: off' : this.volume < .5 ? 'Sound: soft' : 'Sound: on'; }
-  get diagnostics() { return { state: this.context?.state ?? 'locked', volume: this.volume, voices: this.voices.size, loaded: this.loaded, failed: this.failed, played: this.played, counts: { ...this.counts } }; }
+  get diagnostics() { return { state: this.context?.state ?? 'locked', volume: this.volume, voices: this.voices.size, loaded: this.loaded, failed: this.failed, played: this.played, counts: { ...this.counts }, unlockError: this.unlockError }; }
+  bindTouchUnlock(target: HTMLElement) {
+    const unlock = (event: Event) => { if (event.isTrusted) this.unlock(); };
+    // Touch gains activation on release, unlike mouse pointerdown. Keep these
+    // listeners after the first unlock so a later Safari interruption can recover.
+    // Capture runs even when gameplay has already cleared its pointer/gesture.
+    target.addEventListener('pointerup', unlock, { capture: true, passive: true });
+    target.addEventListener('touchend', unlock, { capture: true, passive: true });
+    return () => {
+      target.removeEventListener('pointerup', unlock, true);
+      target.removeEventListener('touchend', unlock, true);
+    };
+  }
   unlock() {
     try {
-      if (!this.context) {
-        const context = this.context = new AudioContext();
-        this.master = context.createGain(); this.master.gain.value = this.volume;
+      if (!this.context || this.context.state === 'closed') {
+        const context = new AudioContext();
+        const master = context.createGain(); master.gain.value = this.volume;
         const limiter = context.createDynamicsCompressor();
         limiter.threshold.value = -12; limiter.ratio.value = 8;
-        this.master.connect(limiter); limiter.connect(context.destination);
+        master.connect(limiter); limiter.connect(context.destination);
+        this.context = context; this.master = master; this.outputPrimed = false;
+        this.buffers.clear(); this.loaded = this.failed = 0; this.lastPlayed.clear(); this.lastPurrAt = -Infinity;
         void this.loadRecordings(context);
       }
-      if (this.context.state === 'suspended') void this.context.resume().catch(() => {});
-    } catch { /* Audio support must never prevent playing the game. */ }
+      const context = this.context;
+      // Both suspended and Safari's interrupted state need a gesture-bound retry.
+      // Never await here: touchend must be able to retry even if pointerdown's
+      // earlier resume promise is still waiting for user activation.
+      if (context.state !== 'running') void context.resume().then(() => {
+        if (context.state === 'running') this.unlockError = undefined;
+      }).catch(error => { this.unlockError = String(error); });
+      if (!this.outputPrimed || context.state !== 'running') {
+        this.primer?.stop(); this.primer?.disconnect();
+        const source = this.primer = context.createBufferSource();
+        source.buffer = context.createBuffer(1, 1, context.sampleRate);
+        source.connect(context.destination);
+        source.onended = () => {
+          source.disconnect();
+          if (this.primer === source) { this.primer = undefined; this.outputPrimed = true; }
+        };
+        // A silent single sample activates Safari's audio output in the tap stack.
+        source.start();
+      }
+    } catch (error) { this.unlockError = String(error); /* Audio must never prevent playing. */ }
   }
   private async loadRecordings(context: AudioContext) {
     const files = { meow: 'cat-meow', purr: 'cat-purr', mop: 'water-pour', vacuum: 'vacuum', scratch: 'scratch' } as const;
@@ -91,8 +126,9 @@ export class GameAudio implements SoundSink {
         const response = await fetch(`${import.meta.env.BASE_URL}audio/${file}.wav`);
         if (!response.ok) throw new Error('Missing audio');
         const buffer = await context.decodeAudioData(await response.arrayBuffer());
+        if (this.context !== context) return;
         this.buffers.set(id, buffer); this.loaded++;
-      } catch { this.failed++; }
+      } catch { if (this.context === context) this.failed++; }
     }));
   }
   cycleVolume() {

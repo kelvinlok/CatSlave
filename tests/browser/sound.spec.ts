@@ -11,6 +11,62 @@ async function click(page: Page, id: string) {
 }
 const diagnostics = (page: Page) => page.evaluate(() => (window.__CATSLAVE_TEST__ as typeof window.__CATSLAVE_TEST__ & { audio: GameAudio }).audio.diagnostics);
 
+declare global {
+  interface Window { __AUDIO_TOUCH_GATE__: { contexts: number; resumeAttempts: number; interrupt(): Promise<void> }; }
+}
+
+test('touch release unlocks audio and the next tap recovers an interrupted context', async ({ page, browserName }) => {
+  test.skip(browserName !== 'chromium', 'Exercise Safari activation rules with real Web Audio in Chromium; Windows WebKit has no Web Audio.');
+  await page.addInitScript(() => {
+    const NativeAudioContext = window.AudioContext;
+    let touchRelease = false;
+    let forcedState: 'suspended' | 'interrupted' | undefined = 'suspended';
+    let current: AudioContext;
+    // Only the native touchend dispatch permits resume, even if pointerdown's
+    // attempt was rejected. This reproduces stricter mobile activation behavior.
+    document.addEventListener('touchend', () => { touchRelease = true; }, true);
+    document.addEventListener('touchend', () => { touchRelease = false; });
+    window.__AUDIO_TOUCH_GATE__ = { contexts: 0, resumeAttempts: 0,
+      async interrupt() { await current.suspend(); forcedState = 'interrupted'; } };
+    window.AudioContext = class extends NativeAudioContext {
+      constructor() { super(); current = this; window.__AUDIO_TOUCH_GATE__.contexts++; }
+      get state() { return forcedState ?? super.state; }
+      resume() {
+        window.__AUDIO_TOUCH_GATE__.resumeAttempts++;
+        if (!touchRelease) return Promise.reject(new DOMException('Touch release required', 'NotAllowedError'));
+        forcedState = undefined;
+        return super.resume();
+      }
+    };
+  });
+  const errors: string[] = []; page.on('pageerror', error => errors.push(error.message));
+  await page.goto('/');
+  await expect.poll(() => page.evaluate(() => !!window.__CATSLAVE_TEST__)).toBe(true);
+  await page.evaluate(() => window.__CATSLAVE_TEST__.setManualClock(true));
+  const tap = async (id: string) => {
+    await expect.poll(() => page.evaluate(id => window.__CATSLAVE_TEST__.hud.hits.some(hit => hit.id === id), id)).toBe(true);
+    const hit = await page.evaluate(id => window.__CATSLAVE_TEST__.hud.hits.find(hit => hit.id === id)!, id);
+    await page.touchscreen.tap(hit.x + hit.w / 2, hit.y + hit.h / 2);
+  };
+  await tap('start');
+  await expect.poll(async () => (await diagnostics(page)).state).toBe('running');
+  await expect.poll(async () => (await diagnostics(page)).loaded).toBe(5);
+  await tap('tool:food');
+  expect((await diagnostics(page)).counts.select).toBeGreaterThan(0);
+  await page.evaluate(async () => {
+    await window.__AUDIO_TOUCH_GATE__.interrupt();
+    window.dispatchEvent(new Event('blur'));
+  });
+  expect((await diagnostics(page)).state).toBe('interrupted');
+  await tap('resume');
+  await expect.poll(async () => (await diagnostics(page)).state).toBe('running');
+  const played = (await diagnostics(page)).played;
+  await tap('tool:brush');
+  expect((await diagnostics(page)).played).toBeGreaterThan(played);
+  expect(await page.evaluate(() => window.__AUDIO_TOUCH_GATE__.contexts)).toBe(1);
+  expect(errors).toEqual([]);
+});
+
 test('audio unlocks, decodes all free assets, plays tools, and cleans up on pause and mute', async ({ page }) => {
   const errors: string[] = [];
   page.on('pageerror', e => errors.push(e.message));

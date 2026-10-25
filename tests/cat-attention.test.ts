@@ -138,6 +138,27 @@ describe('cat attention to the wand', () => {
     expect(model.head.rotation.y).toBeGreaterThan(0);
   });
 
+  it('rears onto planted hind paws and reaches with both front paws during excited play', () => {
+    const { model, cat } = fixture();
+    const heights: number[] = [];
+    for (let frame = 0; frame < 240; frame++) {
+      animateCat(model, cat, frame / 60, { focus: { x: 0.1, y: 1.1, z: 0.6 }, engagement: 1, excited: true });
+      heights.push(Math.min(footY(model.paws[0]), footY(model.paws[1])));
+      for (const paw of model.paws.slice(2)) expect(footY(paw)).toBeCloseTo(0.07 * ROOM.catScale, 7);
+      expect(snapshot(model.root).every(Number.isFinite)).toBe(true);
+      if (frame === 60) {
+        const before = snapshot(model.root);
+        animateCat(model, cat, frame / 60, { focus: { x: 0.1, y: 1.1, z: 0.6 }, engagement: 1, excited: true });
+        expect(snapshot(model.root)).toEqual(before);
+      }
+    }
+    expect(heights.filter(height => height > 0.35).length).toBeGreaterThan(60);
+    animateCat(model, cat, 8, { excited: true });
+    model.paws.forEach(paw => expect(footY(paw)).toBeCloseTo(0.07 * ROOM.catScale, 7));
+    expect(model.legs[0].position.z).toBe(0.4);
+    expect(model.body.rotation.x).toBeCloseTo(0);
+  });
+
   it('does not wave without an engaged lure and completely restores the normal pose when focus clears', () => {
     for (const options of [{}, { engagement: 1 }, { focus: { x: 0, y: 0.4, z: 0.6 } }]) {
       const { model, cat } = fixture();

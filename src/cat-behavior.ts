@@ -17,7 +17,7 @@ export function beginVisit(cat: CatState, id: string, cats: CatState[]) {
   return true;
 }
 
-export function tickVisit(cat: CatState, clock: number, dt: number, cats: readonly CatState[]) {
+export function tickVisit(cat: CatState, clock: number, dt: number, cats: readonly CatState[], pacing = { rest: 1.2, durationScale: 1 }) {
   const visit = cat.visit!, spot = FURNITURE.find(s => s.id === visit.id)!;
   const turnToward = (yaw: number) => {
     const delta = Math.atan2(Math.sin(yaw - cat.yaw), Math.cos(yaw - cat.yaw));
@@ -25,18 +25,18 @@ export function tickVisit(cat: CatState, clock: number, dt: number, cats: readon
   };
   if (visit.phase === 'use') {
     cat.activity = spot.activity; turnToward(spot.yaw);
-    if (clock < visit.until && (!visit.leaveRequested || clock < visit.until - spot.duration + 1)) return;
+    if (clock < visit.until && (!visit.leaveRequested || clock < visit.until - spot.duration * pacing.durationScale + 1)) return;
     visit.phase = 'leave'; visit.route = [...visit.route].reverse().slice(1);
     visit.index = 0; visit.progress = 0; visit.from = { ...cat.position, height: cat.elevation };
   }
   const target = visit.route[visit.index];
   if (!target) {
     if (visit.phase === 'approach') {
-      visit.phase = 'use'; visit.until = clock + spot.duration;
+      visit.phase = 'use'; visit.until = clock + spot.duration * pacing.durationScale;
       cat.activity = spot.activity;
     } else {
       cat.visit = undefined; cat.lastFurniture = spot.id; cat.elevation = 0;
-      cat.activity = 'idle'; cat.pose = 0; cat.decisionAt = clock + 1.2;
+      cat.activity = 'idle'; cat.pose = 0; cat.decisionAt = clock + pacing.rest;
     }
     return;
   }

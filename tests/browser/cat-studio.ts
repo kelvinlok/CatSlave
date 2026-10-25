@@ -4,9 +4,9 @@ import { animateCat } from '../../src/cat-animation';
 import { PALETTE } from '../../src/config';
 import { Game } from '../../src/simulation';
 import type { CatActivity } from '../../src/types';
-import { preloadChocoAsset } from '../../src/choco-asset';
+import { preloadBlenderCatAssets } from '../../src/blender-cat-asset';
 
-await preloadChocoAsset();
+await preloadBlenderCatAssets();
 
 /** Test-only inspection stage using the production rig, materials and animator. */
 export function mountCatStudio() {

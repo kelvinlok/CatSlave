@@ -7,8 +7,9 @@ test('the shipped Blender asset drives Choco in the game and through animated po
   await page.waitForFunction(() => !!window.__CATSLAVE_TEST__);
   expect(await page.evaluate(() => {
     const { game, world } = window.__CATSLAVE_TEST__;
-    return world.scene.children.find(child => child.userData.catId === game.cats[0].id)?.userData.modelSource;
-  })).toBe('blender');
+    const root = world.scene.children.find(child => child.userData.catId === game.cats[0].id);
+    return { source: root?.userData.modelSource, rig: root?.userData.modelRig, asset: root?.userData.modelAsset };
+  })).toEqual({ source: 'blender', rig: 'blender-armature', asset: 'models/choco.glb' });
   await page.goto('/tests/browser/cat-studio.html');
   await page.waitForFunction(() => !!window.__CAT_STUDIO__);
   const results = await page.evaluate(() => {

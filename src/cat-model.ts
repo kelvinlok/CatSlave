@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { clone as cloneRig } from 'three/addons/utils/SkeletonUtils.js';
 import type { CatDefinition } from './types';
-import { applyChocoAsset, hasChocoAsset } from './choco-asset';
+import { applyBlenderCatAsset, hasBlenderCatAsset } from './blender-cat-asset';
 
 export interface CatModel {
   root: THREE.Group; body: THREE.Group; head: THREE.Group; tail: THREE.Group; anger: THREE.Group;
@@ -366,11 +366,11 @@ function buildCat(cat: Appearance) {
 
 /** Forward is +Z. Every cat shares an articulated rig and an independent pose. */
 export function createCat(cat: Appearance): CatModel {
-  const imported = cat.appearance === 'choco' && hasChocoAsset();
+  const imported = hasBlenderCatAsset(cat.appearance);
   const key = `${cat.appearance ?? 'primitive'}:${cat.color}:${cat.accent}:${imported ? 'blender' : 'builtin'}`;
   if (!templates.has(key)) {
     const template = buildCat(cat);
-    if (imported) applyChocoAsset(template);
+    if (imported && hasBlenderCatAsset(cat.appearance)) applyBlenderCatAsset(cat.appearance, template);
     templates.set(key, template);
   }
   const root = cloneRig(templates.get(key)!) as THREE.Group;
@@ -384,5 +384,7 @@ export function createCat(cat: Appearance): CatModel {
 
 /** Only skeleton textures belong to an instance; cached meshes and coat maps are shared. */
 export function disposeCat(model: CatModel) {
-  model.root.traverse(object => { if (object instanceof THREE.SkinnedMesh) object.skeleton.dispose(); });
+  const skeletons = new Set<THREE.Skeleton>();
+  model.root.traverse(object => { if (object instanceof THREE.SkinnedMesh) skeletons.add(object.skeleton); });
+  skeletons.forEach(skeleton => skeleton.dispose());
 }

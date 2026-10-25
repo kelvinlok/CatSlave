@@ -392,12 +392,17 @@ for parent in list(parts.values()):
         for o in group:o.select_set(True)
         bpy.context.view_layer.objects.active=group[0];bpy.ops.object.join()
 
+# Author a continuous weighted body and native armature, preserving coat UVs.
+import runpy
+rig_tools=runpy.run_path(str(ROOT/'scripts/rig-cat.py'))
+armature,continuous_skin=rig_tools['rig_character'](scene,root)
+
 # Asset-only export: closed eyes are included but runtime controls visibility.
 bpy.ops.object.select_all(action='DESELECT')
 for o in scene.objects:
     o.hide_viewport=False;o.hide_render=False;o.hide_set(False);o.select_set(True)
 glb=ROOT/'public/models/choco.glb';glb.parent.mkdir(parents=True,exist_ok=True)
-bpy.ops.export_scene.gltf(filepath=str(glb),export_format='GLB',use_selection=True,export_yup=True,export_apply=True,export_extras=True,export_image_format='JPEG',export_jpeg_quality=85)
+bpy.ops.export_scene.gltf(filepath=str(glb),export_format='GLB',use_selection=True,use_active_scene=True,export_yup=True,export_apply=False,export_extras=True,export_image_format='JPEG',export_jpeg_quality=85,export_skins=True,export_animations=False)
 
 # Studio rig is kept in the editable .blend, outside the game asset.
 floorMat=material('Studio | warm stone',rgb('9c938a'),.94)
@@ -420,13 +425,16 @@ for name in ['closedEye0','closedEye1']:
     parts[name].hide_set(True)
     for o in parts[name].children:
         o.hide_render=True;o.hide_set(True)
-# Bend the presentation tail at its base; game uses its own five-bone chain.
-tail.rotation_euler.x=math.radians(-38)
+for ob in root.children_recursive:
+    if str(ob.get('visibilitySlot','')).startswith('closedEye'):
+        ob.hide_render=True;ob.hide_set(True)
+# Keep the native armature in its neutral bind pose.
 for area in bpy.context.screen.areas:
     if area.type=='VIEW_3D':
         area.spaces.active.region_3d.view_distance=3.5
         area.spaces.active.region_3d.view_location=v((0,.8,0))
         area.spaces.active.shading.type='MATERIAL'
+reference=bpy.data.images.load(str(ROOT/'assets/choco/reference.png'));reference.pack();reference.use_fake_user=True
 source=ROOT/'assets/choco/choco.blend';source.parent.mkdir(parents=True,exist_ok=True)
 bpy.ops.wm.save_as_mainfile(filepath=str(source))
 report={'blend':str(source),'glb':str(glb),'vertices':sum(len(o.data.vertices) for o in root.children_recursive if o.type=='MESH'),'triangles':sum(sum(len(p.vertices)-2 for p in o.data.polygons) for o in root.children_recursive if o.type=='MESH'),'objects':len(root.children_recursive),'glb_bytes':glb.stat().st_size}
