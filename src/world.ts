@@ -91,6 +91,8 @@ export class World {
   private previews = new THREE.Group();
   private previewCats: CatModel[] = [];
   private previewKey = '';
+  private previewStartedAt = 0;
+  private victoryCamera = false;
   private bonusCamera = false;
 
   constructor() {
@@ -278,15 +280,23 @@ export class World {
   }
 
   update(game: Game, dt: number, time: number, effectsDt = dt) {
-    if (game.inBonus) {
+    if (game.phase === 'victory') {
+      this.victoryCamera = true;
+      // Sit with the cats. Keep the entire semicircle in view on narrow phones.
+      const distance = Math.max(3.25, 2 / this.camera.aspect + 1.6);
+      this.camera.position.set(0, 0.65 + distance * 0.48, 3 + distance);
+      this.camera.zoom = 1; this.camera.lookAt(0, 0.65, 3);
+      this.camera.updateProjectionMatrix();
+    } else if (game.inBonus) {
       this.bonusCamera = true;
       const halfWidth = Math.max(0.9, game.cats.length * 0.62);
       const distance = Math.max(3, halfWidth / (Math.tan(THREE.MathUtils.degToRad(65 / 2)) * this.camera.aspect) * 1.15);
       this.camera.position.set(0, 1.65 + distance * 0.12, distance);
       this.camera.zoom = 1; this.camera.lookAt(0, 0.65, 0);
       this.camera.updateProjectionMatrix();
-    } else if (this.bonusCamera) {
-      this.bonusCamera = false; this.camera.position.set(0, 1.65, 5.8); this.applyView();
+    } else if (this.bonusCamera || this.victoryCamera) {
+      this.bonusCamera = false; this.victoryCamera = false;
+      this.camera.position.set(0, 1.65, 5.8); this.applyView();
     }
     const careDt = Math.max(0, Math.min(0.1, game.clock - this.lastCareClock));
     if (game.clock < this.lastCareClock || game.inBonus || ['title', 'adoption', 'upgrade'].includes(game.phase)) {
@@ -367,6 +377,12 @@ export class World {
   }
 
   private updateAttack(game: Game, dt: number) {
+    if (game.phase === 'victory') {
+      // A scratch at the final buzzer must not cover the happy reunion.
+      this.lastDamage = game.damageSerial; this.attackAge = 2;
+      if (this.attackModel) this.attackModel.root.visible = false;
+      return;
+    }
     if (game.damageSerial < this.lastDamage || game.phase === 'title') this.attackAge = 2;
     if (game.damageSerial > this.lastDamage && game.lastAttackCatId !== undefined) {
       this.attackAge = 0;
@@ -395,22 +411,52 @@ export class World {
   }
 
   private updatePreview(game: Game, time: number) {
-    const key = `${game.phase}:${game.candidates.map(c => c.id).join(',')}`;
+    const cats = game.phase === 'adoption' ? game.candidates : game.phase === 'victory' ? game.cats : [game.cats[0]];
+    const key = `${game.phase}:${cats.map(c => c.id).join(',')}`;
     if (key !== this.previewKey) {
       this.previewCats.forEach(disposeCat); this.previews.clear(); this.previewCats = []; this.previewKey = key;
-      const cats = game.phase === 'adoption' ? game.candidates : [game.cats[0]];
+      this.previewStartedAt = time;
       if (['title', 'adoption', 'game-over', 'victory'].includes(game.phase)) cats.forEach((cat, i) => {
         const model = createCat(cat); const adoption = game.phase === 'adoption';
+        model.root.userData.catId = cat.id;
+        model.root.name = `preview-cat-${cat.id}`;
         model.root.position.set(adoption ? (i ? 1.2 : -1.2) : 0, 0.08, 0.2);
         model.root.scale.setScalar(0.85); this.previews.add(model.root); this.previewCats.push(model);
       });
     }
     this.previews.visible = ['title', 'adoption', 'game-over', 'victory'].includes(game.phase);
     this.previewCats.forEach((model, i) => {
-      const definition = game.phase === 'adoption' ? game.candidates[i] : game.cats[0];
+      const definition = cats[i];
+      if (game.phase === 'victory') {
+        const elapsed = Math.max(0, time - this.previewStartedAt);
+        const progress = THREE.MathUtils.clamp((elapsed - i * 0.24) / 3.2, 0, 1);
+        const approach = 1 - (1 - progress) ** 2;
+        const angle = cats.length === 1 ? 0 : (i / (cats.length - 1) - 0.5) * 2;
+        const x = Math.sin(angle * 1.3) * 1.16;
+        const z = 2.1 + Math.abs(angle) ** 1.5 * 2;
+        model.root.scale.setScalar(0.85);
+        model.root.position.set(x * (1.65 - approach * 0.65), 0.07, z - (1 - approach) * 3.1);
+        // Each cat comes in from its own side, then turns inward toward the player.
+        model.root.rotation.y = Math.atan2(-x * 0.65, 3.1) * (1 - approach)
+          + Math.atan2(-x, this.camera.position.z - z) * approach;
+        animateCat(model, { ...game.cats[i], activity: progress < 1 ? 'walking' : 'idle', stride: approach * 32 }, elapsed, { happy: true });
+        model.head.rotation.x -= 0.2 * approach;
+        model.head.rotation.z += Math.sin(elapsed * 1.5 + i * 1.7) * 0.12 * approach;
+        model.head.rotation.y += Math.sin(elapsed * 0.9 + i) * 0.1 * approach;
+        model.tail.rotation.x -= 0.35;
+        return;
+      }
       animateCat(model, { ...game.cats[0], ...definition, activity: 'idle', stride: 0 }, time);
       model.root.rotation.y = -0.65 + Math.sin(time * 0.35 + i) * 0.12;
       model.head.rotation.y = 0.35;
+    });
+  }
+
+  victoryHearts() {
+    if (!this.victoryCamera || !this.previews.visible) return [];
+    return this.previewCats.map(model => {
+      model.root.updateMatrixWorld(true);
+      return this.project(model.head.localToWorld(new THREE.Vector3(0, 0.48, 0)));
     });
   }
 }

@@ -58,6 +58,7 @@ references TypeScript that must first be compiled and bundled.
 - The HUD shows a health bar, stage progress, and a count of waiting needs on each tool. Practice and help show animated tool/target gestures. Hearts, target rings, tool highlights and reward tokens convey feedback without taglines or instructional sentences. Menus retain concise action labels. Zoom buttons disable at their limits.
 - Pause includes a five-tool handbook, restart, and main-menu routes. Restart and leaving an active shift ask before discarding progress; restarting a tutorial repeats the tutorial. Escape closes help or confirmation first, then resumes from pause.
 - Menus and upgrade choices remain vertical on short portrait screens. Buttons show hover, press, and keyboard focus; dragging off or cancelling a press never activates it.
+- Victory brings every adopted cat forward into a semicircle around the player. Staggered walks settle into happy squints, raised tails, gentle head tilts, and floating hearts. The scene replaces the results panel, keeps replay and main-menu controls clear, and restores the regular camera when leaving.
 
 Mouse input works on desktop. Tab / Shift+Tab cycle menu controls, arrow keys move an existing focus, and Enter / Space activate it. Number keys select tools from left to right: 1–5 normally, or 1 Vacuum / 2 Food / 3 Wand after unlocking. Escape pauses, goes back, or resumes. Care gestures still require a pointer. Sound preferences are saved locally; the game stores no personal data or permanent progression.
 

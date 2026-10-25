@@ -270,6 +270,11 @@ export class Hud {
   }
 
   worldViewport(game: Game): GameLayout['room'] {
+    if (game.phase === 'victory') {
+      const y = this.top + 96;
+      return { x: this.left + 6, y, w: this.width - this.left - this.right - 12,
+        h: Math.max(90, this.height - this.bottom - 146 - y) };
+    }
     if (!game.inBonus) return this.layout.room;
     const y = this.top + 120;
     return { x: this.left + 6, y, w: this.width - this.left - this.right - 12,
@@ -605,6 +610,22 @@ export class Hud {
     this.button('home', 'Main menu', bx, by + 187, bw, 48);
   }
 
+  private victory(game: Game, world: World) {
+    const ctx = this.ctx, center = this.center, width = this.panelWidth;
+    text(ctx, 'Victory', center, this.top + 35, Math.min(42, width * 0.12), C.ink, 'center', 'serif');
+    for (let i = 0; i < 5; i++) paw(ctx, center + (i - 2) * 28, this.top + 72, 20, i < game.stagesSurvived ? C.green : C.line);
+    world.victoryHearts().forEach((point, i) => {
+      const cycle = (this.animationTime * 0.42 + i * 0.23) % 1;
+      if (!point.visible) return;
+      ctx.save(); ctx.globalAlpha = Math.sin(cycle * Math.PI) * 0.85;
+      heart(ctx, point.x + Math.sin(cycle * 4 + i) * 9, point.y - cycle * 27, 11 + Math.sin(cycle * Math.PI) * 5);
+      ctx.restore();
+    });
+    const x = center - width / 2, y = this.height - this.bottom - 132;
+    this.button('restart', 'Play again  →', x, y, width, 52, true);
+    this.button('home', 'Main menu', x, y + 64, width, 48);
+  }
+
   private ending(game: Game) {
     this.backdrop(); this.brand();
     const ctx = this.ctx, h = this.height, center = this.center, win = game.phase === 'victory';
@@ -692,7 +713,8 @@ export class Hud {
     else if (game.phase === 'title') this.title();
     else if (game.phase === 'adoption') this.adoption(game);
     else if (game.phase === 'upgrade') this.upgrade(game);
-    else if (game.phase === 'game-over' || game.phase === 'victory') this.ending(game);
+    else if (game.phase === 'victory') this.victory(game, world);
+    else if (game.phase === 'game-over') this.ending(game);
     else {
       if (game.inBonus) this.bonusRound(game, world);
       else this.gameplay(game, world);

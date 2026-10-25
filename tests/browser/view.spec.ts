@@ -32,7 +32,12 @@ test('stage completion resets gaze and zoom while pause preserves the view', asy
       const t = window.__CATSLAVE_TEST__; t.world.lookView(180, -60); t.world.zoomView(0.8);
       t.game.cats.forEach(cat => { cat.nextNeedAt = Infinity; }); t.game.tick(t.game.timeLeft); t.finishBonus();
     });
-    await expect.poll(() => camera(page)).toEqual(original);
+    if (stage < 4) await expect.poll(() => camera(page)).toEqual(original);
+    else {
+      // Victory has its own seated group portrait; the player's saved gaze stays reset.
+      await expect.poll(() => page.evaluate(() => window.__CATSLAVE_TEST__.world.camera.zoom)).toBe(1);
+      expect(await camera(page)).not.toEqual(original);
+    }
     expect(await page.evaluate(() => window.__CATSLAVE_TEST__.world.viewZoom)).toBe(stage < 4
       ? await page.evaluate(() => Math.min(1, window.__CATSLAVE_TEST__.world.camera.aspect / 0.65)) : 1.65);
     expect(await page.evaluate(() => window.__CATSLAVE_TEST__.game.phase)).toBe(stage < 4 ? 'adoption' : 'victory');
