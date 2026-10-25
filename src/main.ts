@@ -8,6 +8,7 @@ import { TOOLS, TOOL_BY_ID, toolMatches } from './config';
 import type { Point, ToolId } from './types';
 import { portraitViewport } from './layout';
 import { GyroLook } from './gyro';
+import { GameAudio, RoomSounds } from './sound';
 
 const canvas = document.querySelector<HTMLCanvasElement>('#game')!;
 let renderer: THREE.WebGLRenderer;
@@ -36,6 +37,9 @@ const game = new Game(import.meta.env.MODE === 'test' ? 42 : undefined);
 const world = new World();
 const hud = new Hud();
 const gesture = new Gesture();
+const audio = new GameAudio();
+const roomSounds = new RoomSounds();
+hud.soundLabel = audio.label;
 const gyro = new GyroLook(() => { hud.gyroStatus = gyro.status; hud.invalidate(); }, () => world.camera.quaternion);
 let pointerId: number | undefined;
 let contextLost = false;
@@ -102,6 +106,8 @@ function action(id: string) {
   if (contextLost || document.hidden || hud.rotateRequired || !hud.controls.some(hit => hit.id === id)) return;
   const keyboardFocus = hud.focusedId;
   cancelGesture();
+  if (id === 'sound') { audio.cycleVolume(); hud.soundLabel = audio.label; hud.invalidate(); return; }
+  if (['learn', 'start', 'restart', 'home', 'confirm-restart', 'confirm-home'].includes(id)) { audio.stop(); roomSounds.reset(); }
   if (game.phase === 'paused' && ['help', 'restart', 'home'].includes(id)) {
     hud.modal = id as 'help' | 'restart' | 'home'; hud.clearInteraction();
     hud.draw(game, world, 0, true); return;
@@ -119,7 +125,10 @@ function action(id: string) {
   else if (id === 'tutorial-next') { game.advanceTutorial(); }
   else if (id === 'bonus-start') game.startBonus();
   else if (id === 'bonus-continue') game.continueBonus();
-  else if (id.startsWith('pat:')) game.pat(Number(id.slice(4)));
+  else if (id.startsWith('pat:')) {
+    const catId = Number(id.slice(4));
+    if (game.pat(catId)) { const cat = game.cats.find(c => c.id === catId); audio.play('pat', cat?.position); audio.play('purr', cat?.position); }
+  }
   else if (id.startsWith('tool:')) game.select(id.slice(5) as ToolId);
   else if (id.startsWith('adopt:')) game.adopt(Number(id.slice(6)));
   else if (id.startsWith('upgrade:')) { game.upgrade(id.slice(8) as ToolId); }
@@ -132,13 +141,19 @@ function action(id: string) {
     if (care) { world.focusOn(world.eventPosition(care)); gyro.recenter(world.camera.quaternion); }
   }
   syncWorldViewport(); world.update(game, 0, performance.now() / 1000, 0);
+  audio.setBlocked(!game.running || document.hidden);
+  if (id.startsWith('tool:')) audio.play('select');
   hud.clearInteraction(); hud.draw(game, world, 0, true);
   if (keyboardFocus && hud.controls.some(hit => hit.id === keyboardFocus)) { hud.focusedId = keyboardFocus; hud.invalidate(); }
 }
 function applyGesture(result: GestureResult) {
   if (result.look && game.active) { world.lookView(result.look.x, result.look.y); gyro.recenter(world.camera.quaternion); }
   if (result.eventId !== undefined && result.work) {
-    game.work(result.eventId, result.work);
+    const care = game.events.find(e => e.id === result.eventId);
+    if (game.work(result.eventId, result.work) && care) {
+      const cat = game.cats.find(c => c.id === care.catId);
+      audio.play(game.selected, care.kind === 'boredom' ? cat?.position : care.position);
+    }
     if (!game.events.some(e => e.id === result.eventId)) cancelGesture();
   }
   if (result.click) action(result.click);
@@ -162,6 +177,7 @@ function point(event: PointerEvent): Point { const rect = canvas.getBoundingClie
 canvas.addEventListener('pointerdown', event => {
   if (hud.rotateRequired || pointerId !== undefined || !event.isPrimary || (event.pointerType === 'mouse' && event.button !== 0) || contextLost) return;
   event.preventDefault(); canvas.focus({ preventScroll: true });
+  audio.unlock();
   hud.draw(game, world, 0, true);
   const p = point(event); const hit = hud.hit(p.x, p.y);
   hud.focusedId = undefined;
@@ -177,7 +193,7 @@ canvas.addEventListener('pointerdown', event => {
     gesture.begin(p, event.timeStamp, Math.min(width, height), { kind: 'care', eventId, tool: TOOL_BY_ID[game.selected] });
     hud.pointer = p; hud.pointerTool = game.selected;
     const care = game.events.find(e => e.id === eventId);
-    if (care && !toolMatches(TOOL_BY_ID[game.selected], care.kind)) game.rejectTool(care);
+    if (care && !toolMatches(TOOL_BY_ID[game.selected], care.kind)) { game.rejectTool(care); audio.play('reject'); }
     updateCarePointer(p);
   } else if (game.active && p.x >= world.viewport.x && p.x <= world.viewport.x + world.viewport.w && p.y >= world.viewport.y && p.y <= world.viewport.y + world.viewport.h) {
     gesture.begin(p, event.timeStamp, Math.min(width, height), { kind: 'empty' });
@@ -212,6 +228,7 @@ canvas.addEventListener('pointerleave', () => { hud.hoveredId = undefined; hud.i
 canvas.addEventListener('contextmenu', event => event.preventDefault());
 window.addEventListener('keydown', event => {
   if (event.repeat || hud.rotateRequired || contextLost || document.hidden || event.ctrlKey || event.metaKey || event.altKey) return;
+  audio.unlock();
   hud.draw(game, world, 0, true);
   if (event.key === 'Tab' || (hud.focusedId && ['ArrowDown', 'ArrowUp', 'ArrowLeft', 'ArrowRight'].includes(event.key))) {
     event.preventDefault(); cancelGesture(); canvas.focus({ preventScroll: true });
@@ -232,18 +249,18 @@ window.addEventListener('keydown', event => {
       if (id !== undefined) action(`pat:${id}`);
     } else {
       const tool = game.availableTools[Number(event.key) - 1];
-      if (tool) { cancelGesture(); game.select(tool.id); }
+      if (tool) { cancelGesture(); game.select(tool.id); if (game.active) audio.play('select'); }
     }
   }
   hud.draw(game, world, 0, true);
 });
 document.addEventListener('visibilitychange', () => {
-  if (document.hidden) { cancelGesture(); game.pause('The room waited while you were away.'); }
+  if (document.hidden) { audio.setBlocked(true); cancelGesture(); game.pause('The room waited while you were away.'); }
   lastTime = performance.now(); hud.invalidate();
 });
-window.addEventListener('blur', () => { cancelGesture(); game.pause('The room waited while you were away.'); hud.invalidate(); });
+window.addEventListener('blur', () => { audio.setBlocked(true); cancelGesture(); game.pause('The room waited while you were away.'); hud.invalidate(); });
 canvas.addEventListener('webglcontextlost', event => {
-  event.preventDefault(); contextLost = true; cancelGesture(); game.pause('Graphics paused. Resume when the room returns.');
+  event.preventDefault(); contextLost = true; audio.setBlocked(true); cancelGesture(); game.pause('Graphics paused. Resume when the room returns.');
 });
 canvas.addEventListener('webglcontextrestored', () => { contextLost = false; hud.texture.needsUpdate = true; lastTime = performance.now(); resize(); });
 let resizePending = false;
@@ -269,6 +286,8 @@ function frame(now: number) {
       if (held.work) applyGesture(held);
     }
     if (!manualClock && !hud.rotateRequired) game.tick(dt);
+    audio.setBlocked(!game.running || document.hidden || hud.rotateRequired);
+    roomSounds.update(game, audio);
     if (game.phase !== previousPhase) {
       cancelGesture();
       if (game.phase === 'adoption' || game.phase === 'victory' || (game.phase === 'playing' && previousPhase === 'upgrade')) {
@@ -300,7 +319,7 @@ if (import.meta.env.MODE === 'test') {
     game.continueBonus();
   };
   Object.assign(window, { __CATSLAVE_TEST__: {
-    game, world, hud,
+    game, world, hud, audio,
     finishBonus,
     setManualClock(value: boolean) { manualClock = value; },
     refresh(effectsDt = 0) { syncWorldViewport(); world.update(game, 0, performance.now() / 1000, effectsDt); hud.draw(game, world, 0, true); },

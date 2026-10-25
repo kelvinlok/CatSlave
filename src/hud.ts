@@ -132,6 +132,7 @@ export class Hud {
   layout: GameLayout = gameLayout(390, 844);
   rotateRequired = false;
   gyroStatus = 'off';
+  soundLabel = 'Sound: on';
   top = 12;
   bottom = 12;
   left = 0;
@@ -263,6 +264,7 @@ export class Hud {
     const titleY = this.top + (this.compact ? 64 : Math.min(155, h * 0.18));
     text(ctx, 'CatSlave.', center, titleY, Math.min(72, panel * 0.2), C.ink, 'center', 'serif');
     const bottomY = h - this.bottom - 168;
+    this.button('sound', this.soundLabel, x, bottomY - 24, panel, 44);
     this.button('start', 'Play  →', x, bottomY + 34, panel, 52, true);
     this.button('learn', 'Practice', x, bottomY + 98, panel, 48);
   }
@@ -595,6 +597,7 @@ export class Hud {
       return;
     }
     text(ctx, 'Paused', center, y + 36, 30, C.ink, 'center', 'serif', width - 24);
+    this.button('sound', this.soundLabel, bx, y + 68, bw, 44);
     const by = y + height - 258;
     this.button('resume', 'Resume  →', bx, by, bw, 52, true);
     this.button('help', 'Controls', bx, by + 65, bw, 48);
