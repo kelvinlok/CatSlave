@@ -1,5 +1,6 @@
+import { translate, languageLabel, gameTitle } from './i18n';
 import * as THREE from 'three';
-import { EFFICIENCY, TOOLS, TOOL_BY_ID, toolMatches } from './config';
+import { CLEANING_TOOLS, EFFICIENCY, TOOLS, TOOL_BY_ID, toolMatches } from './config';
 import { Game } from './simulation';
 import { World, inPlayArea, type PlayArea } from './world';
 import { needIcon } from './need-icons';
@@ -17,7 +18,8 @@ function round(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h
   if (stroke) { ctx.strokeStyle = stroke; ctx.lineWidth = 1; ctx.stroke(); }
 }
 function text(ctx: CanvasRenderingContext2D, value: string, x: number, y: number, size = 14, color = C.ink, align: CanvasTextAlign = 'left', font = 'sans', maxWidth?: number) {
-  const face = font === 'serif' ? "Georgia, 'Times New Roman', serif" : "'Trebuchet MS', Arial, sans-serif";
+  value = translate(value);
+  const face = font === 'serif' ? "Georgia, 'Times New Roman', 'Noto Serif TC', 'PMingLiU', serif" : "'Trebuchet MS', Arial, 'Noto Sans TC', 'Microsoft JhengHei', sans-serif";
   ctx.font = `${font === 'bold' ? 700 : 500} ${size}px ${face}`;
   if (maxWidth && ctx.measureText(value).width > maxWidth) {
     size = Math.max(11, size * maxWidth / ctx.measureText(value).width);
@@ -145,6 +147,8 @@ export class Hud {
 
   private elapsed = 0;
   private animationTime = 0;
+  private vacuumUnlockAge = Infinity;
+  private reducedMotion = typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches;
   private dirty = true;
   private lastPhase = '';
   private selectedTool: ToolId = 'sweeper';
@@ -189,10 +193,12 @@ export class Hud {
     this.dirty = true;
   }
   invalidate() { this.dirty = true; }
+  celebrateVacuumUnlock() { this.vacuumUnlockAge = 0; this.invalidate(); }
+  get vacuumUnlockVisible() { return this.vacuumUnlockAge < 2.6; }
   get compact() { return this.height < 540; }
   get panelWidth() { return Math.min(this.width - this.left - this.right - 32, 500); }
   get center() { return (this.left + this.width - this.right) / 2; }
-  private addHit(hit: Hit) { this.hits.push(hit); }
+  private addHit(hit: Hit) { this.hits.push({ ...hit, label: hit.label ? translate(hit.label) : undefined }); }
   hit(x: number, y: number): Hit | undefined {
     this.camera.updateMatrixWorld(); this.scene.updateMatrixWorld(true);
     this.raycaster.setFromCamera(new THREE.Vector2(x / this.width * 2 - 1, 1 - y / this.height * 2), this.camera);
@@ -246,7 +252,7 @@ export class Hud {
   }
   private brand() {
     paw(this.ctx, this.left + 29, this.top + 15, 23);
-    text(this.ctx, 'CATSLAVE', this.left + 48, this.top + 16, 11, C.ink, 'left', 'bold');
+    text(this.ctx, gameTitle(), this.left + 48, this.top + 16, 11, C.ink, 'left', 'bold');
   }
 
   private rotationScreen() {
@@ -262,9 +268,10 @@ export class Hud {
   private title(game: Game) {
     const { height: h, ctx } = this;
     this.backdrop(); this.brand();
+    this.button('language', languageLabel(), this.width - this.right - 126, this.top, 110, 44);
     const center = this.center, panel = this.panelWidth, x = center - panel / 2;
-    const titleY = this.top + (this.compact ? 64 : Math.min(155, h * 0.18));
-    text(ctx, 'CatSlave.', center, titleY, Math.min(72, panel * 0.2), C.ink, 'center', 'serif');
+    const titleY = this.top + (this.compact ? 96 : Math.min(155, h * 0.18));
+    text(ctx, gameTitle(), center, titleY, Math.min(72, panel * 0.2), C.ink, 'center', 'serif', panel);
     const bottomY = h - this.bottom - (game.freePlayUnlocked ? 226 : 168);
     this.button('sound', this.soundLabel, x, bottomY - 24, panel, 44);
     this.button('start', 'Play  →', x, bottomY + 34, panel, 52, true);
@@ -726,7 +733,12 @@ export class Hud {
     const top = this.top + (this.compact ? 51 : 74);
     text(ctx, 'Upgrade', center, top, Math.min(36, width * 0.105), C.ink, 'center', 'serif');
     this.upgradeRewards(game, top + 35);
-    const y = top + 62, gap = 8;
+    if (!game.vacuumUnlocked) {
+      const ready = CLEANING_TOOLS.filter(tool => game.levels[tool] >= 3).length;
+      text(ctx, 'Sweeper + Mop + Brush → Vacuum', center, top + 64, 12, C.muted, 'center', 'sans', width - 8);
+      text(ctx, `Get each to level 3 · ${ready}/3 ready`, center, top + 81, 11, C.muted, 'center', 'sans', width - 8);
+    }
+    const y = top + (game.vacuumUnlocked ? 62 : 110), gap = 8;
     const rowTools = game.availableTools;
     const rowH = Math.min(76, (h - this.bottom - 40 - y - gap * (rowTools.length - 1)) / rowTools.length);
     rowTools.forEach((tool, i) => {
@@ -739,6 +751,38 @@ export class Hud {
       this.addHit({ id: `upgrade:${tool.id}`, label: tool.id === 'vacuum' ? 'Vacuum unlocked' : `Upgrade ${tool.name} to level ${level + 1}`, disabled, x, y: cy, w: width, h: rowH });
     });
     for (let i = 0; i < 5; i++) paw(ctx, center + (i - 2) * 28, h - this.bottom - 14, 18, i < game.cats.length ? C.green : C.line);
+  }
+
+  private vacuumUnlock(game: Game) {
+    if (!this.vacuumUnlockVisible || (game.phase !== 'upgrade' && !game.active)) return;
+    const { ctx } = this, age = this.vacuumUnlockAge;
+    const width = Math.min(this.panelWidth, 340), height = this.compact ? 100 : 120;
+    const y = game.phase === 'upgrade' ? this.top : this.layout.room.y + 8;
+    const enter = Math.min(1, age / .18), fade = Math.min(1, (2.6 - age) / .35);
+    const merge = this.reducedMotion ? 1 : THREE.MathUtils.smoothstep(age, .2, .85);
+    ctx.save(); ctx.globalAlpha = enter * fade;
+    ctx.translate(this.center, y - (this.reducedMotion ? 0 : (1 - enter) * 10));
+    round(ctx, -width / 2, 0, width, height, 18, '#fff7e4', '#c8b17d');
+    text(ctx, 'Vacuum unlocked!', 0, 21, this.compact ? 19 : 21, C.green, 'center', 'serif', width - 24);
+    const iconY = this.compact ? 54 : 66;
+    if (merge < 1) {
+      ctx.save(); ctx.globalAlpha *= 1 - merge;
+      CLEANING_TOOLS.forEach((tool, i) => toolIcon(ctx, tool, (i - 1) * 70 * (1 - merge), iconY, 32 * (1 - merge * .3)));
+      ctx.restore();
+    }
+    if (merge > 0) {
+      ctx.save(); ctx.globalAlpha *= merge;
+      const pop = this.reducedMotion ? 1 : 1 + Math.sin(merge * Math.PI) * .18;
+      toolIcon(ctx, 'vacuum', 0, iconY, (this.compact ? 39 : 49) * pop);
+      for (let i = 0; i < 8; i++) {
+        const angle = i * Math.PI / 4, radius = 32 + merge * 14;
+        const x = Math.cos(angle) * radius, y = iconY + Math.sin(angle) * radius * .55;
+        line(ctx, [[x - Math.cos(angle) * 3, y - Math.sin(angle) * 3], [x + Math.cos(angle) * 3, y + Math.sin(angle) * 3]], '#b8964e', 1.5);
+      }
+      ctx.restore();
+    }
+    text(ctx, 'One tap clears poop, spills & fur.', 0, height - 16, 12, C.muted, 'center', 'sans', width - 24);
+    ctx.restore();
   }
 
   private pause(game: Game) {
@@ -776,7 +820,8 @@ export class Hud {
       return;
     }
     text(ctx, 'Paused', center, y + 36, 30, C.ink, 'center', 'serif', width - 24);
-    this.button('sound', this.soundLabel, bx, y + 68, bw, 44);
+    this.button('sound', this.soundLabel, bx, y + 68, (bw - 8) / 2, 44);
+    this.button('language', languageLabel(), bx + (bw + 8) / 2, y + 68, (bw - 8) / 2, 44);
     const by = y + height - 258;
     this.button('resume', 'Resume  →', bx, by, bw, 52, true);
     this.button('help', 'Controls', bx, by + 65, bw, 48);
@@ -878,6 +923,8 @@ export class Hud {
     this.selectedTool = game.selected;
     this.elapsed += dt;
     this.animationTime += dt;
+    if (!game.vacuumUnlocked || ['title', 'game-over', 'victory', 'free-play'].includes(game.phase)) this.vacuumUnlockAge = Infinity;
+    else if (game.phase !== 'paused' && !this.rotateRequired) this.vacuumUnlockAge += dt;
     this.damageFlash = game.phase === 'paused' ? 0 : Math.max(0, 1.15 - world.attackAge);
     if (!force && !this.dirty && this.lastPhase === game.phase && this.elapsed < 1 / 30) return;
     if (this.lastPhase !== game.phase) { this.modal = undefined; this.clearInteraction(); }
@@ -935,6 +982,7 @@ export class Hud {
       }
       ctx.restore();
     }
+    if (!this.rotateRequired) this.vacuumUnlock(game);
     if (!this.rotateRequired && this.damageFlash > 0) this.scratches(world.attackAge);
     if (!this.controls.some(hit => hit.id === this.focusedId)) this.focusedId = undefined;
     this.interactionStates();

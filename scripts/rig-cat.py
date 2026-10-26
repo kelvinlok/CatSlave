@@ -28,7 +28,10 @@ def skin_weights(p):
     i=(1 if x>0 else 0)+(0 if z>-.10 else 2)
     legz=.4 if i<2 else -.62
     leg=(1-smooth((y-.46)/.29))*smooth((abs(x)-.055)/.105)*math.exp(-((z-legz)/.27)**4)
-    if y<.35:leg=1.
+    # Full lower-limb influence belongs outside the chest midline. The low
+    # belly of a broad cat can also cross y=.35; assigning it to a leg makes
+    # a pointed chest flap during grooming and stretching.
+    if y<.35 and abs(x)>.12:leg=1.
     low=1-smooth((y-.25)/.16);paw=1-smooth((y-.09)/.14)
     limb={f'DEF_leg{i}':1-low,f'DEF_lowerLeg{i}':low*(1-paw),f'DEF_paw{i}':low*paw}
     blend(limb,leg)

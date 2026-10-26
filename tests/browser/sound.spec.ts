@@ -63,6 +63,28 @@ test('touch release unlocks audio and the next tap recovers an interrupted conte
   const played = (await diagnostics(page)).played;
   await tap('tool:brush');
   expect((await diagnostics(page)).played).toBeGreaterThan(played);
+  // Vacuum completes on pointerup, before a stricter browser permits audio at
+  // touchend. The one-shot must survive that short activation boundary.
+  const mess = await page.evaluate(async () => {
+    const t = window.__CATSLAVE_TEST__;
+    t.game.events = []; Object.assign(t.game.levels, { sweeper: 3, mop: 3, brush: 3 });
+    t.game.select('vacuum'); t.game.spawn(t.game.cats[0], 'poop'); t.refresh();
+    t.world.focusOn(t.world.eventPosition(t.game.events[0])); t.refresh();
+    const hit = t.hud.hits.find(hit => hit.eventId === t.game.events[0].id)!;
+    await window.__AUDIO_TOUCH_GATE__.interrupt();
+    return { x: hit.x + hit.w / 2, y: hit.y + hit.h / 2 };
+  });
+  await page.touchscreen.tap(mess.x, mess.y);
+  expect(await page.evaluate(() => window.__CATSLAVE_TEST__.game.events.length)).toBe(0);
+  await expect.poll(async () => (await diagnostics(page)).counts.vacuum ?? 0).toBe(1);
+  await page.evaluate(async () => {
+    await window.__AUDIO_TOUCH_GATE__.interrupt();
+    const { audio } = window.__CATSLAVE_TEST__ as typeof window.__CATSLAVE_TEST__ & { audio: GameAudio };
+    audio.play('vacuum'); audio.stop();
+  });
+  await tap('tool:food');
+  await expect.poll(async () => (await diagnostics(page)).state).toBe('running');
+  expect((await diagnostics(page)).counts.vacuum).toBe(1); // Cleared sounds must never replay on resume.
   expect(await page.evaluate(() => window.__AUDIO_TOUCH_GATE__.contexts)).toBe(1);
   expect(errors).toEqual([]);
 });

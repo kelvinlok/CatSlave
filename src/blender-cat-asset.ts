@@ -4,10 +4,12 @@ import { attachNativeBlenderRig, hasNativeBlenderRig, validateNativeBlenderRig }
 const slots = ['body', 'head', ...Array.from({ length: 4 }, (_, i) => [`leg${i}`, `lowerLeg${i}`, `paw${i}`]).flat(),
   'ear0', 'ear1', 'eye0', 'eye1', 'closedEye0', 'closedEye1'];
 const slotNames = new Set(slots);
-export type BlenderCat = 'choco' | 'latte';
+export const blenderCats = ['choco', 'latte', 'didi', 'xiaosai', 'yelo', 'miller'] as const;
+export type BlenderCat = typeof blenderCats[number];
 const sources = new Map<BlenderCat, THREE.Group>();
 const loads = new Map<BlenderCat, Promise<boolean>>();
-const label = (kind: BlenderCat) => kind === 'choco' ? 'Choco' : 'Latte';
+const labels: Record<BlenderCat, string> = { choco: 'Choco', latte: 'Latte', didi: '的的', xiaosai: '小塞', yelo: 'Yelo', miller: 'Miller' };
+const label = (kind: BlenderCat) => labels[kind];
 
 /** Each authored cat has its own shared source, just like the procedural templates. */
 export function registerBlenderCatAsset(kind: BlenderCat, scene: THREE.Group) {
@@ -46,11 +48,11 @@ export function preloadBlenderCatAsset(kind: BlenderCat): Promise<boolean> {
 }
 
 export function hasBlenderCatAsset(kind: string | undefined): kind is BlenderCat {
-  return (kind === 'choco' || kind === 'latte') && sources.has(kind);
+  return blenderCats.some(cat => cat === kind) && sources.has(kind as BlenderCat);
 }
 
 export async function preloadBlenderCatAssets() {
-  return Promise.all([preloadBlenderCatAsset('choco'), preloadBlenderCatAsset('latte')]);
+  return Promise.all(blenderCats.map(preloadBlenderCatAsset));
 }
 
 /** The authored tail coat and fur follow the same five independently cloned bones. */

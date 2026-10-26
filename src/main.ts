@@ -1,3 +1,4 @@
+import { getLanguage, setLanguage, syncDocumentLanguage, translate } from './i18n';
 import * as THREE from 'three';
 import './style.css';
 import { Game } from './simulation';
@@ -11,6 +12,7 @@ import { GyroLook } from './gyro';
 import { GameAudio, RoomSounds } from './sound';
 import { preloadBlenderCatAssets } from './blender-cat-asset';
 
+syncDocumentLanguage();
 const canvas = document.querySelector<HTMLCanvasElement>('#game')!;
 let renderer: THREE.WebGLRenderer;
 try {
@@ -23,8 +25,8 @@ try {
   const context = replacement.getContext('2d')!;
   context.fillStyle = '#f8f0df'; context.fillRect(0, 0, innerWidth, innerHeight);
   context.fillStyle = '#493e38'; context.font = '28px Georgia'; context.textAlign = 'center';
-  context.fillText('This room needs WebGL 2.', innerWidth / 2, innerHeight / 2 - 20);
-  context.font = '14px Arial'; context.fillText('Try a browser with hardware acceleration enabled.', innerWidth / 2, innerHeight / 2 + 20);
+  context.fillText(translate('This room needs WebGL 2.'), innerWidth / 2, innerHeight / 2 - 20);
+  context.font = '14px Arial'; context.fillText(translate('Try a browser with hardware acceleration enabled.'), innerWidth / 2, innerHeight / 2 + 20);
   throw new Error('WebGL 2 is unavailable.');
 }
 renderer.outputColorSpace = THREE.SRGBColorSpace;
@@ -36,7 +38,7 @@ renderer.setClearColor('#f8f0df');
 renderer.clear();
 const loadingStatus = document.createElement('div');
 loadingStatus.id = 'model-loading'; loadingStatus.setAttribute('role', 'status');
-loadingStatus.textContent = 'Getting the cats ready…';
+loadingStatus.textContent = translate('Getting the cats ready…');
 loadingStatus.style.cssText = 'position:absolute;inset:0;display:grid;place-items:center;background:#f8f0df;color:#493e38;font:500 22px Georgia,serif;pointer-events:none';
 document.body.append(loadingStatus);
 try { await preloadBlenderCatAssets(); } finally { loadingStatus.remove(); }
@@ -121,7 +123,14 @@ function action(id: string) {
   hud.draw(game, world, 0, true);
   if (contextLost || document.hidden || hud.rotateRequired || !hud.controls.some(hit => hit.id === id)) return;
   const keyboardFocus = hud.focusedId;
+  const hadVacuum = game.vacuumUnlocked;
   cancelGesture();
+  if (id === 'language') {
+    setLanguage(getLanguage() === 'yue-Hant' ? 'en' : 'yue-Hant');
+    hud.draw(game, world, 0, true);
+    syncDocumentLanguage(hud.controls.find(hit => hit.id === hud.focusedId)?.label);
+    return;
+  }
   if (id === 'sound') { audio.cycleVolume(); hud.soundLabel = audio.label; hud.invalidate(); return; }
   if (['learn', 'start', 'restart', 'home', 'confirm-restart', 'confirm-home'].includes(id)) { audio.stop(); roomSounds.reset(); }
   if (game.phase === 'paused' && ['help', 'restart', 'home'].includes(id)) {
@@ -172,6 +181,7 @@ function action(id: string) {
     if (care) { world.focusOn(world.eventPosition(care)); gyro.recenter(world.camera.quaternion); }
   }
   syncWorldViewport(); world.update(game, 0, performance.now() / 1000, 0);
+  if (!hadVacuum && game.vacuumUnlocked) hud.celebrateVacuumUnlock();
   audio.setBlocked(!game.running || document.hidden);
   if (id.startsWith('tool:')) audio.play('select');
   hud.clearInteraction(); hud.draw(game, world, 0, true);
@@ -300,7 +310,7 @@ window.addEventListener('keydown', event => {
     event.preventDefault(); cancelGesture(); canvas.focus({ preventScroll: true });
     hud.focusNext(event.shiftKey || event.key === 'ArrowUp' || event.key === 'ArrowLeft');
     const focused = hud.controls.find(hit => hit.id === hud.focusedId);
-    canvas.setAttribute('aria-label', `CatSlave. ${focused?.label ?? focused?.id}. Enter to activate. Tab for next control. Escape to pause or go back.`);
+    syncDocumentLanguage(focused?.label ?? focused?.id);
     return;
   }
   if ((event.key === 'Enter' || event.key === ' ') && hud.focusedId) { event.preventDefault(); action(hud.focusedId); return; }

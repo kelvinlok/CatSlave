@@ -1,14 +1,24 @@
 import { expect, test } from '@playwright/test';
 import type * as THREE from 'three';
 
-for (const [variant, name] of ['Choco', 'Latte'].entries()) {
+const customCats = [
+  { name: 'Choco', asset: 'choco' }, { name: 'Latte', asset: 'latte' },
+  { name: '的的', asset: 'didi' }, { name: '小塞', asset: 'xiaosai' },
+  { name: 'Yelo', asset: 'yelo' },
+  { name: 'Miller', asset: 'miller' },
+];
+
+for (const { name, asset } of customCats) {
 test(`${name} loads an authored skeleton and continuously deforms its exported skin`, async ({ page }) => {
   const errors: string[] = [];
   page.on('pageerror', error => errors.push(error.message));
   await page.setViewportSize({ width: 1200, height: 700 });
   await page.goto('/tests/browser/cat-studio.html');
   await page.waitForFunction(() => !!window.__CAT_STUDIO__);
-  const report = await page.evaluate(variant => {
+  const report = await page.evaluate(async asset => {
+    const configPath = '/src/config.ts';
+    const { PALETTE } = await import(configPath) as typeof import('../../src/config');
+    const variant = PALETTE.findIndex(cat => cat.appearance === asset);
     const s = window.__CAT_STUDIO__;
     s.pose('idle', 1, variant);
     const skins: THREE.SkinnedMesh[] = [], bones: THREE.Bone[] = [];
@@ -43,11 +53,11 @@ test(`${name} loads an authored skeleton and continuously deforms its exported s
       weightCount: weights.count, indexCount: indices.count,
       errors: [],
     };
-  }, variant);
+  }, asset);
   expect(report.errors).toEqual([]);
   expect(report.rig).toBe('blender-armature');
   expect(report.skins).toBeGreaterThan(0);
-  expect(report.asset).toBe(`models/${name.toLowerCase()}.glb`);
+  expect(report.asset).toBe(`models/${asset}.glb`);
   expect(report.bones).toBe(28);
   expect(report.neckBones).toBe(true);
   expect(report.continuous).toBe(true);
@@ -62,7 +72,7 @@ test(`${name} loads an authored skeleton and continuously deforms its exported s
 });
 }
 
-test('Choco and Latte native skeletons keep independent animated poses', async ({ page }) => {
+test('all custom cats and a repeated instance keep independent animated poses', async ({ page }) => {
   await page.goto('/tests/browser/cat-studio.html');
   await page.waitForFunction(() => !!window.__CAT_STUDIO__);
   const report = await page.evaluate(async () => {
@@ -72,13 +82,19 @@ test('Choco and Latte native skeletons keep independent animated poses', async (
     const { PALETTE } = await import(configPath) as typeof import('../../src/config');
     const { animateCat } = await import(animationPath) as typeof import('../../src/cat-animation');
     const { Game } = await import(simulationPath) as typeof import('../../src/simulation');
-    const choco = createCat(PALETTE[0]), latte = createCat(PALETTE[1]), twin = createCat(PALETTE[0]);
-    const models = [choco, latte, twin];
+    const customs = PALETTE.filter(cat => cat.appearance && cat.appearance !== 'primitive');
+    const models = [...customs, PALETTE.find(cat => cat.appearance === 'miller')!].map(createCat);
     const snapshots = () => models.map(model => model.root.getObjectByName('DEF_head')!.matrixWorld.elements.slice());
-    const initial = snapshots();
     const cat = new Game(5).cats[0]; cat.activity = 'stretching'; cat.pose = 0.5;
-    animateCat(choco, cat, 1);
-    const posed = snapshots();
+    const movements = models.map((model, index) => {
+      const initial = snapshots();
+      animateCat(model, cat, 1);
+      const posed = snapshots();
+      return {
+        changedSelf: JSON.stringify(posed[index]) !== JSON.stringify(initial[index]),
+        unchangedOthers: posed.every((pose, i) => i === index || JSON.stringify(pose) === JSON.stringify(initial[i])),
+      };
+    });
     const palettes = models.map(model => {
       const skins: THREE.SkinnedMesh[] = [];
       model.root.traverse(object => { if ((object as THREE.SkinnedMesh).isSkinnedMesh) skins.push(object as THREE.SkinnedMesh); });
@@ -88,15 +104,13 @@ test('Choco and Latte native skeletons keep independent animated poses', async (
       rigs: models.map(model => model.root.userData.modelRig),
       distinctPalettes: new Set(palettes).size,
       distinctHeads: new Set(models.map(model => model.root.getObjectByName('DEF_head'))).size,
-      changedChoco: JSON.stringify(posed[0]) !== JSON.stringify(initial[0]),
-      unchangedOthers: [1, 2].every(i => JSON.stringify(posed[i]) === JSON.stringify(initial[i])),
+      movements,
     };
     models.forEach(disposeCat);
     return result;
   });
-  expect(report.rigs).toEqual(['blender-armature', 'blender-armature', 'blender-armature']);
-  expect(report.distinctPalettes).toBe(3);
-  expect(report.distinctHeads).toBe(3);
-  expect(report.changedChoco).toBe(true);
-  expect(report.unchangedOthers).toBe(true);
+  expect(report.rigs).toEqual(Array(customCats.length + 1).fill('blender-armature'));
+  expect(report.distinctPalettes).toBe(customCats.length + 1);
+  expect(report.distinctHeads).toBe(customCats.length + 1);
+  expect(report.movements).toEqual(Array(customCats.length + 1).fill({ changedSelf: true, unchangedOthers: true }));
 });

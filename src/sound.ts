@@ -45,9 +45,9 @@ function texture(context: AudioContext, id: SoundId): AudioBuffer {
 }
 
 const cooldown: Partial<Record<SoundId, number>> = { meow: 2.5, purr: 10, sweeper: .16, mop: .2,
-  brush: .14, food: .22, toy: .48, vacuum: .8, reject: .4, scratch: .24, eat: .28, step: .22, pat: .16 };
+  brush: .14, food: .22, toy: .48, vacuum: .1, reject: .4, scratch: .24, eat: .28, step: .22, pat: .16 };
 const volumes: Partial<Record<SoundId, number>> = { meow: .5, purr: .24, step: .12, land: .32,
-  scratch: .28, eat: .28, rustle: .3, vacuum: .45, toy: .4 };
+  scratch: .28, eat: .28, rustle: .3, vacuum: .55, toy: .4 };
 
 export class GameAudio implements SoundSink {
   private context?: AudioContext;
@@ -66,6 +66,8 @@ export class GameAudio implements SoundSink {
   private primer?: AudioBufferSourceNode;
   private outputPrimed = false;
   private unlockError?: string;
+  private pendingVacuum?: { position?: FloorPoint; key: string; requestedAt: number };
+  private vacuumVoice?: { source: AudioBufferSourceNode; gain: GainNode };
   constructor() {
     try {
       const saved = localStorage.getItem('catslave.sound-volume');
@@ -103,7 +105,7 @@ export class GameAudio implements SoundSink {
       // Never await here: touchend must be able to retry even if pointerdown's
       // earlier resume promise is still waiting for user activation.
       if (context.state !== 'running') void context.resume().then(() => {
-        if (context.state === 'running') this.unlockError = undefined;
+        if (context.state === 'running') { this.unlockError = undefined; this.flushVacuum(); }
       }).catch(error => { this.unlockError = String(error); });
       if (!this.outputPrimed || context.state !== 'running') {
         this.primer?.stop(); this.primer?.disconnect();
@@ -117,6 +119,7 @@ export class GameAudio implements SoundSink {
         // A silent single sample activates Safari's audio output in the tap stack.
         source.start();
       }
+      if (context.state === 'running') this.flushVacuum();
     } catch (error) { this.unlockError = String(error); /* Audio must never prevent playing. */ }
   }
   private async loadRecordings(context: AudioContext) {
@@ -138,18 +141,39 @@ export class GameAudio implements SoundSink {
     try { localStorage.setItem('catslave.sound-volume', String(this.volume)); } catch { /* optional */ }
   }
   setBlocked(value: boolean) { if (value && !this.blocked) this.stop(); this.blocked = value; }
+  private flushVacuum() {
+    const pending = this.pendingVacuum; this.pendingVacuum = undefined;
+    // Bridge pointerup -> touchend only; never replay old cleanups after a pause.
+    if (pending && performance.now() - pending.requestedAt <= 400) this.play('vacuum', pending.position, pending.key);
+  }
   stop() {
     for (const source of this.voices) { source.stop(); source.disconnect(); }
     this.voices.clear(); this.lastPlayed.clear();
+    this.pendingVacuum = undefined; this.vacuumVoice = undefined;
   }
   play(id: SoundId, position?: FloorPoint, key: string = id) {
     const context = this.context;
-    if (!context || context.state !== 'running' || this.blocked || this.volume === 0 || this.voices.size >= 12) return;
+    if (!context || this.blocked || this.volume === 0) return;
+    if (context.state !== 'running') {
+      if (id === 'vacuum' && context.state !== 'closed') this.pendingVacuum = { position: position && { ...position }, key, requestedAt: performance.now() };
+      return;
+    }
     const now = context.currentTime;
     if (id === 'purr' && now - this.lastPurrAt < 10) return;
     if (now - (this.lastPlayed.get(key) ?? -Infinity) < (cooldown[id] ?? .1)) return;
     // Also cap calls shared by multiple cats, so five simultaneous needs stay gentle.
     if (id === 'meow' && now - (this.lastPlayed.get('all-meows') ?? -Infinity) < 1.2) return;
+    if (id === 'vacuum' && this.vacuumVoice) {
+      const previous = this.vacuumVoice;
+      previous.gain.gain.setTargetAtTime(0, now, .008); previous.source.stop(now + .03);
+      this.voices.delete(previous.source);
+    }
+    if (this.voices.size >= 12) {
+      if (id !== 'vacuum') return;
+      // Direct cleanup feedback wins over ambient cat sounds in a crowded room.
+      const oldest = this.voices.values().next().value!;
+      oldest.stop(); oldest.disconnect(); this.voices.delete(oldest);
+    }
     this.lastPlayed.set(key, now); if (id === 'meow') this.lastPlayed.set('all-meows', now);
     if (id === 'purr') this.lastPurrAt = now;
     let buffer = this.buffers.get(id);
@@ -169,7 +193,11 @@ export class GameAudio implements SoundSink {
     pan.pan.value = position ? Math.max(-.75, Math.min(.75, position.x / 6)) : 0;
     source.connect(gain); gain.connect(pan); pan.connect(this.master!);
     this.voices.add(source); this.played++; this.counts[id] = (this.counts[id] ?? 0) + 1;
-    source.onended = () => { this.voices.delete(source); source.disconnect(); gain.disconnect(); pan.disconnect(); };
+    if (id === 'vacuum') this.vacuumVoice = { source, gain };
+    source.onended = () => {
+      this.voices.delete(source); source.disconnect(); gain.disconnect(); pan.disconnect();
+      if (this.vacuumVoice?.source === source) this.vacuumVoice = undefined;
+    };
     source.start();
     if (id === 'purr') source.stop(now + .65);
   }

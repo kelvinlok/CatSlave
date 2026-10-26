@@ -367,9 +367,11 @@ export class Game {
   private openAdoption() {
     this.hp = Math.min(100, this.hp + 20);
     const available = PALETTE.filter(p => !this.cats.some(c => c.color === p.color));
-    const featured = this.stage === 0 ? 'latte' : this.stage === 1 ? 'didi' : this.stage === 2 ? 'xiaosai' : undefined;
+    const featured = ['latte', 'didi', 'xiaosai', 'yelo'][this.stage];
     const first = available.find(p => featured !== undefined && p.appearance === featured) ?? this.random.choose(available);
-    const second = this.random.choose(available.filter(p => p !== first));
+    const alternatives = available.filter(p => p !== first);
+    const second = (this.stage === 3 ? alternatives.find(p => p.appearance === 'miller') : undefined)
+      ?? this.random.choose(alternatives);
     this.candidates = [first, second].map(p => this.makeCat(p, this.cats.length));
     this.phase = 'adoption'; this.revision++;
   }
