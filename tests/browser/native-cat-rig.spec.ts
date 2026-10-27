@@ -6,6 +6,7 @@ const customCats = [
   { name: '的的', asset: 'didi' }, { name: '小塞', asset: 'xiaosai' },
   { name: 'Yelo', asset: 'yelo' },
   { name: 'Miller', asset: 'miller' },
+  { name: 'Momo', asset: 'momo' },
 ];
 
 for (const { name, asset } of customCats) {
@@ -83,7 +84,7 @@ test('all custom cats and a repeated instance keep independent animated poses', 
     const { animateCat } = await import(animationPath) as typeof import('../../src/cat-animation');
     const { Game } = await import(simulationPath) as typeof import('../../src/simulation');
     const customs = PALETTE.filter(cat => cat.appearance && cat.appearance !== 'primitive');
-    const models = [...customs, PALETTE.find(cat => cat.appearance === 'miller')!].map(createCat);
+    const models = [...customs, PALETTE.find(cat => cat.appearance === 'momo')!].map(createCat);
     const snapshots = () => models.map(model => model.root.getObjectByName('DEF_head')!.matrixWorld.elements.slice());
     const cat = new Game(5).cats[0]; cat.activity = 'stretching'; cat.pose = 0.5;
     const movements = models.map((model, index) => {

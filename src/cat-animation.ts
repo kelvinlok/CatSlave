@@ -373,10 +373,12 @@ export function animateCat(model: CatModel, cat: CatState, time: number, options
   model.tail.position.y = 0.82 * Math.cos(p.bodyPitch) + 0.76 * Math.sin(p.bodyPitch) + p.bodyY;
   model.tail.position.z = -0.76 * Math.cos(p.bodyPitch) + 0.82 * Math.sin(p.bodyPitch) + p.bodyZ;
   model.tail.rotation.set(p.tailPitch, 0, p.tailSway);
+  // Momo's broad plume needs a gentler arc than the short-haired tails.
+  const tailBend = model.root.userData.modelAsset === 'models/momo.glb' ? 0.6 : 1;
   model.tailJoints.forEach((joint, i) => {
     const follow = Math.sin(time * (angry ? 8 : 1.5) + cat.id - i * 0.38);
-    joint.rotation.set(i < 2 ? -0.10 : 0.10 + i * 0.035, 0,
-      p.tailCurl * (i < 2 ? 0.35 : 1) + follow * (cat.activity === 'sleeping' ? 0.008 : 0.035) * i);
+    joint.rotation.set((i < 2 ? -0.10 : 0.10 + i * 0.035) * tailBend, 0,
+      (p.tailCurl * (i < 2 ? 0.35 : 1) + follow * (cat.activity === 'sleeping' ? 0.008 : 0.035) * i) * tailBend);
   });
   model.ears.forEach((ear, i) => {
     const twitchPhase = cycle(time + cat.id * 0.83 + i * 2.1, 6.3);

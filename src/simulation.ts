@@ -370,7 +370,8 @@ export class Game {
     const featured = ['latte', 'didi', 'xiaosai', 'yelo'][this.stage];
     const first = available.find(p => featured !== undefined && p.appearance === featured) ?? this.random.choose(available);
     const alternatives = available.filter(p => p !== first);
-    const second = (this.stage === 3 ? alternatives.find(p => p.appearance === 'miller') : undefined)
+    const alternative = this.stage === 2 ? 'momo' : this.stage === 3 ? 'miller' : undefined;
+    const second = alternatives.find(p => alternative !== undefined && p.appearance === alternative)
       ?? this.random.choose(alternatives);
     this.candidates = [first, second].map(p => this.makeCat(p, this.cats.length));
     this.phase = 'adoption'; this.revision++;

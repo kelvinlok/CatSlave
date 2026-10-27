@@ -107,7 +107,7 @@ describe('Pawdicure', () => {
   it('lets practice retry and exit without rewards or changing saved unlocks', () => {
     const game = new Game(42); game.freePlayUnlocked = true; game.freePlayRoster = ['Choco'];
     expect(game.startPawdicurePractice()).toBe(true);
-    expect(game.cats.map(cat => cat.name)).toEqual(['Choco', 'Latte', '的的', '小塞', 'Yelo', 'Miller']);
+    expect(game.cats.map(cat => cat.name)).toEqual(['Choco', 'Latte', '的的', '小塞', 'Yelo', 'Miller', 'Momo']);
     const bonus = game.bonus!; bonus.paw!.selectCat(game.cats[1].id); game.startBonus(); game.tick(3);
     finish(bonus, dt => game.tick(dt)); game.tick(0.01);
     expect(game.upgradesRemaining).toBe(0); expect(game.hp).toBe(100);

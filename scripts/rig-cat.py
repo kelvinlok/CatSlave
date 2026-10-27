@@ -12,6 +12,7 @@ from mathutils.geometry import barycentric_transform, closest_point_on_tri
 ROOT=Path(__file__).resolve().parents[1]
 HEAD_SURFACE=None
 BODY_SURFACE=None
+TAIL_SURFACE=None
 def v(p): return Vector((p[0],-p[2],p[1]))
 def game(p): return Vector((p[0],p[2],-p[1]))
 def smooth(x):
@@ -56,6 +57,12 @@ def skin_weights(p):
         ear=smooth((y-1.17)/.15)*smooth((abs(x)-.10)/.09)
         blend({f'DEF_ear{1 if x>0 else 0}':1.},ear)
     tail=smooth((y-.79)/.12)*smooth((-z-.64)/.09)
+    if TAIL_SURFACE is not None:
+        # Wide plumes cross the old Z cutoff. Paint by anatomical ownership
+        # so the entire circumference follows the tail, with a soft root blend.
+        dtail=TAIL_SURFACE.find_nearest(v(p))[3]
+        dbody=BODY_SURFACE.find_nearest(v(p))[3]
+        tail=smooth(.5+(dbody-dtail)/.12)
     if tail>0:
         along=max(0,min(4,(y-.82)/.18));a=int(along);b=min(4,a+1);t=along-a
         tw={f'DEF_tailJoint{a}':1-t};tw[f'DEF_tailJoint{b}']=tw.get(f'DEF_tailJoint{b}',0)+t
@@ -64,8 +71,9 @@ def skin_weights(p):
     total=sum(val for k,val in items)
     return {k:val/total for k,val in items}
 
-def rig_character(scene,root):
-    global HEAD_SURFACE,BODY_SURFACE
+def rig_character(scene,root,tail_surface_weighting=False):
+    global HEAD_SURFACE,BODY_SURFACE,TAIL_SURFACE
+    TAIL_SURFACE=None
     label=root.name.removesuffix('_Blender')
     if any(o.type=='ARMATURE' for o in root.children_recursive):
         raise RuntimeError('Rig an unrigged surface source; refusing to stack rigs.')
@@ -107,6 +115,8 @@ def rig_character(scene,root):
     surface=BVHTree.FromPolygons(vertices,triangles,all_triangles=True)
     HEAD_SURFACE=BVHTree.FromPolygons(vertices,[tri for tri,slot in zip(triangles,source_slots) if slot=='head'],all_triangles=True)
     BODY_SURFACE=BVHTree.FromPolygons(vertices,[tri for tri,slot in zip(triangles,source_slots) if slot=='body'],all_triangles=True)
+    if tail_surface_weighting:
+        TAIL_SURFACE=BVHTree.FromPolygons(vertices,[tri for tri,slot in zip(triangles,source_slots) if slot=='tail'],all_triangles=True)
     # Add continuous shoulder and hip tissue before the union. The old joint
     # pieces only intersected at narrow caps, leaving an artificial tube contour.
     for side in [-1,1]:

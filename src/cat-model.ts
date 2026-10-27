@@ -148,11 +148,11 @@ function nearCoatStroke(x: number, y: number, points: number[][], width: number)
 function buildCat(cat: Appearance) {
   const choco = cat.appearance === 'choco', latte = cat.appearance === 'latte', didi = cat.appearance === 'didi';
   const xiaosai = cat.appearance === 'xiaosai', yelo = cat.appearance === 'yelo';
-  const miller = cat.appearance === 'miller';
+  const miller = cat.appearance === 'miller', momo = cat.appearance === 'momo';
   const white = choco || yelo || miller ? '#faf6ef' : latte ? cat.color : xiaosai ? '#f5e6cd' : '#f3e7d4';
   const latteTan = '#bfa17c', latteDark = '#514944';
   const pink = choco ? '#d99b9f' : '#cf9390', ink = '#252020';
-  const muzzleCoat = didi ? '#858b94' : white;
+  const muzzleCoat = momo ? '#514238' : didi ? '#858b94' : white;
   const foreheadM = [[0.145, 0.135], [0.115, 0.255], [0.07, 0.28], [0.018, 0.185]];
   const foreheadFlame = [[0.026, 0.32], [0.034, 0.265], [0.018, 0.215], [0.014, 0.145]];
   const cheekUpper = [[0.235, 0.012], [0.285, -0.025], [0.325, -0.015]];
@@ -162,6 +162,7 @@ function buildCat(cat: Appearance) {
     [-0.87, 0.005, 0.005], [-0.75, 0.25, 0.27], [-0.52, didi ? 0.39 : choco ? 0.37 : 0.33, 0.35],
     [-0.16, didi ? 0.37 : choco ? 0.355 : 0.31, 0.32], [0.17, didi ? 0.34 : 0.30, 0.30], [0.41, 0.29, 0.35], [0.64, 0.13, 0.24], [0.69, 0.005, 0.005],
   ], 'z', (x, y, z) => {
+    if (momo) return y < -0.17 || z > 0.44 ? '#e4d8c4' : cat.color;
     if (didi) return cat.color;
     if (miller) {
       if (z > 0.49 && y < 0.20) return white;
@@ -197,11 +198,21 @@ function buildCat(cat: Appearance) {
     if (!choco && Math.abs(x) > 0.22 && y > 0.04 && Math.sin(z * 24 + y * 5) > 0.89) return cat.accent;
     return cat.color;
   });
+  if (momo) torso.scale(1.25, 1.16, 1.04);
   mesh(body, torso).position.y = 0.69;
+  if (momo) {
+    // The longhair ruff changes the outline, independently of the coat grain.
+    const ruff = group(body, 'momoRuff', [0, 0.86, 0.51]);
+    mesh(ruff, loft([[-0.30, 0.005, 0.005], [-0.25, 0.22, 0.15], [-0.12, 0.38, 0.24],
+      [0.02, 0.44, 0.27], [0.17, 0.34, 0.22], [0.27, 0.16, 0.10], [0.30, 0.005, 0.005]], 'y', '#f3e7d4', 32, 28));
+    for (const side of [-1, 1]) {
+      ellipsoid(ruff, [side * 0.31, -0.10, 0.05], [0.13, 0.21, 0.16], '#f3e7d4', fur, 20);
+    }
+  }
   for (let i = 0; i < 4; i++) {
     const front = i < 2, side = i % 2 ? 1 : -1;
     const leg = group(root, `leg${i}`, [side * 0.245, 0.57, front ? 0.4 : -0.62]);
-    const coat: Paint | string = miller ? (_x, y, z) => Math.sin(y * 42 + z * 8) > 0.40 ? cat.accent : cat.color : yelo ? (front ? white : (_x, y, z) => y < -0.1 ? white : Math.sin(y * 48 + z * 7) > 0.65 ? cat.accent : cat.color) : xiaosai ? (_x, y, z) => Math.sin(y * 52 + z * 8) > 0.62 ? cat.accent : cat.color : latte && front && side > 0
+    const coat: Paint | string = momo ? cat.accent : miller ? (_x, y, z) => Math.sin(y * 42 + z * 8) > 0.40 ? cat.accent : cat.color : yelo ? (front ? white : (_x, y, z) => y < -0.1 ? white : Math.sin(y * 48 + z * 7) > 0.65 ? cat.accent : cat.color) : xiaosai ? (_x, y, z) => Math.sin(y * 52 + z * 8) > 0.62 ? cat.accent : cat.color : latte && front && side > 0
       ? (x, y, z) => x > 0.025 && y < -0.08 && y > -0.23 && z > -0.06 ? latteTan : white
       : choco && front && side > 0 ? white : cat.color;
     mesh(leg, loft([[-0.28, 0.07, 0.075], [-0.20, front ? 0.105 : 0.13, 0.11], [-0.07, front ? 0.125 : 0.17, front ? 0.13 : 0.19], [0.08, 0.05, 0.06]], 'y', coat, 18, 18));
@@ -217,7 +228,7 @@ function buildCat(cat: Appearance) {
     } : choco && side > 0 ? white : coat;
     mesh(lower, loft([[-0.27, 0.06, 0.06], [-0.20, 0.075, 0.08], [-0.04, 0.092, 0.09], [0.035, 0.065, 0.065]], 'y', lowerCoat, 16, 14));
     const paw = group(lower, `paw${i}`, [0, -0.25, 0.085]);
-    ellipsoid(paw, [0, 0, 0], [0.115, 0.07, 0.15], didi ? cat.color : xiaosai ? '#e9c58e' : white, fur, 24);
+    ellipsoid(paw, [0, 0, 0], [0.115, 0.07, 0.15], momo ? (_x, _y, z) => z > 0.085 ? '#faf6ef' : cat.accent : didi ? cat.color : xiaosai ? '#e9c58e' : white, fur, 24);
     for (const x of [-0.038, 0.038]) curve(paw, [[x, 0.035, 0.139], [x, 0.055, 0.11], [x, 0.062, 0.075]], 0.002, didi ? '#505660' : '#c9bcb0', fur);
     ellipsoid(paw, [0, -0.064, -0.015], [0.047, 0.006, 0.052], miller ? '#3c3033' : pink, fur, 14);
     for (const x of [-0.060, 0, 0.060]) ellipsoid(paw, [x, -0.052, 0.075], [0.024, 0.009, 0.030], miller ? '#3c3033' : pink, fur, 12);
@@ -226,9 +237,9 @@ function buildCat(cat: Appearance) {
   const head = group(root, 'head', [0, 0.99, 0.57]);
   const headGeometry = new THREE.SphereGeometry(1, 64, 42), positions = headGeometry.getAttribute('position');
   function headPoint(x: number, y: number, z: number) {
-    const cheeks = 1 + (didi ? 0.12 : xiaosai ? 0.035 : 0.08) * Math.exp(-(((y + 0.35) / 0.4) ** 2));
+    const cheeks = 1 + (momo ? 0.16 : didi ? 0.12 : xiaosai ? 0.035 : 0.08) * Math.exp(-(((y + 0.35) / 0.4) ** 2));
     const taper = xiaosai ? 1 - 0.16 * Math.max(0, -y) : 1;
-    return [x * (didi ? 0.405 : choco ? 0.39 : latte || xiaosai ? 0.335 : 0.355) * cheeks * taper, y * 0.325,
+    return [x * (momo ? 0.38 : didi ? 0.405 : choco ? 0.39 : latte || xiaosai ? 0.335 : 0.355) * cheeks * taper, y * 0.325,
       z * 0.30 + (z > 0 ? 0.025 * Math.exp(-(((y + 0.4) / 0.3) ** 2)) * z : 0)];
   }
   for (let i = 0; i < positions.count; i++) {
@@ -237,6 +248,7 @@ function buildCat(cat: Appearance) {
   }
   headGeometry.computeVertexNormals();
   coatGeometry(headGeometry, (x, y, z) => {
+    if (momo) return z > 0.03 && ((x / 0.30) ** 2 + ((y + 0.035) / 0.29) ** 2 < 1 || Math.abs(x) < 0.085 && y > 0.06) ? cat.accent : cat.color;
     if (didi) return cat.color;
     if (miller && z > 0.035) {
       const ax = Math.abs(x);
@@ -298,7 +310,7 @@ function buildCat(cat: Appearance) {
     const ear = group(head, `ear${side < 0 ? 0 : 1}`, [side * 0.25, 0.19, -0.025]);
     const height = yelo ? (side < 0 ? 0.29 : 0.32) : choco && side < 0 ? 0.28 : latte ? 0.39 : xiaosai ? 0.38 : didi ? 0.30 : 0.34;
     const earGeometry = loft([[0, 0.11, 0.035], [height * 0.2, 0.145, 0.047], [height * 0.6, 0.085, 0.032], [height * 0.94, 0.023, 0.012], [height, 0.002, 0.002]], 'y',
-      (x, y, z) => z > 0.020 && y > 0.045 && y < height * 0.86 && Math.abs(x) < (1 - y / height) * 0.13 ? (didi ? '#8d7b81' : miller ? '#c69895' : '#ac7e7d') : cat.color, 26, 24, `${cat.color}:ear:${height}`);
+      (x, y, z) => z > 0.020 && y > 0.045 && y < height * 0.86 && Math.abs(x) < (1 - y / height) * 0.13 ? (momo ? '#65534e' : didi ? '#8d7b81' : miller ? '#c69895' : '#ac7e7d') : momo ? cat.accent : cat.color, 26, 24, `${cat.color}:ear:${height}`);
     // Choco's left ear (viewer-right from the front) has a small clipped tip.
     // Flatten the existing surface so the clip stays part of the animated ear.
     if (choco && side > 0 || yelo) {
@@ -316,6 +328,7 @@ function buildCat(cat: Appearance) {
       if (xiaosai) return Math.sin(angle * 32) > 0.35 ? '#b7a16b' : '#9e895a';
       if (didi) return Math.sin(angle * 34) > 0.35 ? '#d2a04c' : '#bc8135';
       if (yelo) return Math.sin(angle * 32) > 0.35 ? '#bda05a' : '#a78a43';
+      if (momo) return Math.sin(angle * 32) > 0.35 ? '#92b7e0' : '#668dc5';
       if (miller) return Math.sin(angle * 32) > 0.35 ? '#bac58b' : '#a7b375';
       return choco ? (Math.sin(angle * 34) > 0.35 ? '#cbb45e' : '#bda155') : latte ? (Math.sin(angle * 30) > 0.3 ? '#b8c582' : '#9eae6d') : '#a8b77b';
     }, eyeMaterial, 32);
@@ -341,7 +354,7 @@ function buildCat(cat: Appearance) {
     }
     for (const [x, y] of [[0.08, -0.11], [0.12, -0.13], [0.07, -0.15]]) ellipsoid(head, [side * x, y, 0.352], [0.0035, 0.0035, 0.002], '#bba89c', detail, 8);
   }
-  ellipsoid(head, [0, -0.234, 0.192], [0.16, 0.055, 0.07], didi ? cat.color : white, fur, 28);
+  ellipsoid(head, [0, -0.234, 0.192], [0.16, 0.055, 0.07], momo ? muzzleCoat : didi ? cat.color : white, fur, 28);
   if (choco) ellipsoid(head, [0.01, -0.217, 0.262], [0.086, 0.040, 0.016], cat.color, fur, 24);
   const noseShape = new THREE.Shape();
   noseShape.moveTo(-0.041, 0.012); noseShape.quadraticCurveTo(0, 0.025, 0.041, 0.012);
@@ -352,7 +365,7 @@ function buildCat(cat: Appearance) {
     const rim = mesh(head, paintGeometry(noseGeometry.clone(), '#43352f'), detail);
     rim.position.set(0, -0.087, 0.351); rim.scale.set(1.14, 1.14, 1);
   }
-  paintGeometry(noseGeometry, didi ? '#303844' : latte ? '#916b63' : miller ? '#bd817c' : pink); mesh(head, noseGeometry, noseMaterial).position.set(0, -0.087, 0.354);
+  paintGeometry(noseGeometry, momo ? '#252322' : didi ? '#303844' : latte ? '#916b63' : miller ? '#bd817c' : pink); mesh(head, noseGeometry, noseMaterial).position.set(0, -0.087, 0.354);
   curve(head, [[0, -0.113, 0.355], [0, -0.138, 0.352], [0, -0.148, 0.350]], 0.003, didi ? cat.accent : '#986963');
   for (const side of [-1, 1]) curve(head, [[0, -0.148, 0.350], [side * 0.025, -0.16, 0.348], [side * 0.056, -0.148, 0.342]], 0.003, cat.accent);
   if (didi) {
@@ -381,8 +394,8 @@ function buildCat(cat: Appearance) {
     const joint = new THREE.Bone(); joint.name = `tailJoint${i}`; joint.position.y = i === 0 ? 0 : 0.18;
     parent.add(joint); bones.push(joint); parent = joint;
   }
-  const r = choco || didi ? 0.074 : 0.060;
-  const tailGeometry = loft([[-0.02, r * 0.8, r * 0.8], [0.04, r, r], [0.30, r * 0.85, r * 0.85], [0.60, r * 0.6, r * 0.6], [0.84, r * 0.35, r * 0.35], [0.90, 0.002, 0.002]], 'y', cat.color, 16, 48);
+  const r = momo ? 0.17 : choco || didi ? 0.074 : 0.060;
+  const tailGeometry = loft([[-0.02, r * 0.8, r * 0.8], [0.04, r, r], [0.30, r * (momo ? 1.12 : 0.85), r * (momo ? 1.12 : 0.85)], [0.60, r * (momo ? 0.95 : 0.6), r * (momo ? 0.95 : 0.6)], [0.84, r * 0.35, r * 0.35], [0.90, 0.002, 0.002]], 'y', momo ? cat.accent : cat.color, 16, 48);
   if (latte) paintGeometry(tailGeometry, (_x, y) => y > 0.76 || Math.sin(y * 39) > 0.55 ? latteDark : '#675b52');
   if (xiaosai || yelo || miller) paintGeometry(tailGeometry, (_x, y) => y > 0.83 || Math.sin(y * 37) > 0.25 ? cat.accent : cat.color);
   const tailPoints = tailGeometry.getAttribute('position'), skinIndices: number[] = [], skinWeights: number[] = [];

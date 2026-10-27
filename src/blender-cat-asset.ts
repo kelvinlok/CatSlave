@@ -4,11 +4,11 @@ import { attachNativeBlenderRig, hasNativeBlenderRig, validateNativeBlenderRig }
 const slots = ['body', 'head', ...Array.from({ length: 4 }, (_, i) => [`leg${i}`, `lowerLeg${i}`, `paw${i}`]).flat(),
   'ear0', 'ear1', 'eye0', 'eye1', 'closedEye0', 'closedEye1'];
 const slotNames = new Set(slots);
-export const blenderCats = ['choco', 'latte', 'didi', 'xiaosai', 'yelo', 'miller'] as const;
+export const blenderCats = ['choco', 'latte', 'didi', 'xiaosai', 'yelo', 'miller', 'momo'] as const;
 export type BlenderCat = typeof blenderCats[number];
 const sources = new Map<BlenderCat, THREE.Group>();
 const loads = new Map<BlenderCat, Promise<boolean>>();
-const labels: Record<BlenderCat, string> = { choco: 'Choco', latte: 'Latte', didi: '的的', xiaosai: '小塞', yelo: 'Yelo', miller: 'Miller' };
+const labels: Record<BlenderCat, string> = { choco: 'Choco', latte: 'Latte', didi: '的的', xiaosai: '小塞', yelo: 'Yelo', miller: 'Miller', momo: 'Momo' };
 const label = (kind: BlenderCat) => labels[kind];
 
 /** Each authored cat has its own shared source, just like the procedural templates. */
@@ -18,6 +18,17 @@ export function registerBlenderCatAsset(kind: BlenderCat, scene: THREE.Group) {
     if (!scene.getObjectByName(name)) throw new Error(`${label(kind)} asset is missing animation part ${name}`);
   }
   scene.updateMatrixWorld(true);
+  if (kind === 'momo') scene.traverse(object => {
+    if (!(object instanceof THREE.Mesh)) return;
+    const materials = Array.isArray(object.material) ? object.material : [object.material];
+    for (const material of materials) {
+      if (!material.name.includes('tapered guard hairs')) continue;
+      // Fine blended tips sit over an opaque skinned coat. One two-sided pass
+      // avoids doubling fur draw calls; depth testing still hides rear fibres.
+      material.depthWrite = false;
+      material.forceSinglePass = true;
+    }
+  });
   sources.set(kind, scene);
 }
 
@@ -34,7 +45,12 @@ export function preloadBlenderCatAsset(kind: BlenderCat): Promise<boolean> {
       const response = await fetch(url, { signal: controller.signal });
       if (!response.ok) throw new Error(`${label(kind)} asset HTTP ${response.status}`);
       const { GLTFLoader } = await import('three/addons/loaders/GLTFLoader.js');
-      const asset = await new GLTFLoader().parseAsync(await response.arrayBuffer(), '');
+      const loader = new GLTFLoader();
+      if (kind === 'momo') {
+        const { MeshoptDecoder } = await import('three/addons/libs/meshopt_decoder.module.js');
+        loader.setMeshoptDecoder(MeshoptDecoder);
+      }
+      const asset = await loader.parseAsync(await response.arrayBuffer(), '');
       registerBlenderCatAsset(kind, asset.scene);
       return true;
     } catch (error) {

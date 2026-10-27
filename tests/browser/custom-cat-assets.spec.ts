@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test';
 
-const customAssets = ['choco', 'latte', 'didi', 'xiaosai', 'yelo', 'miller'];
+const customAssets = ['choco', 'latte', 'didi', 'xiaosai', 'yelo', 'miller', 'momo'];
 
 test('the generic palette cat stays procedural after all custom assets load', async ({ page }) => {
   const errors: string[] = [];
