@@ -15,6 +15,12 @@ export class Random {
 export class Game {
   phase: Phase = 'title';
   resumePhase: 'playing' | 'tutorial' | 'bonus' | 'free-play' = 'playing';
+  adoptedCats: string[] = [PALETTE[0].name];
+  restoreAdoptedCats(names: unknown) {
+    if (!Array.isArray(names)) return;
+    this.adoptedCats = PALETTE.filter(cat => this.adoptedCats.includes(cat.name) || names.includes(cat.name)).map(cat => cat.name);
+    this.revision++;
+  }
   freePlayUnlocked = false;
   freePlayRoster: string[] = [];
   selectedFreeCatId?: number;
@@ -39,6 +45,7 @@ export class Game {
   cats: CatState[] = [];
   events: CareEvent[] = [];
   candidates: CatDefinition[] = [];
+  upcomingAdoption: readonly (typeof PALETTE[number])[] = [];
   tutorialStep = 0;
   tutorialDone = false;
   revision = 0;
@@ -68,9 +75,14 @@ export class Game {
   }
 
   restoreFreePlay(names: unknown) {
+    const retired = ['Miso', 'Peaches', 'Tofu', 'Olive', 'Plum', 'Bean', 'Biscuit'];
     if (!Array.isArray(names) || names.length !== STAGES.length || new Set(names).size !== names.length
-      || !names.every(name => PALETTE.some(p => p.name === name))) return;
-    this.freePlayRoster = [...names]; this.freePlayUnlocked = true;
+      || !names.every(name => PALETTE.some(p => p.name === name) || retired.includes(name))) return;
+    // Preserve old free-play unlocks, replacing retired variants with distinct custom cats.
+    const replacements = PALETTE.filter(cat => !names.includes(cat.name));
+    this.freePlayRoster = names.map(name => retired.includes(name) ? replacements.shift()!.name : name);
+    this.freePlayUnlocked = true;
+    this.restoreAdoptedCats(this.freePlayRoster);
   }
 
   startFreePlay() {
@@ -107,6 +119,7 @@ export class Game {
   reset(tutorial = false) {
     this.hp = 100; this.stage = 0; this.clock = 0; this.stageElapsed = 0;
     this.completed = 0; this.stagesSurvived = 0; this.events = []; this.candidates = [];
+    this.upcomingAdoption = [];
     this.lastStagePerfect = false; this.upgradesRemaining = 0; this.stageDamageStart = 0;
     this.bonus = undefined;
     this.practiceBonus = false;
@@ -121,6 +134,8 @@ export class Game {
 
   startStage() {
     this.phase = 'playing'; this.stageElapsed = 0; this.events = []; this.feedback = '';
+    this.upcomingAdoption = this.stage < STAGES.length - 1 && this.cats.length < STAGES.length
+      ? this.chooseAdoption() : [];
     this.bonus = undefined;
     this.practiceBonus = false;
     this.stageDamageStart = this.damageSerial;
@@ -364,8 +379,7 @@ export class Game {
     this.openAdoption();
   }
 
-  private openAdoption() {
-    this.hp = Math.min(100, this.hp + 20);
+  private chooseAdoption() {
     const available = PALETTE.filter(p => !this.cats.some(c => c.color === p.color));
     const featured = ['latte', 'didi', 'xiaosai', 'yelo'][this.stage];
     const first = available.find(p => featured !== undefined && p.appearance === featured) ?? this.random.choose(available);
@@ -373,7 +387,12 @@ export class Game {
     const alternative = this.stage === 2 ? 'momo' : this.stage === 3 ? 'miller' : undefined;
     const second = alternatives.find(p => alternative !== undefined && p.appearance === alternative)
       ?? this.random.choose(alternatives);
-    this.candidates = [first, second].map(p => this.makeCat(p, this.cats.length));
+    return [first, second];
+  }
+
+  private openAdoption() {
+    this.hp = Math.min(100, this.hp + 20);
+    this.candidates = this.upcomingAdoption.map(p => this.makeCat(p, this.cats.length));
     this.phase = 'adoption'; this.revision++;
   }
 
@@ -381,9 +400,10 @@ export class Game {
     if (this.phase !== 'adoption') return;
     const candidate = this.candidates.find(c => c.id === id);
     if (!candidate) return;
+    this.restoreAdoptedCats([candidate.name]);
     this.cats.push({ ...candidate, nextNeedAt: 0, happyUntil: 0, attackUntil: 0,
       position: { x: 0, z: -1.2 }, destination: { x: 0, z: -1.2 }, yaw: 0.65, stride: 0, activity: 'idle', decisionAt: this.clock + 1, elevation: 0, pose: 0 });
-    this.candidates = []; this.phase = 'upgrade'; this.revision++;
+    this.candidates = []; this.upcomingAdoption = []; this.phase = 'upgrade'; this.revision++;
   }
   upgrade(tool: ToolId) {
     if (this.phase !== 'upgrade' || this.upgradesRemaining <= 0 || !TOOL_BY_ID[tool] || tool === 'vacuum' || this.levels[tool] >= 3) return;

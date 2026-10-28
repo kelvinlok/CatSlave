@@ -1,10 +1,10 @@
 export type ToolId = 'sweeper' | 'mop' | 'brush' | 'food' | 'toy' | 'vacuum';
 export type EventKind = 'poop' | 'vomit' | 'fur' | 'hunger' | 'boredom';
-export type Phase = 'title' | 'tutorial' | 'playing' | 'bonus' | 'paused' | 'adoption' | 'upgrade' | 'game-over' | 'victory' | 'free-play';
+export type Phase = 'title' | 'cat-dex' | 'tutorial' | 'playing' | 'bonus' | 'paused' | 'adoption' | 'upgrade' | 'game-over' | 'victory' | 'free-play';
 export interface BehaviorProfile { needRate: number; patience: number; }
 export interface CatDefinition {
   id: number; name: string; color: string; accent: string;
-  appearance: 'primitive' | 'choco' | 'latte' | 'didi' | 'xiaosai' | 'yelo' | 'miller' | 'momo'; behavior: BehaviorProfile;
+  appearance: 'primitive' | 'choco' | 'latte' | 'didi' | 'xiaosai' | 'yelo' | 'miller' | 'momo' | 'zhenzhenzi'; behavior: BehaviorProfile;
 }
 export interface FloorPoint { x: number; z: number; }
 export type CatActivity = 'idle' | 'walking' | 'sniffing' | 'jumping' | 'crawling' | 'perching' | 'hiding' | 'watching' | 'sleeping' | 'grooming' | 'scratching' | 'eating' | 'playing' | 'stretching';

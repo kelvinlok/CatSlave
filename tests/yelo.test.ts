@@ -57,7 +57,5 @@ it('keeps Yelo recognizable in the procedural fallback without changing the gene
   model.root.updateMatrixWorld(true);
   const earHeights = model.ears.map(ear => new THREE.Box3().setFromObject(ear).getSize(new THREE.Vector3()).y);
   expect(Math.abs(earHeights[0] - earHeights[1])).toBeGreaterThan(0.025);
-  expect(PALETTE[4]).toMatchObject({ name: 'Miso' });
-  expect(PALETTE[4].appearance).toBeUndefined();
   disposeCat(model);
 });

@@ -31,7 +31,7 @@ after=sampled();bone.matrix_basis=original;bpy.context.view_layer.update()
 moved=sum((a-b).length>.002 for a,b in zip(after,before))
 assert moved>50, 'Blender armature did not deform the saved mesh'
 tail_checked=0;tail_hair_points_checked=0
-if label=='Momo':
+if label in ('Momo','Zhenzhenzi'):
     # Regression: the front of the fluffy tail used to be bound to DEF_body,
     # leaving a stationary sheet behind when the tail rotated.
     upper_tail=[v.index for v in skin.data.vertices if v.co.z>1.15 and v.co.y>.48]
@@ -46,7 +46,7 @@ if label=='Momo':
         evaluated.to_mesh_clear();return points
     before_tail=tail_points();tail_bone=arm.pose.bones['DEF_tail']
     import numpy as np
-    hairs=[o for o in bpy.context.scene.objects if o.type=='CURVES' and o.name.startswith('Momo_SoftHair')]
+    hairs=[o for o in bpy.context.scene.objects if o.type=='CURVES' and o.name.startswith(label+'_SoftHair')]
     def groom_points(ob):
         data=ob.evaluated_get(depsgraph).data.attributes['position'].data
         values=np.empty(len(data)*3,dtype=np.float32);data.foreach_get('vector',values)

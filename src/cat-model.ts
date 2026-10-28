@@ -3,6 +3,7 @@ import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { clone as cloneRig } from 'three/addons/utils/SkeletonUtils.js';
 import type { CatDefinition } from './types';
 import { applyBlenderCatAsset, hasBlenderCatAsset } from './blender-cat-asset';
+import { blenderRigControls, updateBlenderCatRig } from './blender-cat-rig';
 
 export interface CatModel {
   root: THREE.Group; body: THREE.Group; head: THREE.Group; tail: THREE.Group; anger: THREE.Group;
@@ -149,7 +150,8 @@ function buildCat(cat: Appearance) {
   const choco = cat.appearance === 'choco', latte = cat.appearance === 'latte', didi = cat.appearance === 'didi';
   const xiaosai = cat.appearance === 'xiaosai', yelo = cat.appearance === 'yelo';
   const miller = cat.appearance === 'miller', momo = cat.appearance === 'momo';
-  const white = choco || yelo || miller ? '#faf6ef' : latte ? cat.color : xiaosai ? '#f5e6cd' : '#f3e7d4';
+  const zhenzhenzi = cat.appearance === 'zhenzhenzi';
+  const white = choco || yelo || miller || zhenzhenzi ? '#faf6ef' : latte ? cat.color : xiaosai ? '#f5e6cd' : '#f3e7d4';
   const latteTan = '#bfa17c', latteDark = '#514944';
   const pink = choco ? '#d99b9f' : '#cf9390', ink = '#252020';
   const muzzleCoat = momo ? '#514238' : didi ? '#858b94' : white;
@@ -162,6 +164,11 @@ function buildCat(cat: Appearance) {
     [-0.87, 0.005, 0.005], [-0.75, 0.25, 0.27], [-0.52, didi ? 0.39 : choco ? 0.37 : 0.33, 0.35],
     [-0.16, didi ? 0.37 : choco ? 0.355 : 0.31, 0.32], [0.17, didi ? 0.34 : 0.30, 0.30], [0.41, 0.29, 0.35], [0.64, 0.13, 0.24], [0.69, 0.005, 0.005],
   ], 'z', (x, y, z) => {
+    if (zhenzhenzi) {
+      // Short-haired tabby saddle over a white chest, flanks and belly.
+      if (y < -0.03 || z > 0.35 + Math.abs(x) * 0.25) return white;
+      return Math.sin(z * 28 + y * 7 + Math.abs(x) * 9) > 0.55 ? cat.accent : cat.color;
+    }
     if (momo) return y < -0.17 || z > 0.44 ? '#e4d8c4' : cat.color;
     if (didi) return cat.color;
     if (miller) {
@@ -212,7 +219,7 @@ function buildCat(cat: Appearance) {
   for (let i = 0; i < 4; i++) {
     const front = i < 2, side = i % 2 ? 1 : -1;
     const leg = group(root, `leg${i}`, [side * 0.245, 0.57, front ? 0.4 : -0.62]);
-    const coat: Paint | string = momo ? cat.accent : miller ? (_x, y, z) => Math.sin(y * 42 + z * 8) > 0.40 ? cat.accent : cat.color : yelo ? (front ? white : (_x, y, z) => y < -0.1 ? white : Math.sin(y * 48 + z * 7) > 0.65 ? cat.accent : cat.color) : xiaosai ? (_x, y, z) => Math.sin(y * 52 + z * 8) > 0.62 ? cat.accent : cat.color : latte && front && side > 0
+    const coat: Paint | string = zhenzhenzi ? white : momo ? cat.accent : miller ? (_x, y, z) => Math.sin(y * 42 + z * 8) > 0.40 ? cat.accent : cat.color : yelo ? (front ? white : (_x, y, z) => y < -0.1 ? white : Math.sin(y * 48 + z * 7) > 0.65 ? cat.accent : cat.color) : xiaosai ? (_x, y, z) => Math.sin(y * 52 + z * 8) > 0.62 ? cat.accent : cat.color : latte && front && side > 0
       ? (x, y, z) => x > 0.025 && y < -0.08 && y > -0.23 && z > -0.06 ? latteTan : white
       : choco && front && side > 0 ? white : cat.color;
     mesh(leg, loft([[-0.28, 0.07, 0.075], [-0.20, front ? 0.105 : 0.13, 0.11], [-0.07, front ? 0.125 : 0.17, front ? 0.13 : 0.19], [0.08, 0.05, 0.06]], 'y', coat, 18, 18));
@@ -248,6 +255,13 @@ function buildCat(cat: Appearance) {
   }
   headGeometry.computeVertexNormals();
   coatGeometry(headGeometry, (x, y, z) => {
+    if (zhenzhenzi) {
+      const ax = Math.abs(x);
+      if (y < -0.075 || z > 0.035 && ax < Math.max(0.018, (0.18 - y) * 0.30)) return white;
+      if (z > 0.035 && (nearCoatStroke(ax, y, foreheadM, 0.014)
+        || nearCoatStroke(ax, y, cheekUpper, 0.018) || nearCoatStroke(ax, y, cheekLower, 0.016))) return cat.accent;
+      return cat.color;
+    }
     if (momo) return z > 0.03 && ((x / 0.30) ** 2 + ((y + 0.035) / 0.29) ** 2 < 1 || Math.abs(x) < 0.085 && y > 0.06) ? cat.accent : cat.color;
     if (didi) return cat.color;
     if (miller && z > 0.035) {
@@ -330,6 +344,7 @@ function buildCat(cat: Appearance) {
       if (yelo) return Math.sin(angle * 32) > 0.35 ? '#bda05a' : '#a78a43';
       if (momo) return Math.sin(angle * 32) > 0.35 ? '#92b7e0' : '#668dc5';
       if (miller) return Math.sin(angle * 32) > 0.35 ? '#bac58b' : '#a7b375';
+      if (zhenzhenzi) return Math.sin(angle * 32) > 0.35 ? '#d2b55d' : '#b89745';
       return choco ? (Math.sin(angle * 34) > 0.35 ? '#cbb45e' : '#bda155') : latte ? (Math.sin(angle * 30) > 0.3 ? '#b8c582' : '#9eae6d') : '#a8b77b';
     }, eyeMaterial, 32);
     eye.name = `eye${side < 0 ? 0 : 1}`; eye.scale.set(0.082, eyeHeight, 0.016);
@@ -397,7 +412,7 @@ function buildCat(cat: Appearance) {
   const r = momo ? 0.17 : choco || didi ? 0.074 : 0.060;
   const tailGeometry = loft([[-0.02, r * 0.8, r * 0.8], [0.04, r, r], [0.30, r * (momo ? 1.12 : 0.85), r * (momo ? 1.12 : 0.85)], [0.60, r * (momo ? 0.95 : 0.6), r * (momo ? 0.95 : 0.6)], [0.84, r * 0.35, r * 0.35], [0.90, 0.002, 0.002]], 'y', momo ? cat.accent : cat.color, 16, 48);
   if (latte) paintGeometry(tailGeometry, (_x, y) => y > 0.76 || Math.sin(y * 39) > 0.55 ? latteDark : '#675b52');
-  if (xiaosai || yelo || miller) paintGeometry(tailGeometry, (_x, y) => y > 0.83 || Math.sin(y * 37) > 0.25 ? cat.accent : cat.color);
+  if (xiaosai || yelo || miller || zhenzhenzi) paintGeometry(tailGeometry, (_x, y) => y > 0.83 || Math.sin(y * 37) > 0.25 ? cat.accent : cat.color);
   const tailPoints = tailGeometry.getAttribute('position'), skinIndices: number[] = [], skinWeights: number[] = [];
   for (let i = 0; i < tailPoints.count; i++) {
     const along = THREE.MathUtils.clamp(tailPoints.getY(i) / 0.18, 0, 4), a = Math.floor(along), weight = along - a;
@@ -429,6 +444,25 @@ export function createCat(cat: Appearance): CatModel {
     legs: [0, 1, 2, 3].map(i => joint(`leg${i}`)), lowerLegs: [0, 1, 2, 3].map(i => joint(`lowerLeg${i}`)),
     paws: [0, 1, 2, 3].map(i => joint(`paw${i}`)), ears: [0, 1].map(i => joint(`ear${i}`)),
     tailJoints: [0, 1, 2, 3, 4].map(i => root.getObjectByName(`tailJoint${i}`) as THREE.Bone) };
+}
+
+/** Upgrade at a frame boundary, keeping picking identity and the animator's WeakMap state. */
+export function refreshCatModel(model: CatModel, cat: Appearance) {
+  if (model.root.userData.modelSource === 'blender' || !hasBlenderCatAsset(cat.appearance)) return;
+  // Bind the authored rig in its rest pose first; attaching to an already posed
+  // cat would bake its current movement into the native bone offsets.
+  const replacement = createCat(cat);
+  for (const name of [...blenderRigControls, 'anger']) {
+    const before = model.root.getObjectByName(name)!, after = replacement.root.getObjectByName(name)!;
+    after.position.copy(before.position); after.quaternion.copy(before.quaternion);
+    after.scale.copy(before.scale); after.visible = before.visible;
+  }
+  const root = model.root;
+  disposeCat(model);
+  root.clear(); root.add(...replacement.root.children);
+  Object.assign(root.userData, replacement.root.userData);
+  Object.assign(model, replacement, { root });
+  updateBlenderCatRig(root);
 }
 
 /** Only skeleton textures belong to an instance; cached meshes and coat maps are shared. */

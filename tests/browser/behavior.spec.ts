@@ -1,6 +1,8 @@
 import { expect, test } from '@playwright/test';
 
 test('wordless needs stay readable while cats roam and leave messes behind', async ({ page }, info) => {
+  // This test asserts English copy; the game's default language is Cantonese.
+  await page.addInitScript(() => localStorage.setItem('catslave-language', 'en'));
   await page.goto('/'); await page.waitForFunction(() => !!window.__CATSLAVE_TEST__);
   await page.evaluate(() => window.__CATSLAVE_TEST__.setManualClock(true));
   for (const kind of ['vomit', 'fur', 'hunger', 'boredom'] as const) {
@@ -36,6 +38,10 @@ test('an attack fills the screen without moving the fixed camera, and clears aft
   expect(await page.evaluate(() => window.__CATSLAVE_TEST__.world.attackAge)).toBeCloseTo(0.4);
   const restart = await page.evaluate(() => window.__CATSLAVE_TEST__.hud.hits.find(h => h.id === 'restart')!);
   await page.touchscreen.tap(restart.x + restart.w / 2, restart.y + restart.h / 2);
+  await expect.poll(() => page.evaluate(() => window.__CATSLAVE_TEST__.hud.modal)).toBe('restart');
+  const confirm = await page.evaluate(() => window.__CATSLAVE_TEST__.hud.controls.find(h => h.id === 'confirm-restart')!);
+  await page.touchscreen.tap(confirm.x + confirm.w / 2, confirm.y + confirm.h / 2);
+  await expect.poll(() => page.evaluate(() => window.__CATSLAVE_TEST__.game.phase)).toBe('playing');
   await expect.poll(() => page.evaluate(() => window.__CATSLAVE_TEST__.hud.damageFlash)).toBe(0);
   expect(await page.evaluate(() => window.__CATSLAVE_TEST__.game.hp)).toBe(100);
 });

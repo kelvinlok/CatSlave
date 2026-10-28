@@ -82,6 +82,5 @@ it('retains the tabby fallback, toe socks and pointed ears without a white foreh
   const { data, width, height } = map.image;
   const pixel = (Math.min(height - 1, Math.floor(hit.uv!.y * height)) * width + Math.min(width - 1, Math.floor(hit.uv!.x * width))) * 4;
   expect([data![pixel], data![pixel + 1], data![pixel + 2]]).not.toEqual([250, 246, 239]);
-  expect(PALETTE[4].name).toBe('Miso'); expect(PALETTE[4].appearance).toBeUndefined();
   disposeCat(model);
 });

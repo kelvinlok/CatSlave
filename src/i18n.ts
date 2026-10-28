@@ -58,6 +58,17 @@ const cantonese: Record<string, string> = {
   'Tap the paw or press Space when the dot is green.': '圓點變綠色，就撳貓掌或空白鍵。',
   'Each claw has its own green arc.': '每隻指甲都有自己嘅綠色範圍。',
   'Trim all four paws before time runs out.': '時間到之前，剪好四隻貓掌嘅指甲。',
+  'Coming soon': '即將加入',
+  'Reset rotation': '重設角度', 'Drag to rotate · edges to roll': '拖曳旋轉 · 沿邊緣拖曳翻轉',
+  'Cat dex': '貓貓圖鑑', 'Adopt cats to reveal their profiles.': '領養貓貓，解鎖佢哋嘅檔案。',
+  'View profile': '查看檔案', 'Not adopted': '未領養', 'Adopted · Profile unlocked': '已領養 · 檔案已解鎖',
+  'Coat': '毛色', 'Care': '照顧', 'Keep fed, brushed and entertained.': '記得餵食、梳毛，同佢玩。',
+  'Enjoys butt pats and chasing the wand.': '鍾意拍屁屁同追逗貓棒。',
+  'Chocolate brown': '朱古力啡', 'Cream with dark accents': '奶油色配深色花紋', 'Slate grey': '石板灰',
+  'Golden ginger': '金橙色', 'Blue grey': '藍灰色', 'Peach pink': '蜜桃粉紅', 'Warm ivory': '暖象牙白',
+  'Sage green': '鼠尾草綠', 'Soft lilac': '淡紫色', 'Smoky grey': '煙灰色', 'Golden cream': '金奶油色',
+  'Amber ginger': '琥珀橙', 'Brown with dark accents': '啡色配深色花紋', 'Taupe with dark accents': '灰褐色配深色花紋',
+  'White with grey-brown tabby patches': '白色配灰褐虎斑',
   'Back': '返回', 'Main menu?': '返主選單？', 'Restart?': '重新開始？',
   'Your free play unlock and cats are saved.': '自由玩模式同貓貓都已儲存。', 'Progress will be reset.': '進度會重新計過。',
   'Cancel': '取消', 'Restart': '重新開始', 'Paused': '暫停咗', 'Resume  →': '繼續玩  →',
@@ -72,6 +83,7 @@ const cantonese: Record<string, string> = {
 };
 
 const templates: [RegExp, (...parts: string[]) => string][] = [
+  [/^(\d+) \/ (\d+) adopted$/, (n, total) => `已領養 ${n} / ${total}`],
   [/^Get each to level 3 · (\d+)\/3 ready$/, n => `全部升到第 3 級 · 已完成 ${n}/3`],
   [/^Stage (\d+)\/5$/, n => `第 ${n}/5 關`], [/^Lesson (\d+)\/5$/, n => `練習 ${n}/5`],
   [/^(\d+) HP$/, n => `${n} 生命`], [/^(\d+) pats?$/, n => `拍咗 ${n} 次`],

@@ -4,11 +4,12 @@ import { attachNativeBlenderRig, hasNativeBlenderRig, validateNativeBlenderRig }
 const slots = ['body', 'head', ...Array.from({ length: 4 }, (_, i) => [`leg${i}`, `lowerLeg${i}`, `paw${i}`]).flat(),
   'ear0', 'ear1', 'eye0', 'eye1', 'closedEye0', 'closedEye1'];
 const slotNames = new Set(slots);
-export const blenderCats = ['choco', 'latte', 'didi', 'xiaosai', 'yelo', 'miller', 'momo'] as const;
+export const blenderCats = ['choco', 'latte', 'didi', 'xiaosai', 'yelo', 'miller', 'momo', 'zhenzhenzi'] as const;
 export type BlenderCat = typeof blenderCats[number];
 const sources = new Map<BlenderCat, THREE.Group>();
 const loads = new Map<BlenderCat, Promise<boolean>>();
-const labels: Record<BlenderCat, string> = { choco: 'Choco', latte: 'Latte', didi: '的的', xiaosai: '小塞', yelo: 'Yelo', miller: 'Miller', momo: 'Momo' };
+let loadQueue = Promise.resolve(false);
+const labels: Record<BlenderCat, string> = { choco: 'Choco', latte: 'Latte', didi: '的的', xiaosai: '小塞', yelo: 'Yelo', miller: 'Miller', momo: 'Momo', zhenzhenzi: '震震子' };
 const label = (kind: BlenderCat) => labels[kind];
 
 /** Each authored cat has its own shared source, just like the procedural templates. */
@@ -32,25 +33,36 @@ export function registerBlenderCatAsset(kind: BlenderCat, scene: THREE.Group) {
   sources.set(kind, scene);
 }
 
-/** Load before creating the room, including deployments below a repository base path. */
+/** Load on demand without blocking play. Share successes/failures for this session. */
 export function preloadBlenderCatAsset(kind: BlenderCat): Promise<boolean> {
-  if (sources.has(kind)) return Promise.resolve(true);
   const pending = loads.get(kind);
   if (pending) return pending;
-  const loading = (async () => {
+  if (sources.has(kind)) return Promise.resolve(true);
+  // One download/decode at a time avoids competing with the starting cat on
+  // mobile and limits memory spikes when a saved free-play roster is restored.
+  const loading = loadQueue.then(async () => {
+    if (sources.has(kind)) return true;
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 15000);
     try {
       const url = `${import.meta.env.BASE_URL}models/${kind}.glb`;
       const response = await fetch(url, { signal: controller.signal });
       if (!response.ok) throw new Error(`${label(kind)} asset HTTP ${response.status}`);
+      const buffer = await response.arrayBuffer();
       const { GLTFLoader } = await import('three/addons/loaders/GLTFLoader.js');
       const loader = new GLTFLoader();
+      // Keep DOM-backed images for re-upload after mobile GPU suspension.
+      // GLTFLoader otherwise prefers ImageBitmap on modern Safari.
+      loader.register(parser => {
+        parser.textureLoader = new THREE.TextureLoader(parser.options.manager)
+          .setCrossOrigin(parser.options.crossOrigin).setRequestHeader(parser.options.requestHeader);
+        return { name: 'CATSLAVE_RESTORABLE_TEXTURES' };
+      });
       if (kind === 'momo') {
         const { MeshoptDecoder } = await import('three/addons/libs/meshopt_decoder.module.js');
         loader.setMeshoptDecoder(MeshoptDecoder);
       }
-      const asset = await loader.parseAsync(await response.arrayBuffer(), '');
+      const asset = await loader.parseAsync(buffer, '');
       registerBlenderCatAsset(kind, asset.scene);
       return true;
     } catch (error) {
@@ -58,15 +70,33 @@ export function preloadBlenderCatAsset(kind: BlenderCat): Promise<boolean> {
       console.warn(`${label(kind)} model could not load; using the built-in model.`, error);
       return false;
     } finally { clearTimeout(timeout); }
-  })();
+  });
   loads.set(kind, loading);
+  loadQueue = loading;
   return loading;
 }
 
-export function hasBlenderCatAsset(kind: string | undefined): kind is BlenderCat {
-  return blenderCats.some(cat => cat === kind) && sources.has(kind as BlenderCat);
+export function isBlenderCat(kind: string | undefined): kind is BlenderCat {
+  return blenderCats.some(cat => cat === kind);
 }
 
+/** Shared cached materials also serve residents, previews, attacks and the cat dex. */
+export function restoreBlenderCatTextures() {
+  const textures = new Set<THREE.Texture>();
+  for (const source of sources.values()) source.traverse(object => {
+    if (!(object instanceof THREE.Mesh)) return;
+    for (const material of Array.isArray(object.material) ? object.material : [object.material]) {
+      for (const value of Object.values(material)) if (value instanceof THREE.Texture) textures.add(value);
+    }
+  });
+  for (const texture of textures) texture.needsUpdate = true;
+}
+
+export function hasBlenderCatAsset(kind: string | undefined): kind is BlenderCat {
+  return isBlenderCat(kind) && sources.has(kind);
+}
+
+/** Explicit all-cat loading for the test-only model studio, never game startup. */
 export async function preloadBlenderCatAssets() {
   return Promise.all(blenderCats.map(preloadBlenderCatAsset));
 }

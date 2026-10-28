@@ -46,7 +46,7 @@ it('allows early random Momo adoption without offering a duplicate later', () =>
 
 it('gives fallback Momo a wider ruff and plume silhouette with dark feet and only white toe tips', () => {
   const definition = PALETTE.find(cat => cat.appearance === 'momo')!;
-  const model = createCat(definition), generic = createCat(PALETTE[4]);
+  const model = createCat(definition), generic = createCat({ ...definition, appearance: 'primitive' });
   model.root.updateMatrixWorld(true); generic.root.updateMatrixWorld(true);
   expect(model.root.userData.modelSource).toBeUndefined();
   const size = (object: THREE.Object3D) => new THREE.Box3().setFromObject(object).getSize(new THREE.Vector3());
@@ -65,6 +65,5 @@ it('gives fallback Momo a wider ruff and plume silhouette with dark feet and onl
     });
     expect(coat).toContain('faf6ef'); expect(coat).toContain(definition.accent.slice(1));
   }
-  expect(PALETTE[4].name).toBe('Miso'); expect(PALETTE[4].appearance).toBeUndefined();
   disposeCat(model); disposeCat(generic);
 });

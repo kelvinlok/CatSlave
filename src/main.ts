@@ -5,12 +5,12 @@ import { Game } from './simulation';
 import { World } from './world';
 import { Hud } from './hud';
 import { Gesture, type GestureResult } from './gestures';
-import { TOOLS, TOOL_BY_ID, toolMatches } from './config';
+import { PALETTE, TOOLS, TOOL_BY_ID, toolMatches } from './config';
 import type { Point, ToolId } from './types';
 import { portraitViewport } from './layout';
 import { GyroLook } from './gyro';
 import { GameAudio, RoomSounds } from './sound';
-import { preloadBlenderCatAssets } from './blender-cat-asset';
+import { isBlenderCat, preloadBlenderCatAsset, restoreBlenderCatTextures } from './blender-cat-asset';
 
 syncDocumentLanguage();
 const canvas = document.querySelector<HTMLCanvasElement>('#game')!;
@@ -36,15 +36,10 @@ renderer.autoClear = false;
 renderer.info.autoReset = false;
 renderer.setClearColor('#f8f0df');
 renderer.clear();
-const loadingStatus = document.createElement('div');
-loadingStatus.id = 'model-loading'; loadingStatus.setAttribute('role', 'status');
-loadingStatus.textContent = translate('Getting the cats ready…');
-loadingStatus.style.cssText = 'position:absolute;inset:0;display:grid;place-items:center;background:#f8f0df;color:#493e38;font:500 22px Georgia,serif;pointer-events:none';
-document.body.append(loadingStatus);
-try { await preloadBlenderCatAssets(); } finally { loadingStatus.remove(); }
-
 const game = new Game(import.meta.env.MODE === 'test' ? 42 : undefined);
 try { game.restoreFreePlay(JSON.parse(localStorage.getItem('catslave-free-play') ?? 'null')); } catch { /* Storage may be unavailable. */ }
+try { game.restoreAdoptedCats(JSON.parse(localStorage.getItem('catslave-cat-dex') ?? 'null')); } catch { /* Keep session progress when storage is unavailable. */ }
+let savedAdoptedCats = '';
 let savedFreeRoster = JSON.stringify(game.freePlayRoster);
 // Standalone entry is a test fixture; players encounter Pawdicure in bonus rounds.
 if (import.meta.env.MODE === 'test' && new URLSearchParams(location.search).get('minigame') === 'pawdicure') game.startPawdicurePractice();
@@ -66,8 +61,24 @@ let fpsFrames = 0, fpsTime = 0, fps = 60;
 let manualClock = false;
 
 let freeDrag: { point: Point; pan: boolean; mode: 'camera' | 'pet' | 'wand' } | undefined;
+let dexDrag: Point | undefined;
 const movementKeys = new Set<string>();
+function updateWorld(dt: number, time: number, effectsDt = dt) {
+  const profile = game.phase === 'cat-dex' && hud.dexCat !== undefined ? PALETTE[hud.dexCat] : undefined;
+  if (profile && game.adoptedCats.includes(profile.name) && isBlenderCat(profile.appearance)) {
+    void preloadBlenderCatAsset(profile.appearance);
+  }
+  // Residents go first; prefetch the exact next adoption pair during their stage.
+  // Title screens and saved free-play rosters do not trigger speculative loads.
+  const cats = game.phase === 'adoption' ? [...game.cats, ...game.candidates] : game.cats;
+  for (const cat of cats) if (isBlenderCat(cat.appearance)) void preloadBlenderCatAsset(cat.appearance);
+  if (game.phase === 'playing') {
+    for (const cat of game.upcomingAdoption) if (isBlenderCat(cat.appearance)) void preloadBlenderCatAsset(cat.appearance);
+  }
+  world.update(game, dt, time, effectsDt);
+}
 function cancelGesture() {
+  dexDrag = undefined;
   freeDrag = undefined; world.setFreePointer(undefined); movementKeys.clear();
   gesture.cancel(); hud.pointer = undefined; hud.pointerTool = undefined;
   hud.pressedId = undefined;
@@ -101,10 +112,11 @@ function resize() {
   renderer.setPixelRatio(Math.min(devicePixelRatio || 1, 1.5)); renderer.setSize(width, height, false);
   const safe = safeInsets(); hud.resize(width, height, safe.top, safe.bottom, safe.left, safe.right);
   world.resize(width, height, hud.worldViewport(game));
-  world.update(game, 0, performance.now() / 1000); hud.draw(game, world, 0, true);
+  updateWorld(0, performance.now() / 1000); hud.draw(game, world, 0, true);
   if (!contextLost) renderFrame();
 }
 function syncWorldViewport() {
+  world.dexCatIndex = game.phase === 'cat-dex' ? hud.dexCat : undefined;
   const next = hud.worldViewport(game), current = world.viewport;
   if (next.x !== current.x || next.y !== current.y || next.w !== current.w || next.h !== current.h) world.resize(width, height, next);
 }
@@ -113,7 +125,10 @@ function renderFrame() {
   const v = world.viewport;
   renderer.setViewport(v.x, height - v.y - v.h, v.w, v.h);
   renderer.setScissor(v.x, height - v.y - v.h, v.w, v.h); renderer.setScissorTest(true);
-  if (!hud.rotateRequired) renderer.render(world.scene, world.camera);
+  if (!hud.rotateRequired) {
+    if (game.phase === 'cat-dex' && hud.dexCat !== undefined) renderer.render(world.dexScene, world.dexCamera);
+    else renderer.render(world.scene, world.camera);
+  }
   renderer.setScissorTest(false); renderer.setViewport(0, 0, width, height);
   renderer.clearDepth(); if (!hud.rotateRequired) renderer.render(world.attackScene, world.attackCamera);
   renderer.clearDepth(); renderer.render(hud.scene, hud.camera);
@@ -145,6 +160,10 @@ function action(id: string) {
   else if (id === 'learn') { game.reset(true); }
   else if (id === 'start' || id === 'restart') { game.reset(); }
   else if (id === 'home' || id === 'confirm-home') { game.reset(); game.phase = 'title'; }
+  else if (id === 'cat-dex') { game.phase = 'cat-dex'; hud.dexCat = undefined; }
+  else if (id === 'dex-back') { if (hud.dexCat !== undefined) hud.dexCat = undefined; else game.phase = 'title'; }
+  else if (id === 'dex-reset') world.resetDexRotation();
+  else if (id.startsWith('dex-cat:')) hud.dexCat = Number(id.slice(8));
   else if (id === 'free-play') { if (game.startFreePlay()) world.resetView(); }
   else if (id === 'pawdicure-practice') { game.startPawdicurePractice(); world.resetView(); }
   else if (id.startsWith('paw-cat:')) { game.bonus?.paw?.selectCat(Number(id.slice(8))); game.revision++; }
@@ -180,7 +199,7 @@ function action(id: string) {
     const care = game.events.find(e => e.id === Number(id.slice(6)));
     if (care) { world.focusOn(world.eventPosition(care)); gyro.recenter(world.camera.quaternion); }
   }
-  syncWorldViewport(); world.update(game, 0, performance.now() / 1000, 0);
+  syncWorldViewport(); updateWorld(0, performance.now() / 1000, 0);
   if (!hadVacuum && game.vacuumUnlocked) hud.celebrateVacuumUnlock();
   audio.setBlocked(!game.running || document.hidden);
   if (id.startsWith('tool:')) audio.play('select');
@@ -219,6 +238,11 @@ function waveWand(p: Point) {
   for (const target of world.freeWandTargets(game, p)) game.interactFreeCat('wand', target.catId);
 }
 function point(event: PointerEvent): Point { const rect = canvas.getBoundingClientRect(); return { x: event.clientX - rect.left, y: event.clientY - rect.top }; }
+function inDexPreview(p: Point) {
+  const v = world.viewport;
+  return game.phase === 'cat-dex' && hud.dexCat !== undefined
+    && p.x >= v.x && p.x <= v.x + v.w && p.y >= v.y && p.y <= v.y + v.h;
+}
 canvas.addEventListener('pointerdown', event => {
   if (hud.rotateRequired || pointerId !== undefined || !event.isPrimary || (event.pointerType === 'mouse' && event.button !== 0 && !(game.phase === 'free-play' && event.button === 2)) || contextLost) return;
   event.preventDefault(); canvas.focus({ preventScroll: true });
@@ -230,6 +254,7 @@ canvas.addEventListener('pointerdown', event => {
   if (game.phase === 'bonus' && hit?.id.startsWith('pat:')) { action(hit.id); return; }
   if (game.phase === 'bonus' && hit?.id === 'paw-clip') { action(hit.id); return; }
   pointerId = event.pointerId; canvas.setPointerCapture(event.pointerId);
+  if (!hit && inDexPreview(p)) { dexDrag = p; canvas.style.cursor = 'grabbing'; return; }
   if (game.phase === 'free-play' && !hit && p.x >= world.viewport.x && p.x <= world.viewport.x + world.viewport.w && p.y >= world.viewport.y && p.y <= world.viewport.y + world.viewport.h) {
     const catId = world.freeCatHit(p);
     if (catId !== undefined && game.freeInteraction === 'pet') game.chooseFreeCat(catId);
@@ -260,10 +285,11 @@ canvas.addEventListener('pointermove', event => {
   const p = point(event), hover = hud.hit(p.x, p.y);
   if (event.pointerType === 'mouse') {
     hud.hoveredId = hover?.eventId === undefined && !hover?.disabled ? hover?.id : undefined;
-    canvas.style.cursor = hover?.disabled ? 'not-allowed' : hover ? 'pointer' : game.active ? 'grab' : 'default';
+    canvas.style.cursor = dexDrag ? 'grabbing' : hover?.disabled ? 'not-allowed' : hover ? 'pointer' : game.active || inDexPreview(p) ? 'grab' : 'default';
     hud.invalidate();
   }
   if (event.pointerId !== pointerId) return;
+  if (dexDrag) { world.rotateDex(dexDrag, p); dexDrag = p; return; }
   if (freeDrag && game.phase === 'free-play') {
     const dx = p.x - freeDrag.point.x, dy = p.y - freeDrag.point.y;
     if (freeDrag.mode === 'camera') {
@@ -284,6 +310,7 @@ canvas.addEventListener('pointermove', event => {
 });
 canvas.addEventListener('pointerup', event => {
   if (event.pointerId !== pointerId) return;
+  if (dexDrag) { cancelGesture(); canvas.style.cursor = 'grab'; return; }
   const p = point(event), route = gesture.route, hit = hud.hit(p.x, p.y);
   const inTarget = route?.kind === 'care' && careTarget(route.eventId, p);
   const result = gesture.end(p, hit?.id, inTarget);
@@ -317,6 +344,7 @@ window.addEventListener('keydown', event => {
   if (event.key === ' ' && game.phase === 'bonus' && game.bonus?.paw) { event.preventDefault(); action('paw-clip'); return; }
   if (event.key === 'Escape') {
     event.preventDefault(); cancelGesture();
+    if (game.phase === 'cat-dex') { action('dex-back'); return; }
     if (hud.modal) { hud.modal = undefined; hud.clearInteraction(); }
     else if (game.running) game.pause(); else if (game.phase === 'paused') game.resume();
   }
@@ -331,15 +359,21 @@ window.addEventListener('keydown', event => {
   }
   hud.draw(game, world, 0, true);
 });
+function restoreGraphics() {
+  restoreBlenderCatTextures(); hud.texture.needsUpdate = true;
+  lastTime = performance.now(); hud.invalidate();
+}
 document.addEventListener('visibilitychange', () => {
   if (document.hidden) { audio.setBlocked(true); cancelGesture(); game.pause('The room waited while you were away.'); }
+  else restoreGraphics();
   lastTime = performance.now(); hud.invalidate();
 });
 window.addEventListener('blur', () => { audio.setBlocked(true); cancelGesture(); game.pause('The room waited while you were away.'); hud.invalidate(); });
 canvas.addEventListener('webglcontextlost', event => {
   event.preventDefault(); contextLost = true; audio.setBlocked(true); cancelGesture(); game.pause('Graphics paused. Resume when the room returns.');
 });
-canvas.addEventListener('webglcontextrestored', () => { contextLost = false; hud.texture.needsUpdate = true; lastTime = performance.now(); resize(); });
+canvas.addEventListener('webglcontextrestored', () => { contextLost = false; restoreGraphics(); resize(); });
+window.addEventListener('pageshow', event => { if (event.persisted) restoreGraphics(); });
 let resizePending = false;
 function scheduleResize() {
   if (resizePending) return;
@@ -373,6 +407,10 @@ function frame(now: number) {
         (Number(movementKeys.has('e')) - Number(movementKeys.has('q'))) * speed,
         (Number(movementKeys.has('s')) - Number(movementKeys.has('w'))) * speed);
     }
+    const adopted = JSON.stringify(game.adoptedCats);
+    if (adopted !== savedAdoptedCats) {
+      try { localStorage.setItem('catslave-cat-dex', adopted); savedAdoptedCats = adopted; } catch { /* Keep session progress. */ }
+    }
     const roster = JSON.stringify(game.freePlayRoster);
     if (game.freePlayUnlocked && roster !== savedFreeRoster) {
       try { localStorage.setItem('catslave-free-play', roster); savedFreeRoster = roster; } catch { /* Keep the unlock for this session. */ }
@@ -389,7 +427,7 @@ function frame(now: number) {
     if (previousRevision !== game.revision) { hud.invalidate(); previousRevision = game.revision; }
     const gaze = gyro.step(world.camera.quaternion, game.active && !hud.rotateRequired && !document.hidden && pointerId === undefined);
     if (gaze && 1 - Math.abs(gaze.dot(world.camera.quaternion)) > 1e-12) { world.setViewOrientation(gaze); hud.invalidate(); }
-    syncWorldViewport(); world.update(game, dt, now / 1000, manualClock ? 0 : dt); hud.draw(game, world, dt);
+    syncWorldViewport(); updateWorld(dt, now / 1000, manualClock ? 0 : dt); hud.draw(game, world, dt);
     renderFrame();
     fpsFrames++; fpsTime += realDt;
     if (fpsTime >= 1) { fps = Math.round(fpsFrames / fpsTime); fpsTime = 0; fpsFrames = 0; }
@@ -418,7 +456,7 @@ if (import.meta.env.MODE === 'test') {
     game, world, hud, audio,
     finishBonus,
     setManualClock(value: boolean) { manualClock = value; },
-    refresh(effectsDt = 0) { syncWorldViewport(); world.update(game, 0, performance.now() / 1000, effectsDt); hud.draw(game, world, 0, true); },
+    refresh(effectsDt = 0) { syncWorldViewport(); updateWorld(0, performance.now() / 1000, effectsDt); hud.draw(game, world, 0, true); },
     stats() { return { fps, calls: renderer.info.render.calls, triangles: renderer.info.render.triangles, textures: renderer.info.memory.textures, geometries: renderer.info.memory.geometries }; },
   } });
   // State-aware visual inspection is confined to the test build, like the input fixtures.
@@ -438,7 +476,7 @@ if (import.meta.env.MODE === 'test') {
         game.spawn(cat, (['hunger', 'fur', 'poop', 'vomit', 'boredom'] as const)[i]);
       });
       world.resetView(); if (state === 'five-cats') world.zoomView(-10);
-      world.update(game, 0, 0); hud.draw(game, world, 0, true);
+      updateWorld(0, 0); hud.draw(game, world, 0, true);
       return { state };
     },
   } });

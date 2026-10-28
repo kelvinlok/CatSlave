@@ -1,0 +1,66 @@
+[
+  {
+    "kind": "choco",
+    "name": "Choco",
+    "width": 384,
+    "height": 384,
+    "bytes": 22868,
+    "modelSha256": "adfa8ae47c32dfacd2167d251684120282d6e9d5a78242bf960cb8be83596139"
+  },
+  {
+    "kind": "latte",
+    "name": "Latte",
+    "width": 384,
+    "height": 384,
+    "bytes": 18760,
+    "modelSha256": "6133c2fc9932943431ea58927722c15bcc8210374a644798dd05d396bc5c0242"
+  },
+  {
+    "kind": "didi",
+    "name": "的的",
+    "width": 384,
+    "height": 384,
+    "bytes": 22862,
+    "modelSha256": "3aafad588c2bf726f5c505d00c9e6ab37a95fefbc1e79f700621433d46a4f13b"
+  },
+  {
+    "kind": "xiaosai",
+    "name": "小塞",
+    "width": 384,
+    "height": 384,
+    "bytes": 23954,
+    "modelSha256": "3cf45218ccb80bc2fc82aba42d05aaaca7e859fe1582327ebcdd2cb107e15efc"
+  },
+  {
+    "kind": "yelo",
+    "name": "Yelo",
+    "width": 384,
+    "height": 384,
+    "bytes": 21914,
+    "modelSha256": "034f82ae0d23853faf88fc9ae3b60077501eb6ca4f05212af293ab789c719677"
+  },
+  {
+    "kind": "miller",
+    "name": "Miller",
+    "width": 384,
+    "height": 384,
+    "bytes": 23396,
+    "modelSha256": "1f64c714f2b03698231c1d4a5520a5675f30787d378e71c70d513cadcdd5d296"
+  },
+  {
+    "kind": "momo",
+    "name": "Momo",
+    "width": 384,
+    "height": 384,
+    "bytes": 36238,
+    "modelSha256": "e37dd4b81e9efff0a94db38f20bb7f80b9cac7e9696a46a06cb98c4a5d7294c4"
+  },
+  {
+    "kind": "zhenzhenzi",
+    "name": "震震子",
+    "width": 384,
+    "height": 384,
+    "bytes": 24798,
+    "modelSha256": "4d50a89ed459db28fcdb14cca2eb8ec92ba3a4d75a926c0223d5a106f08c0772"
+  }
+]

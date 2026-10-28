@@ -25,16 +25,10 @@ export const PALETTE: readonly (Pick<CatDefinition, 'name' | 'color' | 'accent'>
   { name: 'Latte', color: '#f8f4e9', accent: '#514944', appearance: 'latte' },
   { name: '的的', color: '#727983', accent: '#3e4650', appearance: 'didi' },
   { name: '小塞', color: '#d7a05b', accent: '#a96a2d', appearance: 'xiaosai' },
-  { name: 'Miso', color: '#9caeb7', accent: '#657e8b' },
-  { name: 'Peaches', color: '#e7a59b', accent: '#bd7774' },
-  { name: 'Tofu', color: '#e9e2d0', accent: '#b9b0a1' },
-  { name: 'Olive', color: '#a7b79a', accent: '#758769' },
-  { name: 'Plum', color: '#b6a2c8', accent: '#86729a' },
-  { name: 'Bean', color: '#817c83', accent: '#514b57' },
-  { name: 'Biscuit', color: '#d4c092', accent: '#a18b5c' },
   { name: 'Yelo', color: '#d89b50', accent: '#aa682e', appearance: 'yelo' },
   { name: 'Miller', color: '#756653', accent: '#272521', appearance: 'miller' },
   { name: 'Momo', color: '#b3a18a', accent: '#453a32', appearance: 'momo' },
+  { name: '震震子', color: '#706f63', accent: '#373936', appearance: 'zhenzhenzi' },
 ];
 // One shared floor, with furniture kept outside the walkable bounds.
 export const ROOM = { minX: -3.1, maxX: 3.1, minZ: -5.7, maxZ: 4.0, catScale: 0.52, walkSpeed: 0.72 } as const;

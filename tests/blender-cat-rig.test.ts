@@ -1,7 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
 import * as THREE from 'three';
 import { clone as cloneRig } from 'three/addons/utils/SkeletonUtils.js';
-import { createCat, disposeCat } from '../src/cat-model';
+import { createCat, disposeCat, refreshCatModel } from '../src/cat-model';
+import { registerBlenderCatAsset } from '../src/blender-cat-asset';
 import { PALETTE } from '../src/config';
 import { animateCat } from '../src/cat-animation';
 import { Game } from '../src/simulation';
@@ -167,5 +168,46 @@ describe('native Blender skinning', () => {
       expect(twin.getObjectByName(`DEF_${name}`)!.getWorldQuaternion(new THREE.Quaternion()).angleTo(rest)).toBeLessThan(1e-6);
     }
     expect(model.root.getObjectByName('DEF_head')!.getWorldQuaternion(new THREE.Quaternion()).angleTo(rest)).toBeCloseTo(2.55, 6);
+  });
+
+  it('upgrades a posed fallback without restarting transitions, blinking, attention, or skeleton ownership', () => {
+    const { model, source } = fixture(true);
+    const control = createCat(PALETTE[1]), twin = createCat(PALETTE[1]);
+    const root = model.root, parent = new THREE.Group(); parent.add(root);
+    root.name = 'preview-cat-7'; root.userData.catId = 7;
+    const cat = new Game(5).cats[0];
+    const focus = { x: 1, y: 1.2, z: 2 };
+    for (const m of [model, control]) {
+      m.root.position.set(2, 0.4, -1); m.root.scale.setScalar(0.7);
+      animateCat(m, cat, 1, { focus, engagement: 1 });
+    }
+    cat.activity = 'walking'; cat.stride = 3.7;
+    for (const m of [model, control]) animateCat(m, cat, 1.08, { focus, engagement: 1 });
+    const oldSkeleton = (root.getObjectByName('tailSkin') as THREE.SkinnedMesh).skeleton;
+    const dispose = vi.spyOn(oldSkeleton, 'dispose');
+    registerBlenderCatAsset('latte', source);
+    refreshCatModel(model, PALETTE[1]); refreshCatModel(twin, PALETTE[1]);
+    expect(model.root).toBe(root); expect(root.parent).toBe(parent);
+    expect(root.name).toBe('preview-cat-7'); expect(root.userData.catId).toBe(7);
+    expect(root.position.toArray()).toEqual([2, 0.4, -1]);
+    expect(root.userData.modelRig).toBe('blender-armature');
+    expect(dispose).toHaveBeenCalledTimes(1);
+    const bones = root.getObjectByName('latte_ContinuousSkin') as THREE.SkinnedMesh;
+    expect(bones.skeleton).not.toBe((twin.root.getObjectByName('latte_ContinuousSkin') as THREE.SkinnedMesh).skeleton);
+    for (const time of [1.08, 1.14, 1.3, 2.22, 2.3]) {
+      for (const m of [model, control]) animateCat(m, cat, time, { focus, engagement: 1 });
+      for (const name of blenderRigControls) {
+        const actual = root.getObjectByName(name)!, expected = control.root.getObjectByName(name)!;
+        expect(actual.position.distanceTo(expected.position), `${time}: ${name} position`).toBeLessThan(1e-9);
+        expect(actual.quaternion.angleTo(expected.quaternion), `${time}: ${name} rotation`).toBeLessThan(1e-7);
+        expect(actual.scale.distanceTo(expected.scale)).toBeLessThan(1e-9);
+        expect(actual.visible).toBe(expected.visible);
+      }
+      expect(point(root, 0).toArray().every(Number.isFinite)).toBe(true);
+    }
+    const head = model.head;
+    refreshCatModel(model, PALETTE[1]); expect(model.head).toBe(head);
+    expect(dispose).toHaveBeenCalledTimes(1);
+    [model, control, twin].forEach(disposeCat);
   });
 });

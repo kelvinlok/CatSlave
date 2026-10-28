@@ -13,6 +13,29 @@ function spendUpgrades(game: Game) {
 }
 
 describe('simulation', () => {
+  it('retains the prefetched pair through each stage and bonus, then prepares the next pair', () => {
+    const game = new Game(42);
+    expect(game.upcomingAdoption).toEqual([]);
+    game.reset();
+    for (let stage = 0; stage < STAGES.length; stage++) {
+      const planned = game.upcomingAdoption.map(cat => cat.name);
+      expect(planned).toHaveLength(stage === STAGES.length - 1 ? 0 : 2);
+      expect(new Set(planned).size).toBe(planned.length);
+      expect(planned.some(name => game.cats.some(cat => cat.name === name))).toBe(false);
+      expect(game.candidates).toEqual([]);
+      game.pause(); game.resume();
+      expect(game.upcomingAdoption.map(cat => cat.name)).toEqual(planned);
+      survive(game);
+      if (game.phase === 'victory') break;
+      expect(game.candidates.map(cat => cat.name)).toEqual(planned);
+      game.adopt(game.candidates[0].id);
+      expect(game.upcomingAdoption).toEqual([]);
+      spendUpgrades(game);
+    }
+    expect(game.phase).toBe('victory');
+    game.reset(true);
+    expect(game.upcomingAdoption).toEqual([]);
+  });
   it('uses a reproducible random stream', () => {
     const a = new Random(7), b = new Random(7);
     expect(Array.from({ length: 20 }, () => a.next())).toEqual(Array.from({ length: 20 }, () => b.next()));

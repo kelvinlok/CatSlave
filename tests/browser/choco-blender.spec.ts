@@ -5,7 +5,7 @@ test('the shipped Blender asset drives Choco in the game and through animated po
   page.on('pageerror', error => errors.push(error.message));
   await page.goto('/');
   await page.waitForFunction(() => !!window.__CATSLAVE_TEST__);
-  expect(await page.evaluate(() => {
+  await expect.poll(() => page.evaluate(() => {
     const { game, world } = window.__CATSLAVE_TEST__;
     const root = world.scene.children.find(child => child.userData.catId === game.cats[0].id);
     return { source: root?.userData.modelSource, rig: root?.userData.modelRig, asset: root?.userData.modelAsset };

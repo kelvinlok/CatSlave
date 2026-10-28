@@ -7,6 +7,7 @@ const customCats = [
   { name: 'Yelo', asset: 'yelo' },
   { name: 'Miller', asset: 'miller' },
   { name: 'Momo', asset: 'momo' },
+  { name: '震震子', asset: 'zhenzhenzi' },
 ];
 
 for (const { name, asset } of customCats) {

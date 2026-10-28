@@ -102,7 +102,7 @@ test('relaxed room meals, social play and camera floor boundary', async ({ page 
   await expect.poll(() => page.evaluate(() => !!window.__CATSLAVE_TEST__)).toBe(true);
   await page.evaluate(() => {
     const t = window.__CATSLAVE_TEST__; t.setManualClock(true);
-    t.game.restoreFreePlay(['Choco', 'Latte', 'Miso', 'Tofu', 'Olive']); t.game.startFreePlay(); t.refresh();
+    t.game.restoreFreePlay(['Choco', 'Latte', 'Yelo', 'Miller', 'Momo']); t.game.startFreePlay(); t.refresh();
   });
   async function tap(id: string) {
     const h = await page.evaluate(id => window.__CATSLAVE_TEST__.hud.controls.find(h => h.id === id)!, id);

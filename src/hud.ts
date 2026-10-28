@@ -1,6 +1,6 @@
 import { translate, languageLabel, gameTitle } from './i18n';
 import * as THREE from 'three';
-import { CLEANING_TOOLS, EFFICIENCY, TOOLS, TOOL_BY_ID, toolMatches } from './config';
+import { CLEANING_TOOLS, EFFICIENCY, PALETTE, TOOLS, TOOL_BY_ID, toolMatches } from './config';
 import { Game } from './simulation';
 import { World, inPlayArea, type PlayArea } from './world';
 import { needIcon } from './need-icons';
@@ -153,6 +153,8 @@ export class Hud {
   private lastPhase = '';
   private selectedTool: ToolId = 'sweeper';
   private bubbleCenters: Point[] = [];
+  dexCat?: number;
+  private dexPortraits = new Map<string, HTMLImageElement>();
   modal?: HudModal;
   hoveredId?: string;
   pressedId?: string;
@@ -268,18 +270,96 @@ export class Hud {
   private title(game: Game) {
     const { height: h, ctx } = this;
     this.backdrop(); this.brand();
-    this.button('language', languageLabel(), this.width - this.right - 126, this.top, 110, 44);
     const center = this.center, panel = this.panelWidth, x = center - panel / 2;
     const titleY = this.top + (this.compact ? 96 : Math.min(155, h * 0.18));
     text(ctx, gameTitle(), center, titleY, Math.min(72, panel * 0.2), C.ink, 'center', 'serif', panel);
-    const bottomY = h - this.bottom - (game.freePlayUnlocked ? 226 : 168);
-    this.button('sound', this.soundLabel, x, bottomY - 24, panel, 44);
-    this.button('start', 'Play  →', x, bottomY + 34, panel, 52, true);
-    this.button('learn', 'Practice', x, bottomY + 98, panel, 48);
-    if (game.freePlayUnlocked) this.button('free-play', 'Free play →', x, bottomY + 156, panel, 48);
+    const gap = 10, cellWidth = (panel - gap) / 2, rowHeight = 48;
+    const bottomY = h - this.bottom - (rowHeight * 3 + gap * 2 + 4);
+    const rightX = x + cellWidth + gap;
+    this.button('start', 'Play  →', x, bottomY, cellWidth, rowHeight, true);
+    this.button('learn', 'Practice', rightX, bottomY, cellWidth, rowHeight);
+    this.button('cat-dex', 'Cat dex', x, bottomY + rowHeight + gap, cellWidth, rowHeight);
+    if (game.freePlayUnlocked) this.button('free-play', 'Free play →', rightX, bottomY + rowHeight + gap, cellWidth, rowHeight);
+    this.button('sound', this.soundLabel, x, bottomY + 2 * (rowHeight + gap), cellWidth, rowHeight);
+    this.button('language', languageLabel(), rightX, bottomY + 2 * (rowHeight + gap), cellWidth, rowHeight);
+  }
+
+  private dexPortrait(index: number, x: number, y: number, size: number, unlocked: boolean) {
+    const ctx = this.ctx, cat = PALETTE[index];
+    if (unlocked && cat.appearance) {
+      let portrait = this.dexPortraits.get(cat.appearance);
+      if (!portrait) {
+        portrait = new Image();
+        portrait.onload = () => this.invalidate();
+        portrait.onerror = () => this.invalidate();
+        this.dexPortraits.set(cat.appearance, portrait);
+        portrait.src = `${import.meta.env.BASE_URL}portraits/${cat.appearance}.webp`;
+      }
+      if (portrait.complete && portrait.naturalWidth > 0) {
+        ctx.drawImage(portrait, x - size / 2, y - size / 2, size, size);
+      } else {
+        // Keep the name/card usable while the small portrait loads or is offline.
+        paw(ctx, x, y, size * .45, cat.color);
+      }
+      return;
+    }
+    // Unknown cats keep an anonymous silhouette and do not request a portrait.
+    ctx.save(); ctx.translate(x, y); ctx.scale(size / 100, size / 100);
+    ctx.beginPath(); ctx.moveTo(-36, -12); ctx.lineTo(-39, -44); ctx.lineTo(-15, -28);
+    ctx.quadraticCurveTo(0, -34, 15, -28); ctx.lineTo(39, -44); ctx.lineTo(36, -12);
+    ctx.bezierCurveTo(51, 36, -51, 36, -36, -12); ctx.fillStyle = '#514b48'; ctx.fill();
+    ctx.restore();
+  }
+
+  private catDex(game: Game) {
+    const { ctx } = this, width = this.panelWidth, x = this.center - width / 2;
+    ctx.fillStyle = C.cream; ctx.fillRect(0, 0, this.width, this.height);
+    this.button('dex-back', 'Back', x, this.top, 84, 44);
+    text(ctx, 'Cat dex', this.center, this.top + 70, 34, C.ink, 'center', 'serif');
+    const selected = this.dexCat === undefined ? undefined : PALETTE[this.dexCat];
+    if (selected && game.adoptedCats.includes(selected.name)) {
+      this.button('dex-reset', 'Reset rotation', x + width - 128, this.top, 128, 44);
+      text(ctx, 'Drag to rotate · edges to roll', this.center, this.top + 99, 12, C.muted, 'center', 'sans', width);
+      const preview = this.worldViewport(game), y = preview.y + preview.h;
+      ctx.clearRect(preview.x, preview.y, preview.w, preview.h);
+      text(ctx, selected.name, this.center, y + 26, 30, C.ink, 'center', 'serif', width);
+      text(ctx, 'Adopted · Profile unlocked', this.center, y + 60, 14, C.green, 'center', 'bold', width);
+      const coats = ['Chocolate brown', 'Cream with dark accents', 'Slate grey', 'Golden ginger', 'Amber ginger', 'Brown with dark accents', 'Taupe with dark accents', 'White with grey-brown tabby patches'];
+      text(ctx, 'Coat', x + 16, y + 106, 13, C.muted, 'left', 'bold');
+      text(ctx, coats[this.dexCat!], x + 16, y + 134, 18, C.ink, 'left', 'serif', width - 32);
+      text(ctx, 'Care', x + 16, y + 176, 13, C.muted, 'left', 'bold');
+      text(ctx, 'Keep fed, brushed and entertained.', x + 16, y + 204, 14, C.ink, 'left', 'sans', width - 32);
+      text(ctx, 'Enjoys butt pats and chasing the wand.', x + 16, y + 232, 14, C.ink, 'left', 'sans', width - 32);
+      return;
+    }
+    text(ctx, `${game.adoptedCats.length} / ${PALETTE.length} adopted`, this.center, this.top + 106, 14, C.green, 'center', 'bold');
+    text(ctx, 'Adopt cats to reveal their profiles.', this.center, this.top + 132, 13, C.muted, 'center', 'sans', width);
+    const startY = this.top + 158, gap = 8;
+    const cellW = (width - gap * 2) / 3;
+    const cellH = Math.min(150, (this.height - this.bottom - startY - gap * 2 - 4) / 3);
+    Array.from({ length: 9 }, (_, index) => {
+      const cat = PALETTE[index];
+      const cx = x + (index % 3) * (cellW + gap), cy = startY + Math.floor(index / 3) * (cellH + gap);
+      if (!cat) {
+        round(ctx, cx, cy, cellW, cellH, 14, C.cream, C.line);
+        paw(ctx, cx + cellW / 2, cy + cellH * .38, 28, C.line);
+        text(ctx, 'Coming soon', cx + cellW / 2, cy + cellH - 24, 11, C.muted, 'center', 'sans', cellW - 12);
+        return;
+      }
+      const unlocked = game.adoptedCats.includes(cat.name);
+      round(ctx, cx, cy, cellW, cellH, 14, unlocked ? C.paper : '#e2dbcf', C.line);
+      this.dexPortrait(index, cx + cellW / 2, cy + cellH * .36, Math.min(112, cellW - 10, cellH * .65), unlocked);
+      text(ctx, unlocked ? cat.name : '???', cx + cellW / 2, cy + cellH - 33, 17, unlocked ? C.ink : C.muted, 'center', 'bold', cellW - 16);
+      text(ctx, unlocked ? 'View profile' : 'Not adopted', cx + cellW / 2, cy + cellH - 13, 11, C.muted, 'center', 'sans', cellW - 16);
+      this.addHit({ id: `dex-cat:${index}`, label: unlocked ? cat.name + ' · ' + translate('View profile') : translate('Not adopted'), x: cx, y: cy, w: cellW, h: cellH, disabled: !unlocked });
+    });
   }
 
   worldViewport(game: Game): GameLayout['room'] {
+    if (game.phase === 'cat-dex' && this.dexCat !== undefined) {
+      return { x: this.center - this.panelWidth / 2, y: this.top + 110, w: this.panelWidth,
+        h: Math.max(120, Math.min(280, this.height - this.top - this.bottom - 370)) };
+    }
     if (game.inBonus && game.bonus?.id === 'pawdicure') {
       const y = this.top + 132;
       const footer = game.bonus.status === 'intro' || game.bonus.status === 'result' ? 220 : 90;
@@ -933,6 +1013,7 @@ export class Hud {
     ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0); ctx.clearRect(0, 0, this.width, this.height); this.hits = [];
     if (this.rotateRequired) this.rotationScreen();
     else if (game.phase === 'title') this.title(game);
+    else if (game.phase === 'cat-dex') this.catDex(game);
     else if (game.phase === 'adoption') this.adoption(game);
     else if (game.phase === 'upgrade') this.upgrade(game);
     else if (game.phase === 'victory') this.victory(game, world);

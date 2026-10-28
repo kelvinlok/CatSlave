@@ -7,7 +7,7 @@ for (const fallback of [false, true]) {
     if (fallback) await page.route('**/models/yelo.glb', route => route.fulfill({ status: 503, body: 'Unavailable' }));
     await page.goto('/');
     await page.waitForFunction(() => !!window.__CATSLAVE_TEST__);
-    const report = await page.evaluate(() => {
+    const report = await page.evaluate(async () => {
       const t = window.__CATSLAVE_TEST__, game = t.game;
       t.setManualClock(true); game.reset();
       for (const appearance of ['latte', 'didi', 'xiaosai', 'yelo']) {
@@ -21,6 +21,9 @@ for (const fallback of [false, true]) {
         }
       }
       t.refresh();
+      const assetPath = '/src/blender-cat-asset.ts';
+      const { preloadBlenderCatAsset } = await import(assetPath) as typeof import('../../src/blender-cat-asset');
+      await preloadBlenderCatAsset('yelo'); t.refresh();
       const yelo = game.cats.find(cat => cat.appearance === 'yelo')!;
       const root = t.world.scene.children.find(child => child.userData.catId === yelo.id)!;
       const adoption = { stage: game.stage, phase: game.phase, source: root.userData.modelSource ?? 'builtin',

@@ -1,8 +1,8 @@
 import { expect, test } from '@playwright/test';
 
-const customAssets = ['choco', 'latte', 'didi', 'xiaosai', 'yelo', 'miller', 'momo'];
+const customAssets = ['choco', 'latte', 'didi', 'xiaosai', 'yelo', 'miller', 'momo', 'zhenzhenzi'];
 
-test('the generic palette cat stays procedural after all custom assets load', async ({ page }) => {
+test('the complete custom roster loads authored models with finite animated transforms', async ({ page }) => {
   const errors: string[] = [];
   page.on('pageerror', error => errors.push(error.message));
   await page.goto('/tests/browser/cat-studio.html');
@@ -11,30 +11,20 @@ test('the generic palette cat stays procedural after all custom assets load', as
     const configPath = '/src/config.ts';
     const { PALETTE } = await import(configPath) as typeof import('../../src/config');
     const studio = window.__CAT_STUDIO__;
-    const custom = assets.map(asset => {
+    return { roster: PALETTE.map(cat => cat.appearance), custom: assets.map(asset => {
       const variant = PALETTE.findIndex(cat => cat.appearance === asset);
-      studio.pose('idle', 1, variant);
-      return { rig: studio.model.root.userData.modelRig, asset: studio.model.root.userData.modelAsset };
-    });
-    const stats = studio.pose('walking', 2, PALETTE.findIndex(cat => !cat.appearance));
-    studio.model.root.updateMatrixWorld(true);
-    let nativeBones = 0, finite = true;
-    studio.model.root.traverse(object => {
-      if (object.name.startsWith('DEF_')) nativeBones++;
-      finite &&= object.matrixWorld.elements.every(Number.isFinite);
-    });
-    return {
-      custom, source: studio.model.root.userData.modelSource ?? 'builtin',
-      asset: studio.model.root.userData.modelAsset ?? null,
-      nativeBones, finite, triangles: stats.triangles,
-    };
+      const stats = studio.pose('walking', 2, variant);
+      studio.model.root.updateMatrixWorld(true);
+      let finite = true;
+      studio.model.root.traverse(object => { finite &&= object.matrixWorld.elements.every(Number.isFinite); });
+      return { rig: studio.model.root.userData.modelRig, asset: studio.model.root.userData.modelAsset, finite, triangles: stats.triangles };
+    }) };
   }, customAssets);
-  expect(report.custom).toEqual(customAssets.map(asset => ({ rig: 'blender-armature', asset: `models/${asset}.glb` })));
-  expect(report.source).toBe('builtin');
-  expect(report.asset).toBeNull();
-  expect(report.nativeBones).toBe(0);
-  expect(report.finite).toBe(true);
-  expect(report.triangles).toBeGreaterThan(1000);
+  expect(report.roster).toEqual(customAssets);
+  report.custom.forEach((model, index) => {
+    expect(model.rig).toBe('blender-armature'); expect(model.asset).toBe(`models/${customAssets[index]}.glb`);
+    expect(model.finite).toBe(true); expect(model.triangles).toBeGreaterThan(1000);
+  });
   expect(errors).toEqual([]);
 });
 

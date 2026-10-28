@@ -3,8 +3,8 @@ import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { Game } from './simulation';
 import type { CareEvent, Point } from './types';
 import { freeBowlPosition } from './free-roam';
-import { ROOM } from './config';
-import { createCat, disposeCat, type CatModel } from './cat-model';
+import { PALETTE, ROOM } from './config';
+import { createCat, disposeCat, refreshCatModel, type CatModel } from './cat-model';
 import { createMess, updateMess, disposeMess } from './messes';
 import { createFurniture } from './furniture-model';
 import { animateCat } from './cat-animation';
@@ -13,6 +13,7 @@ import { gameLayout, type Rect } from './layout';
 import { PawdicureModel } from './pawdicure-model';
 import type { PawdicureRound } from './pawdicure';
 import { updateBlenderCatRig } from './blender-cat-rig';
+import { hasBlenderCatAsset } from './blender-cat-asset';
 
 const sphere = new THREE.SphereGeometry(1, 16, 10);
 const box = new THREE.BoxGeometry(1, 1, 1);
@@ -72,6 +73,29 @@ export function inPlayArea(area: PlayArea, point: Point) {
 }
 export class World {
   scene = new THREE.Scene();
+  dexScene = new THREE.Scene();
+  dexCamera = new THREE.PerspectiveCamera(40, 1, 0.05, 30);
+  dexCatIndex?: number;
+  private dexModel?: CatModel;
+  private dexModelIndex?: number;
+  private dexSize = new THREE.Vector3(1, 1, 1);
+  private dexCenter = new THREE.Vector3();
+  private dexPivot = new THREE.Group();
+
+  resetDexRotation() { this.dexPivot.quaternion.identity(); }
+
+  rotateDex(from: Point, to: Point) {
+    if (!this.dexModel) return;
+    // A virtual trackball rotates in X/Y through its center and rolls in Z near its rim.
+    const project = (point: Point) => {
+      const v = this.viewport, radius = Math.min(v.w, v.h) / 2;
+      const x = (point.x - v.x - v.w / 2) / radius;
+      const y = -(point.y - v.y - v.h / 2) / radius;
+      return new THREE.Vector3(x, y, Math.sqrt(Math.max(0, 1 - x * x - y * y)))
+        .normalize().applyQuaternion(this.dexCamera.quaternion);
+    };
+    this.dexPivot.quaternion.premultiply(new THREE.Quaternion().setFromUnitVectors(project(from), project(to))).normalize();
+  }
   attackScene = new THREE.Scene();
   attackCamera = new THREE.PerspectiveCamera(55, 1, 0.05, 20);
   attackAge = 2;
@@ -107,6 +131,11 @@ export class World {
   private groomingBackdrop = new THREE.Group();
 
   constructor() {
+    this.dexScene.add(this.dexPivot);
+    this.dexScene.background = new THREE.Color('#f7efdf');
+    this.dexScene.add(new THREE.HemisphereLight('#fff2e7', '#604540', 3));
+    const dexLight = new THREE.DirectionalLight('#ffffff', 3);
+    dexLight.position.set(-2, 3, 4); this.dexScene.add(dexLight);
     this.scene.add(this.groomingPaw.root, this.groomingBackdrop);
     this.groomingPaw.root.visible = false; this.groomingBackdrop.visible = false;
     block(this.groomingBackdrop, '#e4d5bf', [0, 1.5, -1.4], [15, 12, .12]);
@@ -394,6 +423,7 @@ export class World {
   }
 
   update(game: Game, dt: number, time: number, effectsDt = dt) {
+    this.updateDex(game, time);
     if (this.freeCamera !== game.inFreePlay) {
       this.freeCamera = game.inFreePlay;
       this.freePointer = undefined; this.freePats.clear();
@@ -470,6 +500,7 @@ export class World {
         resident = { model, base: new THREE.Vector3() }; this.residents.set(cat.id, resident);
       }
       const { model, base } = resident;
+      refreshCatModel(model, cat);
       base.set(cat.position.x, cat.elevation > 0 ? cat.elevation + 0.012 : this.floorHeight(cat.position.x, cat.position.z), cat.position.z);
       model.root.position.copy(base); model.root.rotation.y = cat.yaw;
       model.root.visible = !isPreview && (!paw || cat.id === (paw.selectedCatId ?? game.cats[0]?.id));
@@ -568,6 +599,7 @@ export class World {
     const t = this.attackAge, model = this.attackModel;
     model.root.visible = t < 0.76 && game.phase !== 'paused';
     const attacker = game.cats.find(cat => cat.id === game.lastAttackCatId);
+    if (attacker) refreshCatModel(model, attacker);
     if (attacker) animateCat(model, { ...attacker, activity: 'jumping', pose: Math.min(1, t / 0.76) }, t, { angry: true });
     // A dedicated foreground camera makes attacks equally legible from every direction.
     const leap = Math.min(1, t / 0.23), retreat = Math.max(0, (t - 0.50) / 0.26);
@@ -580,6 +612,50 @@ export class World {
     model.head.rotation.x = 0.12;
     model.anger.visible = true;
     model.eyes.forEach(eye => { eye.scale.y = model.eyeHeight * 0.03 / 0.062; });
+  }
+
+  private updateDex(game: Game, time: number) {
+    const definition = this.dexCatIndex === undefined ? undefined : PALETTE[this.dexCatIndex];
+    const index = game.phase === 'cat-dex' && definition && game.adoptedCats.includes(definition.name) ? this.dexCatIndex : undefined;
+    const upgrading = index !== undefined && this.dexModel?.root.userData.modelSource !== 'blender'
+      && hasBlenderCatAsset(definition?.appearance);
+    if (index !== this.dexModelIndex || upgrading) {
+      const rotation = upgrading && index === this.dexModelIndex ? this.dexPivot.quaternion.clone() : undefined;
+      if (this.dexModel) { this.dexModel.root.removeFromParent(); disposeCat(this.dexModel); }
+      this.dexModel = undefined; this.dexModelIndex = index;
+      this.resetDexRotation(); this.dexPivot.position.set(0, 0, 0);
+      if (index !== undefined) {
+        this.dexModel = createCat(PALETTE[index]);
+        this.dexModel.root.name = 'dex-cat-model';
+        this.dexModel.root.rotation.y = -0.5;
+        this.dexPivot.add(this.dexModel.root);
+        // Refresh the reset parent before measuring: setFromObject does not update
+        // ancestors, so a previous profile's pivot otherwise offsets these bounds.
+        this.dexPivot.updateWorldMatrix(true, true);
+        animateCat(this.dexModel, { ...game.cats[0], ...PALETTE[index], id: index + 1,
+          activity: 'grooming', stride: 0, pose: 0 }, time);
+        const bounds = new THREE.Box3();
+        this.dexModel.root.traverseVisible(object => {
+          if (object instanceof THREE.Mesh && object.geometry.getAttribute('position')?.count) {
+            bounds.union(new THREE.Box3().setFromObject(object, true));
+          }
+        });
+        bounds.getCenter(this.dexCenter);
+        bounds.getSize(this.dexSize);
+        this.dexPivot.position.copy(this.dexCenter);
+        this.dexModel.root.position.copy(this.dexCenter).negate();
+        if (rotation) this.dexPivot.quaternion.copy(rotation);
+      }
+    }
+    if (!this.dexModel || index === undefined) return;
+    this.dexCamera.aspect = this.viewport.w / this.viewport.h;
+    const halfFov = THREE.MathUtils.degToRad(20);
+    const distance = 1.1 * (Math.max(this.dexSize.y, this.dexSize.x / this.dexCamera.aspect)
+      / (2 * Math.tan(halfFov)) + this.dexSize.z / 2);
+    this.dexCamera.position.copy(this.dexCenter).add(new THREE.Vector3(0, distance * .12, distance));
+    this.dexCamera.lookAt(this.dexCenter); this.dexCamera.updateProjectionMatrix();
+    animateCat(this.dexModel, { ...game.cats[0], ...PALETTE[index], id: index + 1,
+      activity: 'grooming', stride: 0, pose: 0 }, time);
   }
 
   private updatePreview(game: Game, time: number) {
@@ -599,6 +675,7 @@ export class World {
     this.previews.visible = ['title', 'adoption', 'game-over', 'victory'].includes(game.phase);
     this.previewCats.forEach((model, i) => {
       const definition = cats[i];
+      refreshCatModel(model, definition);
       if (game.phase === 'victory') {
         const elapsed = Math.max(0, time - this.previewStartedAt);
         const progress = THREE.MathUtils.clamp((elapsed - i * 0.24) / 3.2, 0, 1);

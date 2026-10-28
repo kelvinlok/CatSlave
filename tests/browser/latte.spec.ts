@@ -15,7 +15,7 @@ test('Latte can be adopted and shows her asymmetric coat and dorsal patches', as
     return game.cats.map(cat => cat.name);
   });
   expect(cats).toEqual(['Choco', 'Latte']);
-  expect(await page.evaluate(() => {
+  await expect.poll(() => page.evaluate(() => {
     const { game, world } = window.__CATSLAVE_TEST__;
     return game.cats.map(cat => world.scene.children.find(child => child.userData.catId === cat.id)?.userData.modelAsset);
   })).toEqual(['models/choco.glb', 'models/latte.glb']);
@@ -51,13 +51,16 @@ test('Latte can be adopted and shows her asymmetric coat and dorsal patches', as
 test('a failed Latte download preserves her adoption and leaves Blender Choco available', async ({ page }) => {
   await page.route('**/models/latte.glb', route => route.fulfill({ status: 503, body: 'Unavailable' }));
   await page.goto('/'); await page.waitForFunction(() => !!window.__CATSLAVE_TEST__);
-  expect(await page.evaluate(() => {
+  expect(await page.evaluate(async () => {
     const t = window.__CATSLAVE_TEST__, game = t.game;
     t.setManualClock(true); game.reset(); game.stageElapsed = game.config.duration - 0.01; game.tick(0.02); t.finishBonus();
     const candidate = game.candidates.find(cat => cat.appearance === 'latte')!;
     game.adopt(candidate.id);
     for (const tool of ['food', 'sweeper', 'mop', 'brush', 'toy'] as const) while (game.phase === 'upgrade' && game.levels[tool] < 3) game.upgrade(tool);
     t.refresh();
+    const assetPath = '/src/blender-cat-asset.ts';
+    const { preloadBlenderCatAsset } = await import(assetPath) as typeof import('../../src/blender-cat-asset');
+    await preloadBlenderCatAsset('latte'); t.refresh();
     return { phase: game.phase, cats: game.cats.map(cat => ({ name: cat.name,
       source: t.world.scene.children.find(child => child.userData.catId === cat.id)?.userData.modelSource ?? 'builtin' })) };
   })).toEqual({ phase: 'playing', cats: [{ name: 'Choco', source: 'blender' }, { name: 'Latte', source: 'builtin' }] });
