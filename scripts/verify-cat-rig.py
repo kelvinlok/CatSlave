@@ -31,7 +31,7 @@ after=sampled();bone.matrix_basis=original;bpy.context.view_layer.update()
 moved=sum((a-b).length>.002 for a,b in zip(after,before))
 assert moved>50, 'Blender armature did not deform the saved mesh'
 tail_checked=0;tail_hair_points_checked=0
-if label in ('Momo','Zhenzhenzi'):
+if label in ('Momo','Zhenzhenzi','Dingding'):
     # Regression: the front of the fluffy tail used to be bound to DEF_body,
     # leaving a stationary sheet behind when the tail rotated.
     upper_tail=[v.index for v in skin.data.vertices if v.co.z>1.15 and v.co.y>.48]

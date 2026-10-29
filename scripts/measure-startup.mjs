@@ -46,7 +46,7 @@ try {
       downloadThroughput: mbps * 1_000_000 / 8, uploadThroughput: 750_000 / 8 });
     await cdp.send('Emulation.setCPUThrottlingRate', { rate: 4 });
     cdp.on('Network.requestWillBeSent', event => {
-      if (event.request.url.endsWith('.glb')) requests.set(event.requestId, { model: event.request.url.split('/').pop(), status: 'pending' });
+      if (/\.glb(?:\.gz)?$/.test(event.request.url)) requests.set(event.requestId, { model: event.request.url.split('/').pop(), status: 'pending' });
     });
     cdp.on('Network.loadingFinished', event => { const request = requests.get(event.requestId); if (request) request.status = 'finished'; });
     cdp.on('Network.loadingFailed', event => { const request = requests.get(event.requestId); if (request) request.status = event.errorText; });

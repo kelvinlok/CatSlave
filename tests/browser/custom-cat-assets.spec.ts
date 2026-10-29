@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test';
 
-const customAssets = ['choco', 'latte', 'didi', 'xiaosai', 'yelo', 'miller', 'momo', 'zhenzhenzi'];
+const customAssets = ['choco', 'latte', 'didi', 'xiaosai', 'yelo', 'miller', 'momo', 'zhenzhenzi', 'dingding'];
 
 test('the complete custom roster loads authored models with finite animated transforms', async ({ page }) => {
   const errors: string[] = [];

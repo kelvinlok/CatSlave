@@ -5,7 +5,7 @@ import { winBonus } from './support/bonus';
 
 describe('cat dex collection', () => {
   it('offers only custom cats and migrates retired cats in saved winning rosters', () => {
-    expect(PALETTE).toHaveLength(8);
+    expect(PALETTE).toHaveLength(9);
     expect(PALETTE.every(cat => cat.appearance && cat.appearance !== 'primitive')).toBe(true);
     const g = new Game();
     g.restoreFreePlay(['Choco', 'Latte', 'Miso', 'Tofu', 'Olive']);

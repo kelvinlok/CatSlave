@@ -324,7 +324,7 @@ export class Hud {
       ctx.clearRect(preview.x, preview.y, preview.w, preview.h);
       text(ctx, selected.name, this.center, y + 26, 30, C.ink, 'center', 'serif', width);
       text(ctx, 'Adopted · Profile unlocked', this.center, y + 60, 14, C.green, 'center', 'bold', width);
-      const coats = ['Chocolate brown', 'Cream with dark accents', 'Slate grey', 'Golden ginger', 'Amber ginger', 'Brown with dark accents', 'Taupe with dark accents', 'White with grey-brown tabby patches'];
+      const coats = ['Chocolate brown', 'Cream with dark accents', 'Slate grey', 'Golden ginger', 'Amber ginger', 'Brown with dark accents', 'Taupe with dark accents', 'White with grey-brown tabby patches', 'Grey-brown tabby with white toe tips'];
       text(ctx, 'Coat', x + 16, y + 106, 13, C.muted, 'left', 'bold');
       text(ctx, coats[this.dexCat!], x + 16, y + 134, 18, C.ink, 'left', 'serif', width - 32);
       text(ctx, 'Care', x + 16, y + 176, 13, C.muted, 'left', 'bold');

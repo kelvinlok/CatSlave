@@ -29,6 +29,7 @@ export const PALETTE: readonly (Pick<CatDefinition, 'name' | 'color' | 'accent'>
   { name: 'Miller', color: '#756653', accent: '#272521', appearance: 'miller' },
   { name: 'Momo', color: '#b3a18a', accent: '#453a32', appearance: 'momo' },
   { name: '震震子', color: '#706f63', accent: '#373936', appearance: 'zhenzhenzi' },
+  { name: '丁丁', color: '#7b776c', accent: '#302f29', appearance: 'dingding' },
 ];
 // One shared floor, with furniture kept outside the walkable bounds.
 export const ROOM = { minX: -3.1, maxX: 3.1, minZ: -5.7, maxZ: 4.0, catScale: 0.52, walkSpeed: 0.72 } as const;

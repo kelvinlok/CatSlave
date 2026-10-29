@@ -8,9 +8,9 @@ test('every grooming preview stays centered when switching cats repeatedly', asy
     const path = '/node_modules/three/build/three.module.js';
     const { Box3, Vector3 } = await import(path) as typeof THREE;
     const t = window.__CATSLAVE_TEST__;
-    t.game.restoreAdoptedCats(['Choco', 'Latte', '的的', '小塞', 'Yelo', 'Miller', 'Momo', '震震子']);
+    t.game.restoreAdoptedCats(['Choco', 'Latte', '的的', '小塞', 'Yelo', 'Miller', 'Momo', '震震子', '丁丁']);
     t.game.phase = 'cat-dex';
-    return [0, 1, 2, 3, 4, 5, 6, 7, 0, 7].map(index => {
+    return [0, 1, 2, 3, 4, 5, 6, 7, 8, 0, 8].map(index => {
       t.hud.dexCat = index; t.refresh();
       const root = t.world.dexScene.getObjectByName('dex-cat-model')!;
       root.updateWorldMatrix(true, true); t.world.dexCamera.updateMatrixWorld();
@@ -44,7 +44,7 @@ test('cat dex shows one three-column grid, locks unknown cats and persists adopt
   await page.screenshot({ path: `test-results/dex-menu-${info.project.name}.png` });
   await tap('cat-dex');
   const grid = await page.evaluate(() => window.__CATSLAVE_TEST__.hud.hits.filter(h => h.id.startsWith('dex-cat:')));
-  expect(grid).toHaveLength(8);
+  expect(grid).toHaveLength(9);
   expect(new Set(grid.map(h => h.x)).size).toBe(3);
   expect(new Set(grid.map(h => h.y)).size).toBe(3);
   expect(await page.evaluate(() => window.__CATSLAVE_TEST__.hud.hits.some(h => ['dex-next', 'dex-prev'].includes(h.id)))).toBe(false);

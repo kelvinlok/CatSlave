@@ -88,6 +88,7 @@ describe('on-demand Blender downloads', () => {
     const { preloadBlenderCatAsset: load } = await import('../src/blender-cat-asset');
     await load('choco'); expect(decoder).not.toHaveBeenCalled();
     expect(await load('zhenzhenzi')).toBe(true); expect(decoder).not.toHaveBeenCalled();
+    expect(await load('dingding')).toBe(true); expect(decoder).not.toHaveBeenCalled();
     expect(await load('momo')).toBe(true); expect(decoder).toHaveBeenCalledTimes(1);
   });
 });

@@ -1,15 +1,16 @@
 import * as THREE from 'three';
+import { readModelResponse } from './model-download';
 import { attachNativeBlenderRig, hasNativeBlenderRig, validateNativeBlenderRig } from './blender-cat-rig';
 
 const slots = ['body', 'head', ...Array.from({ length: 4 }, (_, i) => [`leg${i}`, `lowerLeg${i}`, `paw${i}`]).flat(),
   'ear0', 'ear1', 'eye0', 'eye1', 'closedEye0', 'closedEye1'];
 const slotNames = new Set(slots);
-export const blenderCats = ['choco', 'latte', 'didi', 'xiaosai', 'yelo', 'miller', 'momo', 'zhenzhenzi'] as const;
+export const blenderCats = ['choco', 'latte', 'didi', 'xiaosai', 'yelo', 'miller', 'momo', 'zhenzhenzi', 'dingding'] as const;
 export type BlenderCat = typeof blenderCats[number];
 const sources = new Map<BlenderCat, THREE.Group>();
 const loads = new Map<BlenderCat, Promise<boolean>>();
 let loadQueue = Promise.resolve(false);
-const labels: Record<BlenderCat, string> = { choco: 'Choco', latte: 'Latte', didi: '的的', xiaosai: '小塞', yelo: 'Yelo', miller: 'Miller', momo: 'Momo', zhenzhenzi: '震震子' };
+const labels: Record<BlenderCat, string> = { choco: 'Choco', latte: 'Latte', didi: '的的', xiaosai: '小塞', yelo: 'Yelo', miller: 'Miller', momo: 'Momo', zhenzhenzi: '震震子', dingding: '丁丁' };
 const label = (kind: BlenderCat) => labels[kind];
 
 /** Each authored cat has its own shared source, just like the procedural templates. */
@@ -45,10 +46,10 @@ export function preloadBlenderCatAsset(kind: BlenderCat): Promise<boolean> {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 15000);
     try {
-      const url = `${import.meta.env.BASE_URL}models/${kind}.glb`;
+      const url = `${import.meta.env.BASE_URL}models/${kind}.glb${import.meta.env.PROD ? '.gz' : ''}`;
       const response = await fetch(url, { signal: controller.signal });
       if (!response.ok) throw new Error(`${label(kind)} asset HTTP ${response.status}`);
-      const buffer = await response.arrayBuffer();
+      const buffer = await readModelResponse(response);
       const { GLTFLoader } = await import('three/addons/loaders/GLTFLoader.js');
       const loader = new GLTFLoader();
       // Keep DOM-backed images for re-upload after mobile GPU suspension.

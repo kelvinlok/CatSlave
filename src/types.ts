@@ -4,7 +4,7 @@ export type Phase = 'title' | 'cat-dex' | 'tutorial' | 'playing' | 'bonus' | 'pa
 export interface BehaviorProfile { needRate: number; patience: number; }
 export interface CatDefinition {
   id: number; name: string; color: string; accent: string;
-  appearance: 'primitive' | 'choco' | 'latte' | 'didi' | 'xiaosai' | 'yelo' | 'miller' | 'momo' | 'zhenzhenzi'; behavior: BehaviorProfile;
+  appearance: 'primitive' | 'choco' | 'latte' | 'didi' | 'xiaosai' | 'yelo' | 'miller' | 'momo' | 'zhenzhenzi' | 'dingding'; behavior: BehaviorProfile;
 }
 export interface FloorPoint { x: number; z: number; }
 export type CatActivity = 'idle' | 'walking' | 'sniffing' | 'jumping' | 'crawling' | 'perching' | 'hiding' | 'watching' | 'sleeping' | 'grooming' | 'scratching' | 'eating' | 'playing' | 'stretching';

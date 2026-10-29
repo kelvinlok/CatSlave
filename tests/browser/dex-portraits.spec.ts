@@ -3,7 +3,7 @@ import type * as THREE from 'three';
 
 const cats = [
   ['choco', 'Choco'], ['latte', 'Latte'], ['didi', '的的'], ['xiaosai', '小塞'],
-  ['yelo', 'Yelo'], ['miller', 'Miller'], ['momo', 'Momo'], ['zhenzhenzi', '震震子'],
+  ['yelo', 'Yelo'], ['miller', 'Miller'], ['momo', 'Momo'], ['zhenzhenzi', '震震子'], ['dingding', '丁丁'],
 ];
 type TracedContext = CanvasRenderingContext2D & {
   portraitDraws: Record<string, { width: number; height: number; onHudCanvas: boolean }>;
@@ -72,11 +72,11 @@ test('locked dex requests only Choco and keeps other cards anonymous and disable
     return { cards: hud.hits.filter(hit => hit.id.startsWith('dex-cat:')),
       labels: (hud.ctx as TracedContext).drawnLabels };
   });
-  expect(state.cards).toHaveLength(8);
+  expect(state.cards).toHaveLength(9);
   expect(state.cards[0].label).toContain('Choco');
   expect(state.cards.slice(1).map(hit => ({ disabled: hit.disabled, label: hit.label })))
-    .toEqual(Array(7).fill({ disabled: true, label: 'Not adopted' }));
-  expect(state.labels.filter(label => label === '???').length).toBeGreaterThanOrEqual(7);
+    .toEqual(Array(8).fill({ disabled: true, label: 'Not adopted' }));
+  expect(state.labels.filter(label => label === '???').length).toBeGreaterThanOrEqual(8);
   for (const [, name] of cats.slice(1)) expect(state.labels).not.toContain(name);
   await tap(page, 'dex-cat:1', true);
   expect(await page.evaluate(() => window.__CATSLAVE_TEST__.hud.dexCat)).toBeUndefined();
@@ -94,6 +94,7 @@ test('all unlocked portraits draw to Hud without extra model downloads and still
   const expected = cats.map(([asset]) => `/portraits/${asset}.webp`).sort();
   await tap(page, 'cat-dex');
   await expect.poll(() => drawnPortraits(page)).toEqual(expected);
+  expect(await page.evaluate(() => (window.__CATSLAVE_TEST__.hud.ctx as TracedContext).drawnLabels)).not.toContain('Coming soon');
   expect(requests.portraits.slice().sort()).toEqual(expected);
   expect(requests.models).toEqual(['/models/choco.glb']);
   const draws = await page.evaluate(() => Object.values((window.__CATSLAVE_TEST__.hud.ctx as TracedContext).portraitDraws));

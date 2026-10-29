@@ -62,5 +62,13 @@
     "height": 384,
     "bytes": 24798,
     "modelSha256": "4d50a89ed459db28fcdb14cca2eb8ec92ba3a4d75a926c0223d5a106f08c0772"
+  },
+  {
+    "kind": "dingding",
+    "name": "丁丁",
+    "width": 384,
+    "height": 384,
+    "bytes": 25662,
+    "modelSha256": "6d4b639f8c761ef3ad7bc53c401d4832b974af3ad1c5396a1a2eee5b46ed8186"
   }
 ]

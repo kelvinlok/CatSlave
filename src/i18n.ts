@@ -69,6 +69,7 @@ const cantonese: Record<string, string> = {
   'Sage green': '鼠尾草綠', 'Soft lilac': '淡紫色', 'Smoky grey': '煙灰色', 'Golden cream': '金奶油色',
   'Amber ginger': '琥珀橙', 'Brown with dark accents': '啡色配深色花紋', 'Taupe with dark accents': '灰褐色配深色花紋',
   'White with grey-brown tabby patches': '白色配灰褐虎斑',
+  'Grey-brown tabby with white toe tips': '灰褐虎斑配白色趾尖',
   'Back': '返回', 'Main menu?': '返主選單？', 'Restart?': '重新開始？',
   'Your free play unlock and cats are saved.': '自由玩模式同貓貓都已儲存。', 'Progress will be reset.': '進度會重新計過。',
   'Cancel': '取消', 'Restart': '重新開始', 'Paused': '暫停咗', 'Resume  →': '繼續玩  →',
