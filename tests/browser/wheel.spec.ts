@@ -52,13 +52,30 @@ test('tap invites the selected cat to run, pauses freeze the drum, and care retu
     t.world.setViewOrientation(t.world.camera.quaternion.clone());
   }, WHEEL);
   await page.waitForTimeout(300);
-  const rim = await page.evaluate(async w => {
+  const hits = await page.evaluate(async w => {
     const path = '/node_modules/three/build/three.module.js';
     const THREE = await import(/* @vite-ignore */ path);
-    return window.__CATSLAVE_TEST__.world.project(new THREE.Vector3(w.x+1.25,w.centerY,w.z-.496));
+    const { world } = window.__CATSLAVE_TEST__;
+    const at = (x: number, y: number) => world.project(new THREE.Vector3(x, y, w.z - .496));
+    const center = at(w.x, w.centerY);
+    const result = { center: world.wheelHit(center), rim: world.wheelHit(at(w.x + 1.25, w.centerY)),
+      outside: world.wheelHit(at(w.x + 1.29, w.centerY + 1.29)), occluded: true };
+    const blocker = new THREE.Mesh(new THREE.BoxGeometry(1.5, 1.5, .2), new THREE.MeshBasicMaterial());
+    blocker.position.set(w.x, w.centerY, 4.5);
+    const room = world.scene.getObjectByName('video-lounge')!; room.add(blocker);
+    result.occluded = world.wheelHit(center);
+    blocker.removeFromParent(); blocker.geometry.dispose(); blocker.material.dispose();
+    return result;
   }, WHEEL);
-  await page.touchscreen.tap(rim.x, rim.y);
+  expect(hits).toEqual({ center: true, rim: true, outside: false, occluded: false });
+  const center = await page.evaluate(async w => {
+    const path = '/node_modules/three/build/three.module.js';
+    const THREE = await import(/* @vite-ignore */ path);
+    return window.__CATSLAVE_TEST__.world.project(new THREE.Vector3(w.x,w.centerY,w.z-.496));
+  }, WHEEL);
+  await page.touchscreen.tap(center.x, center.y);
   expect(await page.evaluate(() => window.__CATSLAVE_TEST__.game.cats[0].visit?.id)).toBe('wheel');
+  expect(await page.evaluate(() => window.__CATSLAVE_TEST__.game.feedback)).toContain('is heading to the wheel!');
   const run = await page.evaluate(() => {
     const t = window.__CATSLAVE_TEST__;
     for (let i=0;i<800 && t.game.wheelSpeed < 1.2;i++) t.game.tick(.05);

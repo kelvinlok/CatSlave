@@ -38,6 +38,9 @@ const cantonese: Record<string, string> = {
   'Butt pats': '拍屁屁', 'Wand': '逗貓棒', 'Camera': '視角', 'Near': '行近', 'Far': '行遠',
   '− Zoom': '− 縮細', '+ Zoom': '+ 放大', 'Reset view': '重設視角',
   'Tap or stroke the selected cat’s butt.': '撳吓或者摸吓揀咗嗰隻貓嘅屁屁。',
+  'Tap a butt to pat · tap the exercise wheel to invite.': '撳屁屁摸貓 · 撳貓跑輪邀請貓貓玩',
+  'The wheel is busy. Try when it is free.': '有貓用緊跑輪，等佢用完再試吓。',
+  'Cannot reach the wheel from here. Try again shortly.': '暫時行唔到去跑輪，等陣再試吓。',
   'Wave near any cat to catch its attention.': '喺貓貓附近揮動逗貓棒，引佢注意。',
   'Drag to look · right-drag to pan': '拖曳轉視角 · 按住右鍵拖曳平移',
   'Wheel: zoom · WASD / Q E: move · arrows above: move': '滾輪縮放 · WASD / Q E 或上面箭嘴移動',
@@ -85,6 +88,9 @@ const cantonese: Record<string, string> = {
 };
 
 const templates: [RegExp, (...parts: string[]) => string][] = [
+  [/^(.+) already has the wheel\.$/, name => `${name} 已經去緊或者用緊跑輪。`],
+  [/^(.+) is busy\. Try after they step down\.$/, name => `${name} 忙緊，等佢落返地再試吓。`],
+  [/^(.+) is heading to the wheel!$/, name => `${name} 行緊去跑輪喇！`],
   [/^(\d+) \/ (\d+) adopted$/, (n, total) => `已領養 ${n} / ${total}`],
   [/^Get each to level 3 · (\d+)\/3 ready$/, n => `全部升到第 3 級 · 已完成 ${n}/3`],
   [/^Stage (\d+)\/5$/, n => `第 ${n}/5 關`], [/^Lesson (\d+)\/5$/, n => `練習 ${n}/5`],

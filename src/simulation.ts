@@ -326,6 +326,22 @@ export class Game {
     }
   }
 
+  inviteFreeCatToWheel() {
+    if (this.phase !== 'free-play') return false;
+    const cat = this.cats.find(c => c.id === this.selectedFreeCatId);
+    let accepted = false;
+    if (!cat) this.say('Choose a cat first');
+    else if (cat.visit?.id === 'wheel') this.say(`${cat.name} already has the wheel.`);
+    else if (this.cats.some(c => c.visit?.id === 'wheel')) this.say('The wheel is busy. Try when it is free.');
+    else if (cat.visit) this.say(`${cat.name} is busy. Try after they step down.`);
+    else if (beginVisit(cat, 'wheel', this.cats, this.catFloorArea)) {
+      // A direct invitation takes priority over optional meal/social routines.
+      this.freeRoam.cancel(cat.id, this.cats, this.clock);
+      this.say(`${cat.name} is heading to the wheel!`); accepted = true;
+    } else this.say('Cannot reach the wheel from here. Try again shortly.');
+    this.revision++; return accepted;
+  }
+
   visitFurniture(catId: number, id: string) {
     const cat = this.cats.find(c => c.id === catId);
     if ((!this.active && this.phase !== 'free-play') || !cat || this.inFreePlay && this.freeRoam.busy(catId) || this.events.some(e => e.catId === catId)) return false;

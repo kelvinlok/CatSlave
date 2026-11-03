@@ -8,6 +8,7 @@ import { PALETTE, ROOM } from './config';
 import { createCat, disposeCat, refreshCatModel, type CatModel } from './cat-model';
 import { createMess, updateMess, disposeMess } from './messes';
 import { createRoom, updateRoomWheel, isWheelMesh } from './room-asset';
+import { WHEEL } from './cat-wheel';
 import { RoomLighting } from './room-lighting';
 import { animateCat } from './cat-animation';
 import { gameLayout, type Rect } from './layout';
@@ -19,6 +20,14 @@ import { hasBlenderCatAsset } from './blender-cat-asset';
 const sphere = new THREE.SphereGeometry(1, 16, 10);
 const box = new THREE.BoxGeometry(1, 1, 1);
 const cylinder = new THREE.CylinderGeometry(1, 1, 1, 16);
+// A solid picking volume makes the open centre as easy to tap as the visible rim.
+// It is never rendered or added to the scene.
+const wheelTapTarget = new THREE.Mesh(
+  new THREE.CylinderGeometry(WHEEL.outerRadius, WHEEL.outerRadius, WHEEL.depth + .12, 48),
+  new THREE.MeshBasicMaterial({ side: THREE.DoubleSide }));
+wheelTapTarget.rotation.x = Math.PI / 2;
+wheelTapTarget.position.set(WHEEL.x, WHEEL.centerY, WHEEL.z);
+wheelTapTarget.updateMatrixWorld(true);
 const materials = new Map<string, THREE.MeshStandardMaterial>();
 function material(color: string) {
   if (!materials.has(color)) materials.set(color, new THREE.MeshStandardMaterial({ color, roughness: 0.88 }));
@@ -59,10 +68,14 @@ export class World {
 
   wheelHit(point: Point) {
     const v = this.viewport;
+    if (!this.room.userData.loaded || point.x < v.x || point.x > v.x + v.w || point.y < v.y || point.y > v.y + v.h) return false;
     this.camera.updateMatrixWorld(); this.room.updateMatrixWorld(true);
     this.raycaster.setFromCamera(new THREE.Vector2((point.x - v.x) / v.w * 2 - 1, 1 - (point.y - v.y) / v.h * 2), this.camera);
     const hit = this.raycaster.intersectObject(this.room, true)[0];
-    return !!hit && isWheelMesh(hit.object);
+    if (hit && isWheelMesh(hit.object)) return true;
+    const target = this.raycaster.intersectObject(wheelTapTarget)[0];
+    // Keep walls and furniture in front of the wheel from becoming click-through.
+    return !!target && (!hit || target.distance < hit.distance);
   }
 
   rotateDex(from: Point, to: Point) {

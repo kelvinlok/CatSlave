@@ -18,6 +18,30 @@ function until(game: Game, predicate: () => boolean, seconds = 50) {
 }
 
 describe('cat exercise wheel', () => {
+  it('accepts a direct free-play invitation during an optional routine and confirms it', () => {
+    const { game, cat } = fixture(); game.phase = 'free-play'; game.selectedFreeCatId = cat.id;
+    game.freeRoam.reset(game.cats, 0); cat.activity = 'idle'; cat.decisionAt = 0; game.clock = 20;
+    game.freeRoam.update(game.cats, game.clock, 0, { between: a => a });
+    expect(game.freeRoam.busy(cat.id)).toBe(true);
+    expect(game.inviteFreeCatToWheel()).toBe(true);
+    expect(game.freeRoam.busy(cat.id)).toBe(false); expect(cat.visit?.id).toBe('wheel');
+    expect(game.feedback).toBe(`${cat.name} is heading to the wheel!`);
+    const visit = cat.visit;
+    game.inviteFreeCatToWheel(); expect(cat.visit).toBe(visit);
+    expect(game.feedback).toBe(`${cat.name} already has the wheel.`);
+  });
+  it('explains occupied wheels and cats on furniture without interrupting either visit', () => {
+    const { game, cat } = fixture(); game.phase = 'free-play'; game.selectedFreeCatId = cat.id;
+    const other = { ...cat, id: 100, position: { x: 0, z: 0 }, destination: { x: 0, z: 0 } };
+    game.cats.push(other); expect(game.visitFurniture(other.id, 'wheel')).toBe(true);
+    expect(game.inviteFreeCatToWheel()).toBe(false);
+    expect(game.feedback).toBe('The wheel is busy. Try when it is free.');
+    expect(cat.visit).toBeUndefined(); expect(other.visit?.id).toBe('wheel');
+    other.visit = undefined; expect(game.visitFurniture(cat.id, 'tree')).toBe(true);
+    const visit = cat.visit;
+    expect(game.inviteFreeCatToWheel()).toBe(false); expect(cat.visit).toBe(visit);
+    expect(game.feedback).toBe(`${cat.name} is busy. Try after they step down.`);
+  });
   it('approaches, runs in place, brakes to a stop, and returns to clear floor', () => {
     const { game, cat } = fixture();
     expect(game.visitFurniture(cat.id, 'wheel')).toBe(true);

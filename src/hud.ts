@@ -587,7 +587,7 @@ export class Hud {
     const viewWidth = width / 3;
     ([['out', '− Zoom'], ['in', '+ Zoom'], ['reset', 'Reset view']] as const).forEach(([id, label], i) =>
       this.button(`view:${id}`, label, x + i * viewWidth + 2, y + 104, viewWidth - 4, 44));
-    const instruction = game.freeInteraction === 'pet' ? 'Tap or stroke the selected cat’s butt.'
+    const instruction = game.freeInteraction === 'pet' ? 'Tap a butt to pat · tap the exercise wheel to invite.'
       : game.freeInteraction === 'wand' ? 'Wave near any cat to catch its attention.' : 'Drag to look · right-drag to pan';
     text(ctx, instruction, center, y + 165, 12, C.ink, 'center', 'sans', width);
     text(ctx, 'Wheel: zoom · WASD / Q E: move · arrows above: move', center, y + 187, 11, C.muted, 'center', 'sans', width);

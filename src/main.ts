@@ -271,8 +271,8 @@ canvas.addEventListener('pointerdown', event => {
     const catId = world.freeCatHit(p);
     if (catId !== undefined && game.freeInteraction === 'pet') game.chooseFreeCat(catId);
     const mode = event.button === 2 ? 'camera' : game.freeInteraction;
-    if (mode === 'pet' && catId === undefined && game.selectedFreeCatId !== undefined && world.wheelHit(p)
-      && game.visitFurniture(game.selectedFreeCatId, 'wheel')) {
+    if (mode === 'pet' && catId === undefined && world.wheelHit(p)) {
+      game.inviteFreeCatToWheel();
       hud.invalidate(); return;
     }
     freeDrag = { point: p, pan: event.button === 2 || event.shiftKey, mode };
@@ -301,7 +301,8 @@ canvas.addEventListener('pointermove', event => {
   const p = point(event), hover = hud.hit(p.x, p.y);
   if (event.pointerType === 'mouse') {
     hud.hoveredId = hover?.eventId === undefined && !hover?.disabled ? hover?.id : undefined;
-    canvas.style.cursor = dexDrag ? 'grabbing' : hover?.disabled ? 'not-allowed' : hover ? 'pointer' : game.active || inDexPreview(p) ? 'grab' : 'default';
+    const wheelHover = !hover && game.phase === 'free-play' && game.freeInteraction === 'pet' && world.wheelHit(p);
+    canvas.style.cursor = dexDrag ? 'grabbing' : hover?.disabled ? 'not-allowed' : hover || wheelHover ? 'pointer' : game.active || inDexPreview(p) ? 'grab' : 'default';
     hud.invalidate();
   }
   if (event.pointerId !== pointerId) return;
