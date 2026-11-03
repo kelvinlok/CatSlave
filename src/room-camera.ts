@@ -4,6 +4,8 @@ import { ROOM_ENTRANCE } from './room-boundaries';
 export const MAIN_VIEW = { zoom: 1, pitch: 0.07, yaw: 0.32, yawLimit: THREE.MathUtils.degToRad(80) };
 export const ROOM_EYE = new THREE.Vector3(-2.6, 1.65, 5.4);
 export const FREE_EYE = new THREE.Vector3(0, 1.65, 4.8);
+// The reunion uses the open aisle, clear of the sofa table and exercise wheel.
+export const VICTORY_FOCUS = new THREE.Vector3(-3.5, 0.65, 2.5);
 export const ENTRANCE_DURATION = 3.8;
 
 // Cross the narrow glass doorway before curving around the wheel's left side.

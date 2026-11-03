@@ -1,5 +1,5 @@
 import { clampRoomCamera, moveRoomCamera } from './room-boundaries';
-import { ENTRANCE_DURATION, entrancePose, FREE_EYE, MAIN_VIEW, ROOM_EYE } from './room-camera';
+import { ENTRANCE_DURATION, entrancePose, FREE_EYE, MAIN_VIEW, ROOM_EYE, VICTORY_FOCUS } from './room-camera';
 import * as THREE from 'three';
 import { Game } from './simulation';
 import type { CareEvent, Point } from './types';
@@ -397,8 +397,8 @@ export class World {
       this.victoryCamera = true;
       // Sit with the cats. Keep the entire semicircle in view on narrow phones.
       const distance = Math.max(3.25, 2 / this.camera.aspect + 1.6);
-      this.camera.position.set(0, 0.65 + distance * 0.48, 3 + distance);
-      this.camera.zoom = 1; this.camera.lookAt(0, 0.65, 3);
+      this.camera.position.set(VICTORY_FOCUS.x, VICTORY_FOCUS.y + distance * 0.48, VICTORY_FOCUS.z + distance);
+      this.camera.zoom = 1; this.camera.lookAt(VICTORY_FOCUS);
       this.camera.updateProjectionMatrix();
     } else if (game.inBonus && game.bonus?.paw) {
       this.bonusCamera = true;
@@ -650,9 +650,9 @@ export class World {
         const approach = 1 - (1 - progress) ** 2;
         const angle = cats.length === 1 ? 0 : (i / (cats.length - 1) - 0.5) * 2;
         const x = Math.sin(angle * 1.3) * 1.16;
-        const z = 2.1 + Math.abs(angle) ** 1.5 * 2;
+        const z = VICTORY_FOCUS.z - 0.9 + Math.abs(angle) ** 1.5 * 2;
         model.root.scale.setScalar(0.85);
-        model.root.position.set(x * (1.65 - approach * 0.65), 0.07, z - (1 - approach) * 3.1);
+        model.root.position.set(VICTORY_FOCUS.x + x * (1.65 - approach * 0.65), 0.07, z - (1 - approach) * 3.1);
         // Each cat comes in from its own side, then turns inward toward the player.
         model.root.rotation.y = Math.atan2(-x * 0.65, 3.1) * (1 - approach)
           + Math.atan2(-x, this.camera.position.z - z) * approach;

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { Game } from '../src/simulation';
 import { World } from '../src/world';
 import { winBonus } from './support/bonus';
+import { clearFloor } from '../src/room-navigation';
 
 function victory() {
   const game = new Game(5);
@@ -27,16 +28,27 @@ describe('victory celebration', () => {
     for (let frame = 1; frame <= 120; frame++) world.update(game, 0.05, 100 + frame * 0.05);
     cats.forEach((cat, i) => {
       expect(cat.position.distanceTo(world.camera.position)).toBeLessThan(starts[i] - 1);
-      expect(Math.sign(cat.rotation.y)).toBe(-Math.sign(cat.position.x));
+      expect(Math.sign(cat.rotation.y)).toBe(-Math.sign(cat.position.x - world.camera.position.x));
       expect(cat.getObjectByName('closedEye0')!.visible).toBe(true);
       expect(cat.getObjectByName('closedEye1')!.visible).toBe(true);
     });
-    expect(cats[0].position.x).toBeLessThan(-1);
-    expect(cats[4].position.x).toBeGreaterThan(1);
+    expect(cats[0].position.x).toBeLessThan(world.camera.position.x - 1);
+    expect(cats[4].position.x).toBeGreaterThan(world.camera.position.x + 1);
     expect(cats[0].position.z).toBeGreaterThan(cats[2].position.z + 1.5);
     expect(world.victoryHearts()).toHaveLength(5);
     expect(world.victoryHearts().every(point => point.visible && point.x > 25 && point.x < 365 && point.y > 108 && point.y < 660)).toBe(true);
     expect(JSON.stringify(game.cats)).toBe(savedCats);
+  });
+
+  it('keeps the entire reunion approach in the open aisle with body clearance', () => {
+    const game = victory(), world = new World(); world.resize(390, 844); world.update(game, 0, 0);
+    const cats = previews(world);
+    for (let frame = 0; frame <= 100; frame++) {
+      world.update(game, .05, frame * .05);
+      for (const cat of cats) for (const dx of [-.45, 0, .45]) for (const dz of [-.6, 0, .6]) {
+        expect(clearFloor({x:cat.position.x+dx,z:cat.position.z+dz}), `${cat.name} at ${frame}: ${cat.position.toArray()}`).toBe(true);
+      }
+    }
   });
 
   it('restores gameplay camera, clears the crowd, and restarts the entrance on the next win', () => {
