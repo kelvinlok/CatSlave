@@ -1,14 +1,15 @@
+import { clampRoomCamera, moveRoomCamera } from './room-boundaries';
+import { ENTRANCE_DURATION, entrancePose, FREE_EYE, MAIN_VIEW, ROOM_EYE } from './room-camera';
 import * as THREE from 'three';
-import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { Game } from './simulation';
 import type { CareEvent, Point } from './types';
 import { freeBowlPosition } from './free-roam';
 import { PALETTE, ROOM } from './config';
 import { createCat, disposeCat, refreshCatModel, type CatModel } from './cat-model';
 import { createMess, updateMess, disposeMess } from './messes';
-import { createFurniture } from './furniture-model';
+import { createRoom, updateRoomWheel, isWheelMesh } from './room-asset';
+import { RoomLighting } from './room-lighting';
 import { animateCat } from './cat-animation';
-import { BENCH, BED, POST, RUG } from './furniture';
 import { gameLayout, type Rect } from './layout';
 import { PawdicureModel } from './pawdicure-model';
 import type { PawdicureRound } from './pawdicure';
@@ -17,7 +18,6 @@ import { hasBlenderCatAsset } from './blender-cat-asset';
 
 const sphere = new THREE.SphereGeometry(1, 16, 10);
 const box = new THREE.BoxGeometry(1, 1, 1);
-const cone = new THREE.ConeGeometry(1, 1, 3);
 const cylinder = new THREE.CylinderGeometry(1, 1, 1, 16);
 const materials = new Map<string, THREE.MeshStandardMaterial>();
 function material(color: string) {
@@ -35,33 +35,6 @@ function rod(parent: THREE.Object3D, color: string, a: THREE.Vector3, b: THREE.V
   const mid = a.clone().add(b).multiplyScalar(0.5);
   const mesh = shape(parent, cylinder, color, mid.toArray(), [radius, a.distanceTo(b), radius]);
   mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), b.clone().sub(a).normalize()); return mesh;
-}
-
-/** Batch fixed pieces by material while preserving separately animated parts. */
-function batchMeshes(root: THREE.Object3D, deep = false, exclude: THREE.Object3D[] = []) {
-  root.updateMatrixWorld(true);
-  const inverse = root.matrixWorld.clone().invert();
-  const batches = new Map<THREE.Material, THREE.Mesh[]>();
-  const collect = (object: THREE.Object3D) => {
-    if (!(object instanceof THREE.Mesh) || object instanceof THREE.SkinnedMesh || exclude.includes(object) || Array.isArray(object.material)) return;
-    for (let parent: THREE.Object3D | null = object; parent && parent !== root; parent = parent.parent) if (!parent.visible) return;
-    const list = batches.get(object.material) ?? []; list.push(object); batches.set(object.material, list);
-  };
-  if (deep) root.traverse(collect); else root.children.forEach(collect);
-  for (const [mat, meshes] of batches) {
-    if (meshes.length < 2) continue;
-    const geometries = meshes.map(mesh => mesh.geometry.clone().applyMatrix4(new THREE.Matrix4().multiplyMatrices(inverse, mesh.matrixWorld)));
-    if (geometries.some(g => !g.index) && geometries.some(g => g.index)) {
-      // Extruded openings and primitive furniture may use different index layouts.
-      geometries.forEach((geometry, i) => {
-        if (geometry.index) { geometries[i] = geometry.toNonIndexed(); geometry.dispose(); }
-      });
-    }
-    const merged = mergeGeometries(geometries, false);
-    geometries.forEach(geometry => geometry.dispose());
-    if (!merged) continue;
-    meshes.forEach(mesh => mesh.removeFromParent()); root.add(new THREE.Mesh(merged, mat));
-  }
 }
 
 interface Resident { model: CatModel; base: THREE.Vector3; }
@@ -84,6 +57,14 @@ export class World {
 
   resetDexRotation() { this.dexPivot.quaternion.identity(); }
 
+  wheelHit(point: Point) {
+    const v = this.viewport;
+    this.camera.updateMatrixWorld(); this.room.updateMatrixWorld(true);
+    this.raycaster.setFromCamera(new THREE.Vector2((point.x - v.x) / v.w * 2 - 1, 1 - (point.y - v.y) / v.h * 2), this.camera);
+    const hit = this.raycaster.intersectObject(this.room, true)[0];
+    return !!hit && isWheelMesh(hit.object);
+  }
+
   rotateDex(from: Point, to: Point) {
     if (!this.dexModel) return;
     // A virtual trackball rotates in X/Y through its center and rolls in Z near its rim.
@@ -101,10 +82,20 @@ export class World {
   attackAge = 2;
   private lastDamage = 0;
   private attackModel?: CatModel;
-  camera = new THREE.PerspectiveCamera(58, 1, 0.1, 60);
-  viewZoom = 1.65;
-  private viewYaw = 0;
-  private viewPitch = Math.atan2(1.2, 7);
+  camera = new THREE.PerspectiveCamera(58, 1, 0.1, 90);
+  readonly lighting: RoomLighting;
+  private readonly room: THREE.Group;
+  viewZoom = MAIN_VIEW.zoom;
+  private viewYaw = MAIN_VIEW.yaw;
+  private viewPitch = MAIN_VIEW.pitch;
+  private entranceAge = ENTRANCE_DURATION;
+  get enteringRoom() { return this.entranceAge < ENTRANCE_DURATION; }
+  get entranceProgress() { return Math.min(1, this.entranceAge / ENTRANCE_DURATION); }
+  startEntrance() { this.resetView(); this.entranceAge = 0; entrancePose(this.camera, 0); }
+  finishEntrance() {
+    if (!this.enteringRoom) return;
+    this.entranceAge = ENTRANCE_DURATION; this.resetView();
+  }
   private viewReady = false;
   private residents = new Map<number, Resident>();
   private messes = new Map<number, THREE.Group>();
@@ -142,76 +133,9 @@ export class World {
     ball(this.groomingBackdrop, '#bac6b0', [0, -.35, 1], [2.3, .24, 1.8]);
     this.attackScene.add(new THREE.HemisphereLight('#fff2e7', '#604540', 3));
     const attackLight = new THREE.DirectionalLight('#ffffff', 3); attackLight.position.set(-2, 3, 4); this.attackScene.add(attackLight);
-    this.scene.background = new THREE.Color('#e8ddca');
-    this.scene.fog = new THREE.Fog('#e8ddca', 24, 42);
-    this.scene.add(new THREE.HemisphereLight('#fffaf0', '#b4a695', 2.6));
-    const sun = new THREE.DirectionalLight('#fff1db', 3.2); sun.position.set(-3, 8, 4); this.scene.add(sun);
-    const fill = new THREE.DirectionalLight('#d4e9ed', 1.2); fill.position.set(5, 3, -4); this.scene.add(fill);
-    this.camera.position.set(0, 1.65, 5.8); this.camera.lookAt(0, 0.45, -1.2);
-    block(this.scene, '#d6bea1', [0, -0.10, 0], [16, 0.2, 16]);
-    for (let i = -8; i <= 8; i++) block(this.scene, '#c7ae92', [i, 0.006, 0], [0.016, 0.008, 16]);
-    for (let x = -8; x < 8; x++) for (let z = -8; z < 8; z += 3) block(this.scene, '#c7ae92', [x + 0.5, 0.006, z + (x % 2 ? 1.5 : 0)], [1, 0.008, 0.012]);
-    const wallColors = ['#e4e3cf', '#ead9d1', '#d8e0df', '#e1dae5'];
-    const accents = ['#8d9d7d', '#bc8f85', '#85a4ae', '#a495b2'];
-    for (let direction = 0; direction < 1; direction++) {
-      const room = new THREE.Group(); this.scene.add(room);
-      block(room, wallColors[direction], [0, 2.65, -8], [10, 5.4, 0.18]);
-      block(room, '#fbefd8', [0, 0.17, -7.86], [10, 0.3, 0.12]);
-      block(room, '#d5c6ac', [0, 1.18, -7.86], [10, 0.055, 0.12]);
-      // One continuous living room, with an open doorway behind the viewer.
-      for (let x = -4.7; x < 5; x += 0.7) block(room, '#d2c9b5', [x, 0.66, -7.87], [0.025, 0.88, 0.08]);
-      shape(room, cylinder, accents[0], [RUG.x, 0.025, RUG.z], [RUG.radiusX, 0.035, RUG.radiusZ]);
-      shape(room, cylinder, '#e8ddc4', [RUG.x, 0.047, RUG.z], [RUG.radiusX - 0.15, 0.01, RUG.radiusZ - 0.15]);
-      shape(room, cylinder, accents[0], [RUG.x, 0.055, RUG.z], [RUG.radiusX - 0.23, 0.008, RUG.radiusZ - 0.23]);
-      for (const side of [-1, 1]) {
-        block(room, side < 0 ? '#ead9d1' : '#d8e0df', [side * 5, 2.65, -2], [0.18, 5.4, 12]);
-        block(room, '#fbefd8', [side * 4.87, 0.17, -2], [0.12, 0.3, 12]);
-        block(room, '#d5c6ac', [side * 4.87, 1.18, -2], [0.12, 0.055, 12]);
-        for (let z = -7.6; z < 4; z += 0.7) block(room, '#d2c9b5', [side * 4.87, 0.66, z], [0.08, 0.88, 0.025]);
-      }
-      // Low furnishings at the perimeter leave the shared floor clear for wandering.
-      block(room, '#b79370', [BENCH.x - 0.03, 0.42, BENCH.z], [0.9, 0.75, 2.8]);
-      block(room, '#b5bca0', [BENCH.x, 0.88, BENCH.z], [0.97, 0.22, 2.85]);
-      for (const dz of [-0.85, 0.05, 0.95]) ball(room, '#e1ceab', [BENCH.x, 1.03, BENCH.z + dz], [0.32, 0.12, 0.34]);
-      shape(room, cylinder, '#b78c72', [BED.x, 0.1, BED.z], [0.68, 0.18, 0.82]);
-      shape(room, cylinder, '#dfbd9c', [BED.x, 0.19, BED.z], [0.55, 0.06, 0.69]);
-      block(room, '#b59370', [POST.x, 0.14, POST.z], [1.05, 0.15, 1.05]);
-      shape(room, cylinder, '#c8b08a', [POST.x, 0.82, POST.z], [0.14, 1.35, 0.14]);
-      block(room, '#a2ac8f', [POST.x, 1.55, POST.z], [0.95, 0.12, 0.95]);
-      // Window and curtains.
-      block(room, '#f9efd9', [-2.35, 2.95, -7.75], [1.85, 2.1, 0.18]);
-      block(room, '#bad4d3', [-2.35, 2.95, -7.64], [1.58, 1.83, 0.04]);
-      ball(room, '#fae2a2', [-2.68, 3.35, -7.6], [0.24, 0.24, 0.035]);
-      block(room, '#f9efd9', [-2.35, 2.95, -7.59], [0.065, 1.9, 0.08]);
-      block(room, '#f9efd9', [-2.35, 2.95, -7.59], [1.65, 0.065, 0.08]);
-      for (const side of [-1, 1]) block(room, '#f0ddc4', [-2.35 + side * 1.01, 2.92, -7.52], [0.38, 2.4, 0.18]);
-      block(room, '#bb9876', [-2.35, 1.86, -7.4], [2.2, 0.12, 0.9]);
-      // Low cabinet, books and plant.
-      block(room, '#b79370', [2.38, 0.65, -7.1], [1.8, 1.2, 0.8]);
-      block(room, '#dec3a0', [2.38, 1.3, -7.1], [1.95, 0.12, 0.95]);
-      for (const side of [-1, 1]) {
-        block(room, '#c6a27b', [2.38 + side * 0.44, 0.72, -6.68], [0.78, 0.94, 0.05]);
-        ball(room, '#745b4c', [2.38 + side * 0.12, 0.8, -6.62], [0.04, 0.04, 0.03]);
-      }
-      shape(room, cylinder, '#d0a086', [2.98, 1.5, -7.35], [0.22, 0.35, 0.22]);
-      for (let i = 0; i < 6; i++) {
-        const a = i * Math.PI / 3;
-        const leaf = ball(room, i % 2 ? '#809676' : '#9caf87', [2.98 + Math.cos(a) * 0.22, 1.8 + i * 0.06, -7.35 + Math.sin(a) * 0.2], [0.14, 0.36, 0.08]);
-        leaf.rotation.z = Math.cos(a) * 0.65;
-      }
-      for (let i = 0; i < 3; i++) block(room, ['#a8b2a0', '#dca195', '#d7bf8c'][i], [1.65, 1.41 + i * 0.095, -7.35], [0.4, 0.085, 0.3]);
-      // Small cat portrait, built from geometry rather than external artwork.
-      block(room, '#b99879', [0.3, 2.75, -7.77], [1.36, 1.5, 0.12]);
-      block(room, '#f5ead3', [0.3, 2.75, -7.68], [1.17, 1.3, 0.04]);
-      const portrait = createCat({ color: accents[direction], accent: '#6d7164' });
-      portrait.root.scale.setScalar(0.45); portrait.root.position.set(0.3, 2.3, -7.5); room.add(portrait.root);
-      // Sunlight on the floor.
-      const patch = new THREE.Mesh(new THREE.PlaneGeometry(2, 1.7), new THREE.MeshBasicMaterial({ color: '#fff0c9', transparent: true, opacity: 0.12, depthWrite: false }));
-      patch.rotation.x = -Math.PI / 2; patch.rotation.z = -0.3; patch.position.set(-2.7, 0.012, -4.3); room.add(patch);
-      room.add(createFurniture());
-      batchMeshes(room, true);
-    }
-    batchMeshes(this.scene);
+    this.camera.position.copy(ROOM_EYE); this.camera.rotation.set(-MAIN_VIEW.pitch, -MAIN_VIEW.yaw, 0, 'YXZ');
+    const room = this.room = createRoom(); this.scene.add(room);
+    this.lighting = new RoomLighting(this.scene, room);
     this.scene.add(this.previews);
     this.freeWand.name = 'free-play-wand';
     rod(this.freeWand, '#8b6650', new THREE.Vector3(0.14, 0.5, 0), new THREE.Vector3(0.75, 1.05, 0), 0.018);
@@ -227,17 +151,18 @@ export class World {
     this.width = width; this.height = height; this.viewport = viewport;
     this.camera.aspect = viewport.w / viewport.h;
     // A fixed eye position at the front of the room: swipes turn your head.
-    if (!this.freeCamera) this.camera.position.set(0, 1.65, 5.8);
+    if (!this.freeCamera && !this.enteringRoom) this.camera.position.copy(ROOM_EYE);
     this.camera.fov = 65;
     this.attackCamera.aspect = width / height; this.attackCamera.updateProjectionMatrix();
     const firstResize = !this.viewReady;
     this.viewReady = true;
     if (firstResize) this.applyView();
     else this.applyProjection();
+    if (this.enteringRoom) entrancePose(this.camera, this.entranceProgress);
   }
   private applyView() {
     if (!this.viewReady) return;
-    if (!this.freeCamera) this.viewYaw = THREE.MathUtils.clamp(this.viewYaw, -Math.PI * 5 / 12, Math.PI * 5 / 12);
+    if (!this.freeCamera) this.viewYaw = THREE.MathUtils.clamp(this.viewYaw, -MAIN_VIEW.yawLimit, MAIN_VIEW.yawLimit);
     this.viewPitch = this.freeCamera
       ? THREE.MathUtils.clamp(this.viewPitch, -Math.PI / 2 + 0.01, Math.PI / 2 - 0.01)
       : THREE.MathUtils.clamp(this.viewPitch, -Math.PI / 9, Math.PI * 13 / 36);
@@ -257,15 +182,14 @@ export class World {
     this.camera.updateProjectionMatrix();
     this.boundFreeCamera(); this.camera.updateMatrixWorld();
   }
+  private cameraClearance() {
+    const halfHeight = this.camera.near * Math.tan(THREE.MathUtils.degToRad(this.camera.fov / 2)) / this.camera.zoom;
+    return Math.max(0.28, Math.hypot(this.camera.near, halfHeight, halfHeight * this.camera.aspect) + 0.08);
+  }
   private boundFreeCamera() {
     if (!this.freeCamera) return;
-    // Enclose the entire near plane in a sphere, so looking down or zooming out
-    // cannot cut through the floor, walls, or the edge of the open doorway.
-    const halfHeight = this.camera.near * Math.tan(THREE.MathUtils.degToRad(this.camera.fov / 2)) / this.camera.zoom;
-    const clearance = Math.max(0.28, Math.hypot(this.camera.near, halfHeight, halfHeight * this.camera.aspect) + 0.08);
-    this.camera.position.x = THREE.MathUtils.clamp(this.camera.position.x, -4.8 + clearance, 4.8 - clearance);
-    this.camera.position.y = THREE.MathUtils.clamp(this.camera.position.y, 0.07 + clearance, 5.25 - clearance);
-    this.camera.position.z = THREE.MathUtils.clamp(this.camera.position.z, -7.75 + clearance, 7.7 - clearance);
+    // Bound the full near-plane sphere inside the lounge, right doorway and wing.
+    this.camera.position.copy(clampRoomCamera(this.camera.position, this.cameraClearance()));
   }
   setViewOrientation(orientation: THREE.Quaternion) {
     this.camera.quaternion.copy(orientation);
@@ -281,11 +205,17 @@ export class World {
     if (!Number.isFinite(delta)) return;
     this.viewZoom = THREE.MathUtils.clamp(this.viewZoom + delta, this.freeCamera ? 0.2 : 1, this.freeCamera ? 12 : 2.5); this.applyProjection();
   }
-  resetView(zoom = 1.65) { this.camera.position.set(0, 1.65, 5.8); this.viewYaw = 0; this.viewPitch = Math.atan2(1.2, 7); this.viewZoom = zoom; this.applyView(); }
+  resetView(zoom = this.freeCamera ? 1.65 : MAIN_VIEW.zoom) {
+    this.entranceAge = ENTRANCE_DURATION;
+    this.camera.position.copy(this.freeCamera ? FREE_EYE : ROOM_EYE); this.viewYaw = this.freeCamera ? 0 : MAIN_VIEW.yaw;
+    this.viewPitch = this.freeCamera ? Math.atan2(1.2, 7) : MAIN_VIEW.pitch;
+    this.viewZoom = zoom; this.applyView();
+  }
   /** Camera-local movement, constrained to the room with near-plane clearance. */
   translateView(dx: number, dy: number, dz: number) {
     if (!this.freeCamera || ![dx, dy, dz].every(Number.isFinite)) return;
-    this.camera.position.add(new THREE.Vector3(dx, dy, dz).applyQuaternion(this.camera.quaternion));
+    const destination = this.camera.position.clone().add(new THREE.Vector3(dx, dy, dz).applyQuaternion(this.camera.quaternion));
+    this.camera.position.copy(moveRoomCamera(this.camera.position, destination, this.cameraClearance()));
     this.boundFreeCamera(); this.camera.updateMatrixWorld();
   }
   freeWandTargets(game: Game, point: Point) {
@@ -317,7 +247,9 @@ export class World {
     const dx = position.x - this.camera.position.x, dz = this.camera.position.z - position.z;
     this.viewYaw = Math.atan2(dx, dz);
     this.viewPitch = Math.atan2(this.camera.position.y - position.y, Math.hypot(dx, dz));
-    this.applyView();
+    // Explicit focus reaches every perch, including the right-hand window wing.
+    this.camera.rotation.set(-this.viewPitch, -this.viewYaw, 0, 'YXZ');
+    this.applyProjection();
   }
   project(position: THREE.Vector3) {
     this.vector.copy(position).applyMatrix4(this.camera.matrixWorldInverse);
@@ -423,6 +355,15 @@ export class World {
   }
 
   update(game: Game, dt: number, time: number, effectsDt = dt) {
+    if (this.enteringRoom) {
+      if (!game.active && !(game.phase === 'paused' && ['playing', 'tutorial'].includes(game.resumePhase))) this.finishEntrance();
+      else {
+        if (game.active) this.entranceAge = Math.min(ENTRANCE_DURATION, this.entranceAge + Math.max(0, effectsDt));
+        entrancePose(this.camera, this.entranceProgress);
+      }
+    }
+    updateRoomWheel(this.room, game.wheelAngle);
+    this.lighting.update();
     this.updateDex(game, time);
     if (this.freeCamera !== game.inFreePlay) {
       this.freeCamera = game.inFreePlay;
@@ -451,10 +392,11 @@ export class World {
       this.camera.updateProjectionMatrix();
     } else if (this.bonusCamera || this.victoryCamera) {
       this.bonusCamera = false; this.victoryCamera = false;
-      this.camera.position.set(0, 1.65, 5.8); this.applyView();
+      this.camera.position.copy(this.freeCamera ? FREE_EYE : ROOM_EYE); this.applyView();
     }
     const careDt = Math.max(0, Math.min(0.1, game.clock - this.lastCareClock));
     const paw = game.inBonus ? game.bonus?.paw : undefined;
+    this.lighting.setPawdicure(!!paw);
     this.groomingPaw.root.visible = !!paw;
     this.groomingBackdrop.visible = !!paw;
     if (paw) this.groomingPaw.update(paw, game.cats.find(cat => cat.id === paw.selectedCatId) ?? game.cats[0], game.bonus!.won);
@@ -481,12 +423,15 @@ export class World {
       }
     }
     if (game.inFreePlay) game.cats.forEach((cat, index) => {
-      if (this.freeBowls.has(cat.id)) return;
-      const event: CareEvent = { id: -cat.id, catId: cat.id, kind: 'hunger', progress: 1,
-        createdAt: 0, deadline: Infinity, nextAttackAt: Infinity, attacks: 0, position: freeBowlPosition(index, game.cats.length) };
-      const bowl = createMess(event, cat); bowl.name = `free-food-${cat.id}`;
-      bowl.position.set(event.position.x, this.floorHeight(event.position.x, event.position.z), event.position.z);
-      bowl.scale.setScalar(0.8); this.scene.add(bowl); this.freeBowls.set(cat.id, bowl);
+      const position = freeBowlPosition(index, game.cats.length);
+      let bowl = this.freeBowls.get(cat.id);
+      if (!bowl) {
+        const event: CareEvent = { id: -cat.id, catId: cat.id, kind: 'hunger', progress: 1,
+          createdAt: 0, deadline: Infinity, nextAttackAt: Infinity, attacks: 0, position };
+        bowl = createMess(event, cat); bowl.name = `free-food-${cat.id}`;
+        bowl.scale.setScalar(0.8); this.scene.add(bowl); this.freeBowls.set(cat.id, bowl);
+      }
+      bowl.position.set(position.x, this.floorHeight(position.x, position.z), position.z);
     });
     const isPreview = ['title', 'adoption', 'game-over', 'victory'].includes(game.phase);
     this.camera.updateMatrixWorld();
@@ -528,7 +473,7 @@ export class World {
         });
       } else {
         const patAge = game.clock - (this.freePats.get(cat.id) ?? -Infinity);
-        const patting = game.inFreePlay && patAge >= 0 && patAge < 1.2;
+        const patting = game.inFreePlay && cat.visit?.id !== 'wheel' && patAge >= 0 && patAge < 1.2;
         const lift = patting ? Math.sin(Math.PI * patAge / 1.2) : 0;
         const partner = game.inFreePlay ? game.cats.find(other => other.id === game.freeRoam.playmate(cat.id)) : undefined;
         const socialFocus = partner ? new THREE.Vector3(partner.position.x, partner.elevation + 0.45, partner.position.z) : undefined;
@@ -575,8 +520,8 @@ export class World {
     this.updateAttack(game, effectsDt);
   }
 
-  private floorHeight(x: number, z: number) {
-    return ((x - RUG.x) / RUG.radiusX) ** 2 + ((z - RUG.z) / RUG.radiusZ) ** 2 < 1 ? 0.07 : 0.015;
+  private floorHeight(_x: number, _z: number) {
+    return 0.015;
   }
 
   private updateAttack(game: Game, dt: number) {

@@ -49,7 +49,7 @@ describe('victory celebration', () => {
     game.reset(); world.resetView(); world.update(game, 0, 10);
     expect(world.camera.position.equals(originalPosition)).toBe(true);
     expect(world.camera.quaternion.angleTo(originalRotation)).toBeLessThan(0.000001);
-    expect(world.camera.zoom).toBe(1.65);
+    expect(world.camera.zoom).toBe(1);
     expect(world.victoryHearts()).toEqual([]);
     expect(previews(world)).toHaveLength(0);
     expect(crowd.every(cat => cat.parent === null)).toBe(true);

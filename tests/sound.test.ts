@@ -1,18 +1,38 @@
 import { describe, expect, it } from 'vitest';
 import { Game } from '../src/simulation';
 import { RoomSounds, type SoundId, type SoundSink } from '../src/sound';
+import { WHEEL_RUN_SPEED } from '../src/cat-wheel';
 
 function setup() {
   const game = new Game(42); game.reset();
   const sounds = new RoomSounds(), calls: SoundId[] = [];
   let stops = 0;
-  const sink: SoundSink = { play(id) { calls.push(id); }, stop() { stops++; } };
+  const wheelSpeeds: number[] = [];
+  const sink: SoundSink = { play(id) { calls.push(id); }, setWheelSpeed(speed) { wheelSpeeds.push(speed); }, stop() { stops++; } };
   const update = () => sounds.update(game, sink);
   update();
-  return { game, sounds, calls, sink, update, stops: () => stops };
+  return { game, sounds, calls, sink, update, wheelSpeeds, stops: () => stops };
 }
 
 describe('room audio follows gameplay', () => {
+  it('follows the wheel through approach, acceleration, pause, braking and exit', () => {
+    const t = setup(), cat = t.game.cats[0]; t.game.phase = 'tutorial';
+    cat.nextNeedAt = cat.decisionAt = Infinity;
+    expect(t.game.visitFurniture(cat.id, 'wheel')).toBe(true);
+    t.update(); expect(t.wheelSpeeds.at(-1)).toBe(0);
+    for (let i = 0; i < 1000 && t.game.wheelSpeed < WHEEL_RUN_SPEED; i++) { t.game.tick(.05); t.update(); }
+    expect(t.wheelSpeeds.at(-1)).toBe(WHEEL_RUN_SPEED);
+    expect(t.wheelSpeeds.some(speed => speed > 0 && speed < WHEEL_RUN_SPEED)).toBe(true);
+    const beforePause = t.wheelSpeeds.length;
+    t.game.pause(); t.update(); t.game.tick(3); t.update();
+    expect(t.stops()).toBe(1); expect(t.wheelSpeeds).toHaveLength(beforePause);
+    t.game.resume(); t.update(); expect(t.wheelSpeeds.at(-1)).toBe(WHEEL_RUN_SPEED);
+    t.game.spawn(cat, 'hunger'); t.game.tick(.1); t.update();
+    expect(t.wheelSpeeds.at(-1)).toBeGreaterThan(0);
+    expect(t.wheelSpeeds.at(-1)).toBeLessThan(WHEEL_RUN_SPEED);
+    for (let i = 0; i < 1000 && cat.visit; i++) { t.game.tick(.05); t.update(); }
+    expect(cat.visit).toBeUndefined(); expect(t.wheelSpeeds.at(-1)).toBe(0);
+  });
   it('calls once for a new need but does not purr for routine cleaning', () => {
     const t = setup(); t.game.spawn(t.game.cats[0], 'poop'); t.update(); t.update();
     expect(t.calls).toEqual(['meow']);

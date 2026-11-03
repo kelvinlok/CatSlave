@@ -5,7 +5,10 @@ async function tap(page: Page, id: string) {
   const h = await page.evaluate(id => window.__CATSLAVE_TEST__.hud.hits.find(h => h.id === id)!, id);
   await page.touchscreen.tap(h.x + h.w / 2, h.y + h.h / 2);
 }
-async function start(page: Page) {
+async function start(page: Page, lightweight = false) {
+  // State/gyro checks need timely frames on software GPUs; visual checks below
+  // and room-camera captures exercise the complete authored lounge.
+  if (lightweight) await page.route('**/models/lounge.glb', route => route.abort());
   await page.goto('/'); await page.waitForFunction(() => !!window.__CATSLAVE_TEST__);
   await page.evaluate(() => window.__CATSLAVE_TEST__.setManualClock(true)); await tap(page, 'start');
 }
@@ -14,6 +17,7 @@ async function sample(page: Page, beta: number, gamma: number, alpha = 0) {
   await page.evaluate(({ alpha, beta, gamma }) => window.dispatchEvent(Object.assign(new Event('deviceorientation'), { alpha, beta, gamma })), { alpha, beta, gamma });
 }
 async function sensor(page: Page, permission: string) {
+  await page.route('**/models/lounge.glb', route => route.abort());
   await page.addInitScript(permission => {
     Object.defineProperty(window, 'DeviceOrientationEvent', { configurable: true, value: class extends Event {
       static async requestPermission() { return permission; }
@@ -22,24 +26,26 @@ async function sensor(page: Page, permission: string) {
 }
 
 test('stage completion resets gaze and zoom while pause preserves the view', async ({ page }, info) => {
-  await start(page);
+  await start(page, true);
   const original = await camera(page);
   await page.evaluate(() => { const t = window.__CATSLAVE_TEST__; t.world.lookView(220, 100); t.world.zoomView(0.8); t.refresh(); });
   const turned = await camera(page);
   await tap(page, 'pause'); await tap(page, 'resume'); expect(await camera(page)).toEqual(turned);
   for (let stage = 0; stage < 5; stage++) {
-    await page.evaluate(() => {
+    const phase = await page.evaluate(() => {
       const t = window.__CATSLAVE_TEST__; t.world.lookView(180, -60); t.world.zoomView(0.8);
       t.game.cats.forEach(cat => { cat.nextNeedAt = Infinity; }); t.game.tick(t.game.timeLeft); t.finishBonus();
+      return t.game.phase;
     });
-    if (stage < 4) await expect.poll(() => camera(page)).toEqual(original);
+    expect(phase).toBe(stage < 4 ? 'adoption' : 'victory');
+    if (stage < 4) await expect.poll(() => camera(page), { timeout: 30_000 }).toEqual(original);
     else {
       // Victory has its own seated group portrait; the player's saved gaze stays reset.
       await expect.poll(() => page.evaluate(() => window.__CATSLAVE_TEST__.world.camera.zoom)).toBe(1);
       expect(await camera(page)).not.toEqual(original);
     }
     expect(await page.evaluate(() => window.__CATSLAVE_TEST__.world.viewZoom)).toBe(stage < 4
-      ? await page.evaluate(() => Math.min(1, window.__CATSLAVE_TEST__.world.camera.aspect / 0.65)) : 1.65);
+      ? await page.evaluate(() => Math.min(1, window.__CATSLAVE_TEST__.world.camera.aspect / 0.65)) : 1);
     expect(await page.evaluate(() => window.__CATSLAVE_TEST__.game.phase)).toBe(stage < 4 ? 'adoption' : 'victory');
     if (stage === 0) await page.screenshot({ path: `artifacts/stage-reset-${info.project.name}.png` });
     if (stage < 4) {
@@ -47,7 +53,7 @@ test('stage completion resets gaze and zoom while pause preserves the view', asy
       await tap(page, `adopt:${id}`); await tap(page, `upgrade:${['sweeper', 'mop', 'brush', 'food'][stage]}`);
       await tap(page, `upgrade:${['sweeper', 'mop', 'brush', 'food'][stage]}`);
       expect(await camera(page)).toEqual(original);
-      await expect.poll(() => page.evaluate(() => window.__CATSLAVE_TEST__.world.viewZoom)).toBe(1.65);
+      await expect.poll(() => page.evaluate(() => window.__CATSLAVE_TEST__.world.viewZoom)).toBe(1);
     }
   }
 });
@@ -68,9 +74,9 @@ test('pointer swipes turn the gaze from a fixed low eye position and reset resto
   expect(await camera(page)).not.toEqual(original);
   expect(await page.evaluate(() => window.__CATSLAVE_TEST__.world.camera.position.toArray())).toEqual(position);
   const panned = await camera(page); await swipe('pointermove', 200, 350); expect(await camera(page)).toEqual(panned);
-  await tap(page, 'view:in'); expect(await page.evaluate(() => window.__CATSLAVE_TEST__.world.viewZoom)).toBeCloseTo(1.85);
+  await tap(page, 'view:in'); expect(await page.evaluate(() => window.__CATSLAVE_TEST__.world.viewZoom)).toBeCloseTo(1.2);
   await tap(page, 'view:reset'); expect(await camera(page)).toEqual(original);
-  expect(await page.evaluate(() => window.__CATSLAVE_TEST__.world.viewZoom)).toBe(1.65);
+  expect(await page.evaluate(() => window.__CATSLAVE_TEST__.world.viewZoom)).toBe(1);
   await page.screenshot({ path: `test-results/close-view-${info.project.name}.png` });
   for (let i = 0; i < 5; i++) await tap(page, 'view:out');
   expect(await page.evaluate(() => window.__CATSLAVE_TEST__.world.viewZoom)).toBe(1);
@@ -79,8 +85,8 @@ test('pointer swipes turn the gaze from a fixed low eye position and reset resto
 test('off-screen needs focus their real target before care', async ({ page }) => {
   await start(page);
   const id = await page.evaluate(() => {
-    const t = window.__CATSLAVE_TEST__; t.game.cats[0].position = { x: -3.1, z: 4 };
-    t.game.spawn(t.game.cats[0], 'poop'); t.world.lookView(10000, -10000); t.refresh();
+    const t = window.__CATSLAVE_TEST__; t.game.cats[0].position = { x: 0.5, z: -4 };
+    t.game.spawn(t.game.cats[0], 'poop'); t.world.lookView(-10000, -10000); t.refresh();
     return t.game.events[0].id;
   });
   expect(await page.evaluate(() => {
@@ -190,7 +196,7 @@ test('denied gyro permission leaves swipe controls usable', async ({ page }) => 
   await sensor(page, 'denied'); await start(page); await tap(page, 'view:gyro');
   await expect.poll(() => page.evaluate(() => window.__CATSLAVE_TEST__.hud.gyroStatus)).toBe('denied');
   const before = await camera(page); await sample(page, 80, 30); expect(await camera(page)).toEqual(before);
-  await tap(page, 'view:in'); expect(await page.evaluate(() => window.__CATSLAVE_TEST__.world.viewZoom)).toBeCloseTo(1.85);
+  await tap(page, 'view:in'); expect(await page.evaluate(() => window.__CATSLAVE_TEST__.world.viewZoom)).toBeCloseTo(1.2);
 });
 
 test('missing sensor data falls back without leaving gyro enabled', async ({ page }) => {

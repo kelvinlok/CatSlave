@@ -1021,6 +1021,18 @@ export class Hud {
     else {
       if (game.inFreePlay) this.freePlay(game, world);
       else if (game.inBonus) this.bonusRound(game, world);
+      else if (world.enteringRoom && game.active) {
+        const v = world.viewport;
+        const fade = Math.min(1, (1 - world.entranceProgress) * 5);
+        ctx.fillStyle = `rgba(20, 24, 22, ${0.86 * fade})`;
+        const bar = Math.min(42, v.h * 0.065) * fade;
+        ctx.fillRect(v.x, v.y, v.w, bar);
+        ctx.fillRect(v.x, v.y + v.h - bar, v.w, bar);
+        text(ctx, 'Welcome home', this.width / 2, this.layout.header.y + 28, 23, C.ink, 'center', 'serif');
+        this.button('enter-room', 'Skip entrance →', this.width / 2 - 90, v.y + v.h + 10, 180, 48);
+        const pause = this.layout.pause;
+        this.button('pause', 'Ⅱ', pause.x, pause.y, pause.w, pause.h);
+      }
       else this.gameplay(game, world);
       if (game.phase === 'paused') { this.hits = []; this.pause(game); }
     }

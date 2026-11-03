@@ -71,6 +71,7 @@ const cantonese: Record<string, string> = {
   'White with grey-brown tabby patches': '白色配灰褐虎斑',
   'Grey-brown tabby with white toe tips': '灰褐虎斑配白色趾尖',
   'Back': '返回', 'Main menu?': '返主選單？', 'Restart?': '重新開始？',
+  'Welcome home': '歡迎返嚟', 'Skip entrance →': '直接入房 →',
   'Your free play unlock and cats are saved.': '自由玩模式同貓貓都已儲存。', 'Progress will be reset.': '進度會重新計過。',
   'Cancel': '取消', 'Restart': '重新開始', 'Paused': '暫停咗', 'Resume  →': '繼續玩  →',
   'Restart Pawdicure': '重新修甲', 'Restart free play': '重新自由玩', 'Restart tutorial': '重新練習', 'Restart shift': '重新開工',

@@ -3,7 +3,7 @@ import type { Game } from '../../src/simulation';
 import type { World } from '../../src/world';
 import type { Hud } from '../../src/hud';
 
-declare global { interface Window { __CATSLAVE_TEST__: { game: Game; world: World; hud: Hud; refresh(effectsDt?: number): void; setManualClock(value: boolean): void; finishBonus(): void; stats(): object; }; } }
+declare global { interface Window { __CATSLAVE_TEST__: { game: Game; world: World; hud: Hud; refresh(effectsDt?: number): void; setManualClock(value: boolean): void; finishBonus(): void; stats(): object; captureFrame(): string; }; } }
 type Hit = { x: number; y: number; w: number; h: number; id: string; eventId?: number; arch?: { x: number; y: number; outerY: number; innerY: number } };
 async function hit(page: Page, id: string): Promise<Hit> {
   await expect.poll(() => page.evaluate(id => !!window.__CATSLAVE_TEST__?.hud.hits.find(h => h.id === id), id)).toBe(true);

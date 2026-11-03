@@ -85,9 +85,9 @@ test('free play unlock, controls, interaction and saved roster', async ({ page }
   expect(await page.evaluate(() => window.__CATSLAVE_TEST__.game.phase)).toBe('free-play');
   await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
   await page.keyboard.down('w');
-  await expect.poll(() => page.evaluate(() => window.__CATSLAVE_TEST__.world.camera.position.z)).toBeLessThan(5.8);
+  await expect.poll(() => page.evaluate(() => window.__CATSLAVE_TEST__.world.camera.position.z)).toBeLessThan(4.8);
   await page.keyboard.up('w');
-  expect(await page.evaluate(() => window.__CATSLAVE_TEST__.world.camera.position.z)).toBeLessThan(5.8);
+  expect(await page.evaluate(() => window.__CATSLAVE_TEST__.world.camera.position.z)).toBeLessThan(4.8);
   const zoom = await page.evaluate(() => window.__CATSLAVE_TEST__.world.camera.zoom);
   if (info.project.name === 'mobile-webkit') await tap('view:in');
   else await page.mouse.wheel(0, -120);

@@ -1,3 +1,5 @@
+import { restoreRoomTextures } from './room-asset';
+import { MAIN_VIEW } from './room-camera';
 import { getLanguage, setLanguage, syncDocumentLanguage, translate } from './i18n';
 import * as THREE from 'three';
 import './style.css';
@@ -59,6 +61,12 @@ let lastTime = performance.now();
 let width = innerWidth, height = innerHeight;
 let fpsFrames = 0, fpsTime = 0, fps = 60;
 let manualClock = false;
+let resetFrameClock = false;
+
+function finishEntrance() {
+  world.finishEntrance(); resetFrameClock = true;
+  gyro.recenter(world.camera.quaternion); hud.invalidate();
+}
 
 let freeDrag: { point: Point; pan: boolean; mode: 'camera' | 'pet' | 'wand' } | undefined;
 let dexDrag: Point | undefined;
@@ -138,6 +146,7 @@ function action(id: string) {
   hud.draw(game, world, 0, true);
   if (contextLost || document.hidden || hud.rotateRequired || !hud.controls.some(hit => hit.id === id)) return;
   const keyboardFocus = hud.focusedId;
+  if (world.enteringRoom && game.active && !['pause', 'sound', 'language'].includes(id)) finishEntrance();
   const hadVacuum = game.vacuumUnlocked;
   cancelGesture();
   if (id === 'language') {
@@ -200,6 +209,8 @@ function action(id: string) {
     if (care) { world.focusOn(world.eventPosition(care)); gyro.recenter(world.camera.quaternion); }
   }
   syncWorldViewport(); updateWorld(0, performance.now() / 1000, 0);
+  if (game.active && ['start', 'learn', 'restart', 'confirm-restart'].includes(id)
+    && !matchMedia('(prefers-reduced-motion: reduce)').matches) world.startEntrance();
   if (!hadVacuum && game.vacuumUnlocked) hud.celebrateVacuumUnlock();
   audio.setBlocked(!game.running || document.hidden);
   if (id.startsWith('tool:')) audio.play('select');
@@ -249,6 +260,7 @@ canvas.addEventListener('pointerdown', event => {
   audio.unlock();
   hud.draw(game, world, 0, true);
   const p = point(event); const hit = hud.hit(p.x, p.y);
+  if (world.enteringRoom && game.active && !hit) { finishEntrance(); return; }
   hud.focusedId = undefined;
   if (hit?.disabled) return;
   if (game.phase === 'bonus' && hit?.id.startsWith('pat:')) { action(hit.id); return; }
@@ -259,6 +271,10 @@ canvas.addEventListener('pointerdown', event => {
     const catId = world.freeCatHit(p);
     if (catId !== undefined && game.freeInteraction === 'pet') game.chooseFreeCat(catId);
     const mode = event.button === 2 ? 'camera' : game.freeInteraction;
+    if (mode === 'pet' && catId === undefined && game.selectedFreeCatId !== undefined && world.wheelHit(p)
+      && game.visitFurniture(game.selectedFreeCatId, 'wheel')) {
+      hud.invalidate(); return;
+    }
     freeDrag = { point: p, pan: event.button === 2 || event.shiftKey, mode };
     if (mode === 'pet' && game.selectedFreeCatId !== undefined && world.freePetHit(game.selectedFreeCatId, p)) {
       game.interactFreeCat('pet'); world.freePat(game.selectedFreeCatId); audio.play('pat'); audio.play('purr');
@@ -331,6 +347,9 @@ window.addEventListener('keydown', event => {
     event.preventDefault(); movementKeys.add(event.key.toLowerCase()); return;
   }
   if (event.repeat || hud.rotateRequired || contextLost || document.hidden || event.ctrlKey || event.metaKey || event.altKey) return;
+  if (world.enteringRoom && game.active && !hud.focusedId && ['Enter', ' '].includes(event.key)) {
+    event.preventDefault(); finishEntrance(); return;
+  }
   audio.unlock();
   hud.draw(game, world, 0, true);
   if (event.key === 'Tab' || (hud.focusedId && ['ArrowDown', 'ArrowUp', 'ArrowLeft', 'ArrowRight'].includes(event.key))) {
@@ -360,7 +379,7 @@ window.addEventListener('keydown', event => {
   hud.draw(game, world, 0, true);
 });
 function restoreGraphics() {
-  restoreBlenderCatTextures(); hud.texture.needsUpdate = true;
+  restoreBlenderCatTextures(); restoreRoomTextures(); hud.texture.needsUpdate = true;
   lastTime = performance.now(); hud.invalidate();
 }
 document.addEventListener('visibilitychange', () => {
@@ -385,9 +404,12 @@ window.visualViewport?.addEventListener('resize', scheduleResize);
 window.visualViewport?.addEventListener('scroll', scheduleResize);
 
 function frame(now: number) {
+  const enteringRoom = world.enteringRoom;
   const realDt = Math.max(0, (now - lastTime) / 1000); lastTime = now;
-  // Long stalls never silently consume a cat's patience.
-  const timedPlay = game.running && !(game.phase === 'bonus' && ['intro', 'result'].includes(game.bonus?.status ?? ''));
+  // Long stalls never silently consume a cat's patience. Free play has no
+  // deadlines, so loading / shader stalls should only use the clamped dt below.
+  const timedPlay = game.running && game.phase !== 'free-play' && !enteringRoom && !resetFrameClock
+    && !(game.phase === 'bonus' && ['intro', 'result'].includes(game.bonus?.status ?? ''));
   if (realDt > 1 && timedPlay && !manualClock) { cancelGesture(); game.pause('A little interruption. Ready to continue?'); }
   const dt = Math.min(realDt, 0.1);
   if (!contextLost) {
@@ -398,7 +420,7 @@ function frame(now: number) {
       if (held.work) applyGesture(held);
     }
     if (game.phase === 'free-play' && freeDrag?.mode === 'wand') waveWand(freeDrag.point);
-    if (!manualClock && !hud.rotateRequired) game.tick(dt);
+    if (!manualClock && !hud.rotateRequired && !world.enteringRoom) game.tick(dt);
     audio.setBlocked(!game.running || document.hidden || hud.rotateRequired);
     roomSounds.update(game, audio);
     if (game.phase === 'free-play') {
@@ -419,16 +441,22 @@ function frame(now: number) {
       cancelGesture();
       if (game.phase === 'adoption' || game.phase === 'victory' || (game.phase === 'playing' && previousPhase === 'upgrade')) {
         // The two adoption previews need a wider frame than active play.
-        world.resetView(game.phase === 'adoption' ? Math.min(1, world.camera.aspect / 0.65) : 1.65);
+        world.resetView(game.phase === 'adoption' ? Math.min(1, world.camera.aspect / 0.65) : MAIN_VIEW.zoom);
         gyro.recenter(world.camera.quaternion);
       }
       previousPhase = game.phase;
     }
     if (previousRevision !== game.revision) { hud.invalidate(); previousRevision = game.revision; }
-    const gaze = gyro.step(world.camera.quaternion, game.active && !hud.rotateRequired && !document.hidden && pointerId === undefined);
+    const gaze = gyro.step(world.camera.quaternion, game.active && !world.enteringRoom && !hud.rotateRequired && !document.hidden && pointerId === undefined);
     if (gaze && 1 - Math.abs(gaze.dot(world.camera.quaternion)) > 1e-12) { world.setViewOrientation(gaze); hud.invalidate(); }
     syncWorldViewport(); updateWorld(dt, now / 1000, manualClock ? 0 : dt); hud.draw(game, world, dt);
     renderFrame();
+    // Start timing gameplay after the final cinematic render (or a skip), so
+    // its shader/loading cost cannot immediately open the interruption screen.
+    if (resetFrameClock || enteringRoom && !world.enteringRoom) {
+      lastTime = performance.now(); resetFrameClock = false;
+      gyro.recenter(world.camera.quaternion);
+    }
     fpsFrames++; fpsTime += realDt;
     if (fpsTime >= 1) { fps = Math.round(fpsFrames / fpsTime); fpsTime = 0; fpsFrames = 0; }
   }
@@ -458,6 +486,7 @@ if (import.meta.env.MODE === 'test') {
     setManualClock(value: boolean) { manualClock = value; },
     refresh(effectsDt = 0) { syncWorldViewport(); updateWorld(0, performance.now() / 1000, effectsDt); hud.draw(game, world, 0, true); },
     stats() { return { fps, calls: renderer.info.render.calls, triangles: renderer.info.render.triangles, textures: renderer.info.memory.textures, geometries: renderer.info.memory.geometries }; },
+    captureFrame() { renderFrame(); return canvas.toDataURL('image/png'); },
   } });
   // State-aware visual inspection is confined to the test build, like the input fixtures.
   Object.assign(window, { __THREE_GAME_TEST_HOOKS__: {

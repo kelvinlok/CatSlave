@@ -96,7 +96,7 @@ describe('articulated cat animation', () => {
     const { model, cat } = fixture('crawling');
     const box = FURNITURE.find(spot => spot.id === 'box')!;
     const inside = box.route[box.route.length - 1];
-    cat.position = { x: inside.x, z: inside.z }; cat.yaw = Math.PI;
+    cat.position = { x: inside.x, z: inside.z }; cat.yaw = box.yaw;
     cat.visit = { id: 'box', phase: 'leave', route: [...box.route].reverse().slice(1).map(point => ({ ...point })),
       index: 0, progress: 0, from: { ...inside }, until: 0, leaveRequested: true };
     const routeBefore = JSON.stringify(cat.visit.route);
@@ -120,8 +120,8 @@ describe('articulated cat animation', () => {
     }
     expect(checkedContacts).toBeGreaterThan(350);
     expect(cat.visit!.index).toBe(2);
-    expect(cat.position.z).toBeGreaterThan(inside.z + 1.1);
-    expect(cat.yaw).toBe(Math.PI); expect(cat.activity).toBe('crawling');
+    expect(cat.position.x).toBeGreaterThan(inside.x + 1.1);
+    expect(cat.yaw).toBe(box.yaw); expect(cat.activity).toBe('crawling');
     expect(JSON.stringify(cat.visit!.route)).toBe(routeBefore);
     const beforePause = snapshot(model.root);
     animateCat(model, cat, lastTime); expect(snapshot(model.root)).toEqual(beforePause);

@@ -3,6 +3,7 @@ import type { CatState } from './types';
 import { ROOM } from './config';
 import { jumpCurve, JUMP_TAKEOFF, JUMP_TOUCHDOWN } from './cat-jump';
 import { updateBlenderCatRig } from './blender-cat-rig';
+import { WHEEL, WHEEL_RUN_SPEED, wheelTreadRise } from './cat-wheel';
 
 const TAU = Math.PI * 2;
 const clamp = (n: number, min = 0, max = 1) => Math.max(min, Math.min(max, n));
@@ -81,19 +82,22 @@ function targetPose(model: CatModel, cat: CatState, time: number, angry: boolean
     earBack: angry ? 0.65 : 0, eyeOpen: happy ? 0.17 : angry ? 0.52 : blink(time, cat.id),
     feet: Array.from({ length: 4 }, () => ({ y: 0.07, z: 0.085 })),
   };
-  const walking = cat.activity === 'walking' || cat.activity === 'crawling';
+  const running = cat.activity === 'running';
+  const walking = cat.activity === 'walking' || cat.activity === 'crawling' || running;
   if (walking) {
     const crawl = cat.activity === 'crawling';
     const direction = crawl ? crawlDirection(cat) : 1;
-    const phaseMultiplier = crawl ? 3 : 2;
+    const phaseMultiplier = crawl ? 3 : running ? 1.4 : 2;
     // Simulation stride is radians per ten world units. A 62% stance phase
     // moves each planted foot backwards at precisely the root's forward speed.
-    const stance = 0.62, speed = 1 / (10 * Math.max(0.1, model.root.scale.z) * phaseMultiplier);
+    const stance = running ? .56 : .62, speed = 1 / (10 * Math.max(0.1, model.root.scale.z) * phaseMultiplier);
     const reach = speed * TAU * stance / 2;
-    const offsets = [0, 0.5, 0.75, 0.25]; // Four-beat walk, always at least two supports.
-    p.hipY = 0.50 + Math.sin(cat.stride * phaseMultiplier * 2) * 0.003;
+    const offsets = running ? [0, .5, .5, 0] : [0, .5, .75, .25]; // Diagonal trot or four-beat walk.
+    const runWeight = running ? clamp((cat.wheelRunSpeed ?? WHEEL_RUN_SPEED) / .3) : 1;
+    p.hipY = (running ? .52 : .50) + Math.sin(cat.stride * phaseMultiplier * 2) * (running ? .014 * runWeight : .003);
     p.bodyY = p.hipY - 0.57; p.headY = p.bodyY * 0.55;
     p.headPitch = 0.035 + Math.sin(cat.stride * phaseMultiplier) * 0.018;
+    if (running) { p.bodyPitch = -.025 * runWeight; p.headYaw *= .2; }
     p.tailPitch = -0.62; p.tailSway *= 0.65;
     p.feet.forEach((foot, i) => {
       const phase = cycle(cat.stride * phaseMultiplier / TAU + offsets[i], 1);
@@ -104,7 +108,14 @@ function targetPose(model: CatModel, cat: CatState, time: number, angry: boolean
         const m = -speed * TAU * (1 - stance);
         foot.z += direction * ((2 * u ** 3 - 3 * u ** 2 + 1) * -reach + (u ** 3 - 2 * u ** 2 + u) * m
           + (-2 * u ** 3 + 3 * u ** 2) * reach + (u ** 3 - u ** 2) * m);
-        foot.y += Math.sin(Math.PI * u) ** 2 * (crawl ? 0.065 : 0.115);
+        foot.y += Math.sin(Math.PI * u) ** 2 * (crawl ? .065 : running ? .16 : .115);
+      }
+      if (running) {
+        foot.z = lerp(.085, foot.z, runWeight);
+        foot.y = lerp(.07, foot.y, runWeight);
+        const scale = Math.max(.1, model.root.scale.z);
+        const forward = ((i < 2 ? .4 : -.62) + foot.z) * scale;
+        foot.y += wheelTreadRise(forward) / scale;
       }
     });
   }
@@ -369,6 +380,14 @@ export function animateCat(model: CatModel, cat: CatState, time: number, options
   });
   model.anger.visible = angry;
   p.feet.forEach((foot, i) => placeFoot(model, i, p.hipY - (i < 2 ? p.frontHipDrop : 0), foot.y, foot.z));
+  if (cat.activity === 'running') {
+    // Let each sole lie tangent to the curved inner track, including native rigs.
+    p.feet.forEach((foot, i) => {
+      const forward = ((i < 2 ? .4 : -.62) + foot.z) * model.root.scale.z;
+      const offset = clamp(forward / WHEEL.innerRadius, -.95, .95);
+      model.paws[i].rotation.x -= Math.asin(offset);
+    });
+  }
   // Keep the tail attached to the rump as the torso bows or leans.
   model.tail.position.y = 0.82 * Math.cos(p.bodyPitch) + 0.76 * Math.sin(p.bodyPitch) + p.bodyY;
   model.tail.position.z = -0.76 * Math.cos(p.bodyPitch) + 0.82 * Math.sin(p.bodyPitch) + p.bodyZ;

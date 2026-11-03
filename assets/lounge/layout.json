@@ -1,0 +1,372 @@
+{
+  "source": "n.mp4, 91 second walkthrough; approximate scale, furniture and relative layout retained",
+  "bounds": {
+    "minX": -7.8,
+    "maxX": 9.5,
+    "minZ": -8,
+    "maxZ": 8,
+    "height": 5.4
+  },
+  "mainRoom": {
+    "minX": -7.8,
+    "maxX": 5,
+    "minZ": -8,
+    "maxZ": 8
+  },
+  "sunroom": {
+    "minX": 5,
+    "maxX": 9.5,
+    "minZ": -2.5,
+    "maxZ": 7.5
+  },
+  "furniture": {
+    "tree": {
+      "x": -6.85,
+      "z": 1.7,
+      "platforms": [
+        {
+          "x": -6.6,
+          "z": 2.15,
+          "height": 0.56
+        },
+        {
+          "x": -6.95,
+          "z": 1.65,
+          "height": 1.22
+        },
+        {
+          "x": -6.65,
+          "z": 1.3,
+          "height": 1.96
+        }
+      ]
+    },
+    "box": {
+      "x": -7.05,
+      "z": -5.7,
+      "height": 0.08,
+      "openingFaces": "+x"
+    },
+    "window": {
+      "x": 8.55,
+      "z": 1.6,
+      "height": 1.55,
+      "step": {
+        "x": 7.7,
+        "z": 1.6,
+        "height": 0.65
+      }
+    },
+    "cabinet": {
+      "x": -6.65,
+      "z": -0.85,
+      "height": 1.62
+    },
+    "bench": {
+      "x": 2.65,
+      "z": 6.4,
+      "height": 0.78
+    },
+    "bed": {
+      "x": 0.45,
+      "z": -5.5,
+      "height": 0.22
+    },
+    "post": {
+      "x": -6.85,
+      "z": 1.7,
+      "height": 0.08
+    },
+    "sun": {
+      "x": 0,
+      "z": 2.1,
+      "height": 0
+    },
+    "rug": {
+      "x": 0.4,
+      "z": 0,
+      "height": 0
+    },
+    "wheel": {
+      "x": -1.65,
+      "z": 6.5,
+      "height": 0.32,
+      "centerY": 1.5,
+      "innerRadius": 1.18,
+      "outerRadius": 1.3,
+      "depth": 0.9,
+      "approach": {
+        "x": -1.65,
+        "z": 5.35,
+        "height": 0
+      }
+    }
+  },
+  "obstacles": [
+    {
+      "id": "green-sofa",
+      "minX": -0.01,
+      "maxX": 3.66,
+      "minZ": 5.72,
+      "maxZ": 7.315
+    },
+    {
+      "id": "cubbies",
+      "minX": -7.7,
+      "maxX": -6.4,
+      "minZ": -7.6,
+      "maxZ": -0.4
+    },
+    {
+      "id": "floor-chair-a",
+      "minX": -6.3,
+      "maxX": -5.15,
+      "minZ": -5.35,
+      "maxZ": -4.15
+    },
+    {
+      "id": "floor-chair-b",
+      "minX": -6.3,
+      "maxX": -5.15,
+      "minZ": -2.9,
+      "maxZ": -1.7
+    },
+    {
+      "id": "cream-loveseat",
+      "minX": 3.6,
+      "maxX": 4.9,
+      "minZ": 2.8,
+      "maxZ": 5.6
+    },
+    {
+      "id": "entry-tree",
+      "minX": -7.7,
+      "maxX": -6.15,
+      "minZ": 0.9,
+      "maxZ": 2.65
+    },
+    {
+      "id": "window-cabinets",
+      "minX": 8.25,
+      "maxX": 9.25,
+      "minZ": -2.35,
+      "maxZ": 7.35
+    },
+    {
+      "id": "recliners",
+      "minX": 5.15,
+      "maxX": 7.43,
+      "minZ": 2.56,
+      "maxZ": 5.49
+    },
+    {
+      "id": "window-access-step",
+      "minX": 7.325,
+      "maxX": 8.075,
+      "minZ": 1.025,
+      "maxZ": 2.175
+    },
+    {
+      "id": "table-a-leg-0",
+      "minX": -4.515,
+      "maxX": -4.385,
+      "minZ": -6.065,
+      "maxZ": -5.935
+    },
+    {
+      "id": "table-a-leg-1",
+      "minX": -5.115,
+      "maxX": -4.985,
+      "minZ": -5.7186,
+      "maxZ": -5.5886
+    },
+    {
+      "id": "table-a-leg-2",
+      "minX": -5.115,
+      "maxX": -4.985,
+      "minZ": -6.4114,
+      "maxZ": -6.2814
+    },
+    {
+      "id": "table-b-leg-0",
+      "minX": -4.3329,
+      "maxX": -4.2029,
+      "minZ": -3.3968,
+      "maxZ": -3.2668
+    },
+    {
+      "id": "table-b-leg-1",
+      "minX": -5.0084,
+      "maxX": -4.8784,
+      "minZ": -3.2432,
+      "maxZ": -3.1132
+    },
+    {
+      "id": "table-b-leg-2",
+      "minX": -4.8037,
+      "maxX": -4.6737,
+      "minZ": -3.905,
+      "maxZ": -3.775
+    },
+    {
+      "id": "table-c-leg-0",
+      "minX": 0.9932,
+      "maxX": 1.1232,
+      "minZ": 5.516,
+      "maxZ": 5.646
+    },
+    {
+      "id": "table-c-leg-1",
+      "minX": 0.9769,
+      "maxX": 1.1069,
+      "minZ": 4.8234,
+      "maxZ": 4.9534
+    },
+    {
+      "id": "table-c-leg-2",
+      "minX": 1.5849,
+      "maxX": 1.7149,
+      "minZ": 5.1556,
+      "maxZ": 5.2856
+    },
+    {
+      "id": "mural-chair-left",
+      "minX": -3.98,
+      "maxX": -2.82,
+      "minZ": -7.62,
+      "maxZ": -6.45
+    },
+    {
+      "id": "mural-chair-right",
+      "minX": -2.45,
+      "maxX": -1.25,
+      "minZ": -7.65,
+      "maxZ": -6.4
+    },
+    {
+      "id": "mustard-pod",
+      "minX": -0.68,
+      "maxX": 0.68,
+      "minZ": -7.55,
+      "maxZ": -6.55
+    },
+    {
+      "id": "sunroom-tree",
+      "minX": 3.2,
+      "maxX": 4.9,
+      "minZ": 5.35,
+      "maxZ": 6.87
+    },
+    {
+      "id": "sunroom-left-pier",
+      "minX": 4.9,
+      "maxX": 5.2,
+      "minZ": 6.1,
+      "maxZ": 7.5
+    },
+    {
+      "id": "sunroom-right-pier",
+      "minX": 4.9,
+      "maxX": 5.2,
+      "minZ": -2.5,
+      "maxZ": -1.1
+    },
+    {
+      "id": "entry-counter",
+      "minX": -7.7,
+      "maxX": -6.3,
+      "minZ": 4.65,
+      "maxZ": 7.15
+    },
+    {
+      "id": "cat-wheel",
+      "minX": -3.08,
+      "maxX": -0.22,
+      "minZ": 5.98,
+      "maxZ": 7.05
+    },
+    {
+      "id": "feeding-shelf-foot-0-0",
+      "minX": 1.5850000000000002,
+      "maxX": 1.635,
+      "minZ": -1.015,
+      "maxZ": -0.965
+    },
+    {
+      "id": "feeding-shelf-foot-0-1",
+      "minX": 1.5850000000000002,
+      "maxX": 1.635,
+      "minZ": -0.6950000000000001,
+      "maxZ": -0.645
+    },
+    {
+      "id": "feeding-shelf-foot-1-0",
+      "minX": 4.765,
+      "maxX": 4.815,
+      "minZ": -1.015,
+      "maxZ": -0.965
+    },
+    {
+      "id": "feeding-shelf-foot-1-1",
+      "minX": 4.765,
+      "maxX": 4.815,
+      "minZ": -0.6950000000000001,
+      "maxZ": -0.645
+    }
+  ],
+  "opening": {
+    "x": 5,
+    "minZ": -1.1,
+    "maxZ": 0.55,
+    "height": 4.1
+  },
+  "structuralWalls": [
+    {
+      "id": "sunroom-glass-divider",
+      "minX": 5.02,
+      "maxX": 5.08,
+      "minZ": 0.55,
+      "maxZ": 6.1
+    },
+    {
+      "id": "right-wall-back",
+      "minX": 4.9,
+      "maxX": 5.1,
+      "minZ": -8,
+      "maxZ": -1.1
+    },
+    {
+      "id": "right-wall-front",
+      "minX": 4.9,
+      "maxX": 5.1,
+      "minZ": 6.1,
+      "maxZ": 8
+    },
+    {
+      "id": "projecting-wall",
+      "minX": 1.3,
+      "maxX": 1.5,
+      "minZ": -8,
+      "maxZ": -1.1
+    }
+  ],
+  "blockedFloor": {
+    "id": "projecting-wall-recess",
+    "minX": 1.3,
+    "maxX": 5.15,
+    "minZ": -8,
+    "maxZ": -1.1
+  },
+  "feedingShelf": {
+    "centerX": 3.2,
+    "frontZ": -0.62,
+    "minX": 1.6,
+    "maxX": 4.8,
+    "backZ": -1.04,
+    "topHeight": 1.3,
+    "photoHeight": 0.73,
+    "bowlZ": -0.58,
+    "bowlMinX": 1.88,
+    "bowlMaxX": 4.52
+  }
+}

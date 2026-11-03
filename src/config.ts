@@ -1,4 +1,5 @@
 import type { CatDefinition, EventKind, StageConfig, ToolDefinition, ToolId } from './types';
+import loungeLayout from '../assets/lounge/layout.json' with { type: 'json' };
 
 export const STAGES: readonly StageConfig[] = [
   { duration: 45, cats: 1, delay: [8, 12], patience: 22 },
@@ -32,7 +33,7 @@ export const PALETTE: readonly (Pick<CatDefinition, 'name' | 'color' | 'accent'>
   { name: '丁丁', color: '#7b776c', accent: '#302f29', appearance: 'dingding' },
 ];
 // One shared floor, with furniture kept outside the walkable bounds.
-export const ROOM = { minX: -3.1, maxX: 3.1, minZ: -5.7, maxZ: 4.0, catScale: 0.52, walkSpeed: 0.72 } as const;
+export const ROOM = { minX: loungeLayout.mainRoom.minX + 0.75, maxX: 3.1, minZ: -5.7, maxZ: 4.0, catScale: 0.52, walkSpeed: 0.72 } as const;
 export const EFFICIENCY = [0, 1, 1.5, 2] as const;
 export const ATTACK_DAMAGE = 10;
 export const ATTACK_WARNING = 1;

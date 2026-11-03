@@ -3,6 +3,9 @@ import type { GameAudio } from '../../src/sound';
 import type { ToolId } from '../../src/types';
 import type {} from './game.spec';
 
+// Audio/input coverage uses the built-in cat rigs; model transport is tested separately.
+test.beforeEach(async ({ page }) => { await page.route('**/models/**', route => route.abort()); });
+
 async function click(page: Page, id: string) {
   await expect.poll(() => page.evaluate(id => window.__CATSLAVE_TEST__.hud.hits.some(h => h.id === id), id)).toBe(true);
   const hit = await page.evaluate(id => window.__CATSLAVE_TEST__.hud.hits.find(h => h.id === id)!, id);

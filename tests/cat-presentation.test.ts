@@ -22,7 +22,7 @@ describe('cat presentation', () => {
     const world = new World(); world.resize(390, 844);
     const position = new THREE.Vector3(0, 0.5, 0);
     const size = () => world.project(position).x - world.project(position.clone().add(new THREE.Vector3(-1, 0, 0))).x;
-    const close = size(); world.zoomView(-10); expect(close / size()).toBeCloseTo(1.65);
+    const close = size(); world.zoomView(-10); expect(close / size()).toBeCloseTo(1);
     world.resetView(); const rotation = world.camera.quaternion.clone(), eye = world.camera.position.clone();
     const direction = new THREE.Vector3(); world.camera.getWorldDirection(direction);
     expect(THREE.MathUtils.radToDeg(Math.asin(-direction.y))).toBeLessThan(15);
@@ -33,7 +33,7 @@ describe('cat presentation', () => {
     world.lookView(1e6, 1e6);
     expect(world.camera.rotation.z).toBe(0);
     expect(world.camera.rotation.x).toBeCloseTo(-THREE.MathUtils.degToRad(65));
-    expect(world.camera.rotation.y).toBeCloseTo(-THREE.MathUtils.degToRad(75));
+    expect(world.camera.rotation.y).toBeCloseTo(-THREE.MathUtils.degToRad(80));
     expect(world.camera.position.equals(eye)).toBe(true);
     for (const x of [ROOM.minX, ROOM.maxX]) for (const z of [ROOM.minZ, ROOM.maxZ]) {
       position.set(x, 0.1, z); world.focusOn(position);
@@ -44,8 +44,8 @@ describe('cat presentation', () => {
     const game = new Game(1); game.reset(); world.update(game, 0, 0); world.scene.updateMatrixWorld(true);
     position.set(game.cats[0].position.x, 0.4, game.cats[0].position.z); world.focusOn(position);
     const p = world.project(position); expect(world.pickCat(p.x, p.y)).toBe(game.cats[0].id);
-    world.resize(320, 568); expect(world.viewZoom).toBe(1.65);
-    world.resetView(); expect(world.camera.position.toArray()).toEqual([0, 1.65, 5.8]);
+    world.resize(320, 568); expect(world.viewZoom).toBe(1);
+    world.resetView(); expect(world.camera.position.toArray()).toEqual([-2.6, 1.65, 5.4]);
     expect(world.camera.quaternion.equals(rotation)).toBe(true);
   });
   it('has four separately animated legs with grounded paws and independently cloned poses', () => {
@@ -71,7 +71,7 @@ describe('cat presentation', () => {
   it('plays full-screen and fatal attacks, freezes on pause, and clears on restart', () => {
     const game = new Game(8), world = new World(); game.reset(); game.spawn(game.cats[0], 'poop');
     game.tick(23); world.update(game, 0.3, 23);
-    expect(world.attackAge).toBeCloseTo(0.3); expect(world.camera.position.toArray()).toEqual([0, 1.65, 5.8]);
+    expect(world.attackAge).toBeCloseTo(0.3); expect(world.camera.position.toArray()).toEqual([-2.6, 1.65, 5.4]);
     expect(world.attackScene.children.some(c => c instanceof THREE.Group && c.visible)).toBe(true);
     game.pause(); world.update(game, 1, 24); expect(world.attackAge).toBeCloseTo(0.3);
     game.resume(); game.hp = 10; game.tick(4); world.update(game, 0.2, 27);

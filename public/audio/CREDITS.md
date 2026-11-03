@@ -1,5 +1,7 @@
 # Sound recording credits
 
+The exercise-wheel sound is original synthesized roller/tread Foley in `src/sound.ts`, with no external asset or license dependency. Its seamless loop changes pitch and volume with the simulated drum speed, including acceleration and braking, and stops when the wheel stops or gameplay is paused/muted.
+
 These five recordings are from [Freesound](https://freesound.org/), one of the libraries recommended in the [Reddit discussion supplied for this feature](https://www.reddit.com/r/aigamedev/comments/1wqv9bp/does_anyone_know_a_really_good_ai_for_generating/). Each individual sound page identified its recording as **Creative Commons 0** when checked on 2026-10-25.
 
 All five use [CC0 1.0 Universal](https://creativecommons.org/publicdomain/zero/1.0/), allowing copying, modification, distribution, and commercial use without attribution or permission. Credits are retained here to acknowledge the recordists and make the sources easy to audit. The authors do not endorse this game.

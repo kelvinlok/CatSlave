@@ -1,8 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import * as THREE from 'three';
 import { Game } from '../src/simulation';
-import { FURNITURE, HIDEOUT } from '../src/furniture';
-import { createFurniture } from '../src/furniture-model';
+import { FURNITURE } from '../src/furniture';
+import { clearFloor, clearFloorSegment, floorRoute } from '../src/room-navigation';
 
 function sandbox() {
   const game = new Game(12); game.reset(); game.phase = 'tutorial';
@@ -17,6 +16,8 @@ function until(game: Game, predicate: () => boolean, seconds = 40) {
 describe('furniture interactions', () => {
   for (const spot of FURNITURE) it(`approaches, uses and leaves ${spot.id} continuously`, () => {
     const game = sandbox(), cat = game.cats[0];
+    // The window perch belongs to the sunroom, which only Free Play can visit.
+    if (spot.id === 'window') game.phase = 'free-play';
     expect(game.visitFurniture(cat.id, spot.id)).toBe(true);
     let previous = { ...cat.position, height: cat.elevation };
     until(game, () => {
@@ -76,12 +77,16 @@ describe('furniture interactions', () => {
     expect(game.cats[0].visit).toBeUndefined(); expect(game.cats[0].elevation).toBe(0);
   });
 
-  it('builds an actual hole through the front cardboard panel', () => {
-    const furniture = createFurniture(); furniture.updateMatrixWorld(true);
-    const ray = new THREE.Raycaster(new THREE.Vector3(HIDEOUT.x, 0.43, HIDEOUT.z + 2), new THREE.Vector3(0, 0, -1));
-    const hits = ray.intersectObject(furniture.getObjectByName('cardboard-hideout')!, true);
-    expect(hits.length).toBeGreaterThan(0);
-    // The first surface along the entrance center is the rear wall, not a fake dark disc.
-    expect(hits[0].point.z).toBeLessThan(HIDEOUT.z - 0.5);
+  it('routes to every furniture approach without crossing another solid object', () => {
+    for (const spot of FURNITURE) {
+      let previous = { x: 0, z: -1.2 };
+      const route = floorRoute(previous, spot.route[0]);
+      expect(route.length, spot.id).toBeGreaterThan(0);
+      for (const point of route) {
+        expect(clearFloor(point), spot.id).toBe(true);
+        expect(clearFloorSegment(previous, point), spot.id).toBe(true);
+        previous = point;
+      }
+    }
   });
 });

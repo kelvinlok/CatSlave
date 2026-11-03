@@ -64,7 +64,7 @@ test('victory welcomes the full household and keeps both exits usable on every l
     expect(await page.evaluate(() => {
       const t = window.__CATSLAVE_TEST__;
       return { camera: t.world.camera.position.toArray(), zoom: t.world.camera.zoom, hearts: t.world.victoryHearts().length };
-    })).toEqual({ camera: [0, 1.65, 5.8], zoom: 1.65, hearts: 0 });
+    })).toEqual({ camera: [0, 1.65, 4.8], zoom: 1.65, hearts: 0 });
     expect(errors).toEqual([]); await context.close();
   }
 });

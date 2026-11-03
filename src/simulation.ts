@@ -1,9 +1,12 @@
+import { clearFloor, clearFloorSegment, nearbyFloorTarget, nextFloorWaypoint } from './room-navigation';
 import { ATTACK_DAMAGE, ATTACK_INTERVAL, ATTACK_WARNING, CLEANING_TOOLS, EFFICIENCY, PALETTE, ROOM, STAGES, STRETCH_DURATION, TOOLS, TOOL_BY_ID, VACUUM, toolMatches } from './config';
 import type { CareEvent, CatDefinition, CatState, EventKind, Phase, ToolId } from './types';
 import { FURNITURE } from './furniture';
 import { beginVisit, tickVisit } from './cat-behavior';
 import { FreeRoam } from './free-roam';
 import { BONUS_GAMES, BonusRound } from './bonus';
+import { WHEEL } from './cat-wheel';
+import { roomFloorContains, type FloorArea } from './room-boundaries';
 
 export class Random {
   constructor(private seed: number) {}
@@ -28,10 +31,14 @@ export class Game {
   freePatUntil = 0;
   readonly freeRoam = new FreeRoam();
   get inFreePlay() { return this.phase === 'free-play' || this.phase === 'paused' && this.resumePhase === 'free-play'; }
+  private get catFloorArea(): FloorArea { return this.inFreePlay ? 'whole-room' : 'main-room'; }
   pauseReason = 'A little breather';
   hp = 100;
   stage = 0;
   clock = 0;
+  /** Rotation about game +Z; negative turns move the bottom tread toward -X. */
+  wheelAngle = 0;
+  wheelSpeed = 0;
   stageElapsed = 0;
   completed = 0;
   stagesSurvived = 0;
@@ -118,6 +125,7 @@ export class Game {
 
   reset(tutorial = false) {
     this.hp = 100; this.stage = 0; this.clock = 0; this.stageElapsed = 0;
+    this.wheelAngle = 0; this.wheelSpeed = 0;
     this.completed = 0; this.stagesSurvived = 0; this.events = []; this.candidates = [];
     this.upcomingAdoption = [];
     this.lastStagePerfect = false; this.upgradesRemaining = 0; this.stageDamageStart = 0;
@@ -134,6 +142,7 @@ export class Game {
 
   startStage() {
     this.phase = 'playing'; this.stageElapsed = 0; this.events = []; this.feedback = '';
+    this.wheelAngle = 0; this.wheelSpeed = 0;
     this.upcomingAdoption = this.stage < STAGES.length - 1 && this.cats.length < STAGES.length
       ? this.chooseAdoption() : [];
     this.bonus = undefined;
@@ -141,11 +150,14 @@ export class Game {
     this.stageDamageStart = this.damageSerial;
     this.cats.forEach((cat, i) => {
       cat.nextNeedAt = this.clock + 1.5 + i * 1.1; cat.attackUntil = 0;
-      const starts = [{ x: 0, z: 1.2 }, { x: -2.2, z: -3.8 }, { x: 2.2, z: -4.4 }, { x: -2, z: 2.8 }, { x: 2, z: 3.2 }];
+      // These five starts sit in the lounge's open aisle, outside the table legs
+      // and loveseat. Free play shares this reset path.
+      const starts = [{ x: 0, z: 1.2 }, { x: -0.7, z: -3.8 }, { x: 0.5, z: -4.4 }, { x: -0.3, z: 2.8 }, { x: 2, z: 3.2 }];
       cat.position = { ...starts[i] };
       cat.destination = { ...cat.position }; cat.activity = 'idle'; cat.decisionAt = this.clock + 0.6 + i * 0.3;
       cat.stretchStartedAt = undefined; cat.nextStretchAt = this.clock + 12 + i * 3;
       cat.elevation = 0; cat.pose = 0; cat.visit = undefined; cat.lastFurniture = undefined; cat.pendingNeed = undefined;
+      cat.wheelRunSpeed = 0;
     });
     this.revision++;
   }
@@ -171,8 +183,10 @@ export class Game {
     const deadline = this.phase === 'tutorial' ? Infinity : this.clock + this.config.patience * cat.behavior.patience;
     const cleaning = nextKind === 'poop' || nextKind === 'vomit' || nextKind === 'fur';
     // Put fresh messes beside the paws so the player can see their first stroke.
-    const position = cleaning ? { x: cat.position.x + (cat.position.x > 0 ? -0.58 : 0.58),
-      z: Math.min(ROOM.maxZ, cat.position.z + 0.25) } : { ...cat.position };
+    const position = cleaning ? nearbyFloorTarget(cat.position, {
+      x: cat.position.x + (cat.position.x > 0 ? -0.58 : 0.58),
+      z: Math.min(ROOM.maxZ, cat.position.z + 0.25),
+    }, this.catFloorArea) : { ...cat.position };
     this.events.push({ id: this.nextId++, catId: cat.id, kind: nextKind, progress: 0,
       createdAt: this.clock, deadline, nextAttackAt: deadline + ATTACK_WARNING, attacks: 0,
       position });
@@ -230,11 +244,19 @@ export class Game {
   }
 
   private moveCats(dt: number) {
+    const area = this.catFloorArea;
+    this.wheelSpeed = 0;
     if (this.inFreePlay) this.freeRoam.update(this.cats, this.clock, dt, this.movementRandom);
     for (const cat of this.cats) {
       if (this.inFreePlay && this.freeRoam.busy(cat.id)) continue;
       const need = this.events.find(e => e.catId === cat.id);
-      if (cat.visit) { cat.stretchStartedAt = undefined; tickVisit(cat, this.clock, dt, this.cats, this.inFreePlay ? { rest: 8, durationScale: 3 } : undefined); continue; }
+      if (cat.visit) {
+        cat.stretchStartedAt = undefined;
+        const wheel = cat.visit.id === 'wheel';
+        const distance = tickVisit(cat, this.clock, dt, this.cats, this.inFreePlay ? { rest: 8, durationScale: 3 } : undefined, area);
+        if (wheel) { this.wheelAngle -= distance / WHEEL.innerRadius; this.wheelSpeed = cat.wheelRunSpeed ?? 0; }
+        continue;
+      }
       // Bowls and play stay reachable. Cleaning messes remain behind as the cat wanders.
       const waiting = need && (need.kind === 'hunger' || need.kind === 'boredom');
       if (waiting || cat.attackUntil > this.clock) {
@@ -258,7 +280,7 @@ export class Game {
         && (!this.inFreePlay || this.clock >= cat.decisionAt)
         && this.clock >= (cat.nextStretchAt ?? Infinity) && cat.nextNeedAt > this.clock + STRETCH_DURATION) {
         const reach = { x: cat.position.x + Math.sin(cat.yaw) * 0.7, z: cat.position.z + Math.cos(cat.yaw) * 0.7 };
-        const clear = reach.x > ROOM.minX && reach.x < ROOM.maxX && reach.z > ROOM.minZ && reach.z < ROOM.maxZ
+        const clear = clearFloor(reach, area) && clearFloorSegment(cat.position, reach, area) && reach.x > ROOM.minX && reach.x < ROOM.maxX && reach.z > ROOM.minZ && reach.z < ROOM.maxZ
           && this.cats.every(other => other === cat || other.elevation > 0.3 || Math.hypot(other.position.x - reach.x, other.position.z - reach.z) > 0.65);
         if (clear) {
           cat.activity = 'stretching'; cat.stretchStartedAt = this.clock; cat.pose = 0;
@@ -271,18 +293,21 @@ export class Game {
       }
       if (cat.activity !== 'walking' && this.clock >= cat.decisionAt) {
         if (!need && cat.nextNeedAt > this.clock + 2 && this.movementRandom.next() < (this.inFreePlay ? 0.45 : 0.8)) {
-          const spots = FURNITURE.filter(spot => spot.id !== cat.lastFurniture && !this.cats.some(other => other.visit?.id === spot.id));
+          const spots = FURNITURE.filter(spot => spot.id !== cat.lastFurniture && !this.cats.some(other => other.visit?.id === spot.id)
+            && spot.route.every(point => roomFloorContains(point, 0.22, area)));
           if (spots.length && this.visitFurniture(cat.id, this.movementRandom.choose(spots).id)) continue;
         }
         // Every cat can choose any part of the same room; there are no assigned lanes.
         for (let attempt = 0; attempt < 12; attempt++) {
           cat.destination = { x: this.movementRandom.between(ROOM.minX, ROOM.maxX), z: this.movementRandom.between(ROOM.minZ, ROOM.maxZ) };
-          if (this.cats.every(other => other === cat || Math.hypot(other.position.x - cat.destination.x, other.position.z - cat.destination.z) > 0.85)) break;
+          if (clearFloor(cat.destination, area) && this.cats.every(other => other === cat || Math.hypot(other.position.x - cat.destination.x, other.position.z - cat.destination.z) > 0.85)) break;
         }
         cat.activity = 'walking';
       }
       if (cat.activity !== 'walking') continue;
-      const dx = cat.destination.x - cat.position.x, dz = cat.destination.z - cat.position.z;
+      const waypoint = nextFloorWaypoint(cat, cat.destination, area);
+      if (!waypoint) { cat.activity = 'idle'; cat.decisionAt = this.clock + 0.3; continue; }
+      const dx = waypoint.x - cat.position.x, dz = waypoint.z - cat.position.z;
       const distance = Math.hypot(dx, dz), desired = Math.atan2(dx, dz);
       const turn = Math.atan2(Math.sin(desired - cat.yaw), Math.cos(desired - cat.yaw));
       cat.yaw += turn * Math.min(1, dt * 5);
@@ -290,11 +315,11 @@ export class Game {
       const travel = Math.min(distance, dt * ROOM.walkSpeed * Math.max(0, Math.cos(turn)));
       if (distance > 0.001) {
         const next = { x: cat.position.x + dx / distance * travel, z: cat.position.z + dz / distance * travel };
-        const blocked = this.cats.some(other => other !== cat && other.elevation < 0.3 && Math.hypot(other.position.x - next.x, other.position.z - next.z) < 0.60);
+        const blocked = !clearFloorSegment(cat.position, next, area) || this.cats.some(other => other !== cat && other.elevation < 0.3 && Math.hypot(other.position.x - next.x, other.position.z - next.z) < 0.60);
         if (blocked) { cat.activity = 'idle'; cat.decisionAt = this.clock + 0.3 + (cat.id % 3) * 0.1; }
         else { cat.position = next; cat.stride += travel * 10; }
       }
-      if (distance < 0.025) {
+      if (Math.hypot(cat.destination.x - cat.position.x, cat.destination.z - cat.position.z) < 0.025) {
         cat.activity = this.movementRandom.next() < 0.45 ? 'sniffing' : 'idle';
         cat.decisionAt = this.clock + (this.inFreePlay ? this.movementRandom.between(6, 12) : this.movementRandom.between(1.2, 3.8));
       }
@@ -304,7 +329,7 @@ export class Game {
   visitFurniture(catId: number, id: string) {
     const cat = this.cats.find(c => c.id === catId);
     if ((!this.active && this.phase !== 'free-play') || !cat || this.inFreePlay && this.freeRoam.busy(catId) || this.events.some(e => e.catId === catId)) return false;
-    return beginVisit(cat, id, this.cats);
+    return beginVisit(cat, id, this.cats, this.catFloorArea);
   }
 
   work(eventId: number, amount: number): boolean {

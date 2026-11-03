@@ -7,13 +7,15 @@ export interface CatDefinition {
   appearance: 'primitive' | 'choco' | 'latte' | 'didi' | 'xiaosai' | 'yelo' | 'miller' | 'momo' | 'zhenzhenzi' | 'dingding'; behavior: BehaviorProfile;
 }
 export interface FloorPoint { x: number; z: number; }
-export type CatActivity = 'idle' | 'walking' | 'sniffing' | 'jumping' | 'crawling' | 'perching' | 'hiding' | 'watching' | 'sleeping' | 'grooming' | 'scratching' | 'eating' | 'playing' | 'stretching';
+export type CatActivity = 'idle' | 'walking' | 'running' | 'sniffing' | 'jumping' | 'crawling' | 'perching' | 'hiding' | 'watching' | 'sleeping' | 'grooming' | 'scratching' | 'eating' | 'playing' | 'stretching';
 export interface CatState extends CatDefinition {
   nextNeedAt: number; lastKind?: EventKind; happyUntil: number; attackUntil: number;
   position: FloorPoint; destination: FloorPoint; yaw: number; stride: number;
   activity: CatActivity; decisionAt: number;
   nextStretchAt?: number; stretchStartedAt?: number;
   elevation: number; pose: number;
+  /** Tread speed during a reserved exercise-wheel visit, in world units/second. */
+  wheelRunSpeed?: number;
   visit?: import('./furniture').FurnitureVisit; lastFurniture?: string;
   pendingNeed?: EventKind;
 }

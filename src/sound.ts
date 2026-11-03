@@ -1,16 +1,41 @@
 import type { Game } from './simulation';
+import { WHEEL, WHEEL_RUN_SPEED } from './cat-wheel';
 import type { CareEvent, CatActivity, FloorPoint, ToolId } from './types';
 
-export type SoundId = ToolId | 'meow' | 'purr' | 'scratch' | 'eat' | 'land' | 'rustle' | 'step' | 'select' | 'reject' | 'pat';
+export type SoundId = ToolId | 'meow' | 'purr' | 'scratch' | 'eat' | 'land' | 'rustle' | 'step' | 'select' | 'reject' | 'pat' | 'wheel';
 export interface SoundSink {
   play(id: SoundId, position?: FloorPoint, key?: string): void;
+  setWheelSpeed(speed: number): void;
   stop(): void;
+}
+
+/** Original seamless roller/tread Foley; playback rate follows the physical drum. */
+function wheelTexture(context: AudioContext): AudioBuffer {
+  const rate = context.sampleRate, length = rate * 2, seam = Math.ceil(rate * .05);
+  const raw = new Float32Array(length + seam);
+  let seed = 941, low = 0;
+  for (let i = 0; i < raw.length; i++) {
+    seed = (Math.imul(seed, 1664525) + 1013904223) | 0;
+    low += (seed / 2147483648 - low) * .055;
+    const t = i / rate, rollers = .8 + .2 * Math.cos(t * Math.PI * 16);
+    raw[i] = low * 1.7 * rollers + Math.sin(t * Math.PI * 108) * .12
+      + Math.sin(t * Math.PI * 216) * .035;
+  }
+  const buffer = context.createBuffer(1, length, rate), data = buffer.getChannelData(0);
+  data.set(raw.subarray(0, length));
+  // Blend the continuation of the tail into the head to avoid a repeating click.
+  for (let i = 0; i < seam; i++) {
+    const blend = .5 - .5 * Math.cos(Math.PI * i / seam);
+    data[i] = raw[length + i] * (1 - blend) + raw[i] * blend;
+  }
+  return buffer;
 }
 
 // Short, original Foley textures. Recorded voices and contact sounds load separately.
 // Fixed seed keeps the textures reproducible without consuming gameplay RNG.
 function texture(context: AudioContext, id: SoundId): AudioBuffer {
-  const durations: Record<SoundId, number> = { sweeper: .24, mop: .3, brush: .18, food: .26,
+  if (id === 'wheel') return wheelTexture(context);
+  const durations: Record<Exclude<SoundId, 'wheel'>, number> = { sweeper: .24, mop: .3, brush: .18, food: .26,
     toy: .22, vacuum: .75, meow: .5, purr: .85, scratch: .22, eat: .14,
     land: .16, rustle: .32, step: .07, select: .06, reject: .13, pat: .12 };
   const duration = durations[id], rate = context.sampleRate;
@@ -68,6 +93,7 @@ export class GameAudio implements SoundSink {
   private unlockError?: string;
   private pendingVacuum?: { position?: FloorPoint; key: string; requestedAt: number };
   private vacuumVoice?: { source: AudioBufferSourceNode; gain: GainNode };
+  private wheelVoice?: { source: AudioBufferSourceNode; gain: GainNode; speed: number };
   constructor() {
     try {
       const saved = localStorage.getItem('catslave.sound-volume');
@@ -75,7 +101,8 @@ export class GameAudio implements SoundSink {
     } catch { /* Storage may be unavailable in private browsing. */ }
   }
   get label() { return this.volume === 0 ? 'Sound: off' : this.volume < .5 ? 'Sound: soft' : 'Sound: on'; }
-  get diagnostics() { return { state: this.context?.state ?? 'locked', volume: this.volume, voices: this.voices.size, loaded: this.loaded, failed: this.failed, played: this.played, counts: { ...this.counts }, unlockError: this.unlockError }; }
+  get diagnostics() { return { state: this.context?.state ?? 'locked', volume: this.volume, voices: this.voices.size + Number(!!this.wheelVoice), loaded: this.loaded, failed: this.failed, played: this.played, counts: { ...this.counts }, unlockError: this.unlockError,
+    wheel: { active: !!this.wheelVoice, speed: this.wheelVoice?.speed ?? 0, rate: this.wheelVoice?.source.playbackRate.value ?? 0, gain: this.wheelVoice?.gain.gain.value ?? 0 } }; }
   bindTouchUnlock(target: HTMLElement) {
     const unlock = (event: Event) => { if (event.isTrusted) this.unlock(); };
     // Touch gains activation on release, unlike mouse pointerdown. Keep these
@@ -91,6 +118,7 @@ export class GameAudio implements SoundSink {
   unlock() {
     try {
       if (!this.context || this.context.state === 'closed') {
+        this.stop();
         const context = new AudioContext();
         const master = context.createGain(); master.gain.value = this.volume;
         const limiter = context.createDynamicsCompressor();
@@ -141,12 +169,43 @@ export class GameAudio implements SoundSink {
     try { localStorage.setItem('catslave.sound-volume', String(this.volume)); } catch { /* optional */ }
   }
   setBlocked(value: boolean) { if (value && !this.blocked) this.stop(); this.blocked = value; }
+  setWheelSpeed(speed: number) {
+    const context = this.context;
+    if (!Number.isFinite(speed) || speed <= 0 || this.blocked || this.volume === 0) { this.stopWheel(); return; }
+    // Retry on the next frame after touch unlock; never queue an obsolete visit.
+    if (!context || context.state !== 'running') return;
+    const ratio = Math.min(1, speed / WHEEL_RUN_SPEED), now = context.currentTime;
+    if (!this.wheelVoice) {
+      let buffer = this.buffers.get('wheel');
+      if (!buffer) { buffer = wheelTexture(context); this.buffers.set('wheel', buffer); }
+      const source = context.createBufferSource(), gain = context.createGain(), pan = context.createStereoPanner();
+      source.buffer = buffer; source.loop = true; gain.gain.value = 0;
+      source.playbackRate.value = .2 + .8 * ratio;
+      pan.pan.value = Math.max(-.75, Math.min(.75, WHEEL.x / 6));
+      source.connect(gain); gain.connect(pan); pan.connect(this.master!);
+      this.wheelVoice = { source, gain, speed: -1 };
+      source.onended = () => {
+        source.disconnect(); gain.disconnect(); pan.disconnect();
+        if (this.wheelVoice?.source === source) this.wheelVoice = undefined;
+      };
+      source.start(); this.played++; this.counts.wheel = (this.counts.wheel ?? 0) + 1;
+    }
+    if (this.wheelVoice.speed === speed) return;
+    this.wheelVoice.speed = speed;
+    this.wheelVoice.source.playbackRate.setTargetAtTime(.2 + .8 * ratio, now, .04);
+    this.wheelVoice.gain.gain.setTargetAtTime(.3 * Math.sqrt(ratio), now, .025);
+  }
+  private stopWheel() {
+    if (!this.wheelVoice) return;
+    this.wheelVoice.source.stop(); this.wheelVoice.source.disconnect(); this.wheelVoice = undefined;
+  }
   private flushVacuum() {
     const pending = this.pendingVacuum; this.pendingVacuum = undefined;
     // Bridge pointerup -> touchend only; never replay old cleanups after a pause.
     if (pending && performance.now() - pending.requestedAt <= 400) this.play('vacuum', pending.position, pending.key);
   }
   stop() {
+    this.stopWheel();
     for (const source of this.voices) { source.stop(); source.disconnect(); }
     this.voices.clear(); this.lastPlayed.clear();
     this.pendingVacuum = undefined; this.vacuumVoice = undefined;
@@ -222,6 +281,7 @@ export class RoomSounds {
       return;
     }
     this.running = true;
+    sink.setWheelSpeed(game.wheelSpeed);
     for (const event of game.events) if (!this.events.has(event.id)) sink.play('meow', game.cats.find(c => c.id === event.catId)?.position, `need:${event.catId}`);
     if (game.damageSerial > this.damage) sink.play('scratch', game.cats.find(c => c.id === game.lastAttackCatId)?.position, 'attack');
     this.damage = game.damageSerial;

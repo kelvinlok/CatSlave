@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { Game, Random } from '../src/simulation';
-import { STAGES, TOOLS } from '../src/config';
+import { ROOM, STAGES, TOOLS } from '../src/config';
 import { winBonus } from './support/bonus';
 
 function active(seed = 42) { const game = new Game(seed); game.reset(); return game; }
@@ -190,11 +190,11 @@ describe('simulation', () => {
     const game = new Game(17); game.reset(true);
     const positions = [];
     for (let i = 0; i < 600; i++) { game.tick(0.5); positions.push({ ...game.cats[0].position }); }
-    expect(Math.min(...positions.map(p => p.x))).toBeLessThan(-2);
+    expect(Math.min(...positions.map(p => p.x))).toBeLessThan(-5);
     expect(Math.max(...positions.map(p => p.x))).toBeGreaterThan(2);
     expect(Math.min(...positions.map(p => p.z))).toBeLessThan(-4.5);
     expect(Math.max(...positions.map(p => p.z))).toBeGreaterThan(3.2);
-    expect(positions.every(p => p.x >= -3.1 && p.x <= 3.1 && p.z >= -5.7 && p.z <= 4)).toBe(true);
+    expect(positions.every(p => p.x >= ROOM.minX && p.x <= ROOM.maxX && p.z >= ROOM.minZ && p.z <= ROOM.maxZ)).toBe(true);
   });
   it('identifies the attacker, including a fatal hit, and clears it on restart', () => {
     const game = active(); game.hp = 10; game.spawn(game.cats[0], 'vomit'); game.tick(23);

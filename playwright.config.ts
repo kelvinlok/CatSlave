@@ -9,7 +9,7 @@ export default defineConfig({
   workers: 1,
   retries: 0,
   reporter: 'list',
-  use: { baseURL: `http://127.0.0.1:${port}`, screenshot: 'only-on-failure', trace: 'retain-on-failure' },
+  use: { baseURL: `http://127.0.0.1:${port}`, reducedMotion: 'reduce', screenshot: 'only-on-failure', trace: 'retain-on-failure' },
   webServer: { command: `npm run dev -- --port ${port} --mode test`, url: `http://127.0.0.1:${port}`, reuseExistingServer: false },
   projects: [
     { name: 'mobile-chromium', use: { ...devices['Pixel 7'], browserName: 'chromium', launchOptions: { args: ['--enable-webgl', '--use-angle=swiftshader', '--enable-unsafe-swiftshader'] } } },

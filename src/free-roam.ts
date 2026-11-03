@@ -1,7 +1,14 @@
+import { clearFloor, clearFloorSegment, nextFloorWaypoint } from './room-navigation';
 import { ROOM } from './config';
 import type { CatState, FloorPoint } from './types';
+import layout from '../assets/lounge/layout.json';
 
-export const freeBowlPosition = (index: number, count: number): FloorPoint => ({ x: (index - (count - 1) / 2) * 0.8, z: -5.8 });
+/** Up to five residents share the open row beneath the front of the feeding shelf. */
+export function freeBowlPosition(index: number, count: number): FloorPoint {
+  const shelf = layout.feedingShelf;
+  const spacing = count > 1 ? Math.min(.8, (shelf.bowlMaxX - shelf.bowlMinX) / (count - 1)) : 0;
+  return { x: shelf.centerX + (index - (count - 1) / 2) * spacing, z: shelf.bowlZ };
+}
 interface Routine { kind: 'meal' | 'social'; target: FloorPoint; partner?: number; until?: number; expires: number; }
 interface Schedule { meal: number; social: number; }
 interface RandomSource { between(min: number, max: number): number; }
@@ -77,13 +84,15 @@ export class FreeRoam {
     cat.yaw += turn * Math.min(1, dt * 5); return turn;
   }
   private walk(cat: CatState, cats: CatState[], dt: number) {
-    const dx = cat.destination.x - cat.position.x, dz = cat.destination.z - cat.position.z;
+    const waypoint = nextFloorWaypoint(cat, cat.destination);
+    if (!waypoint) { cat.activity = 'idle'; return; }
+    const dx = waypoint.x - cat.position.x, dz = waypoint.z - cat.position.z;
     const distance = Math.hypot(dx, dz), angle = Math.atan2(dx, dz);
     // Try a gentle side step if another resting cat occupies the direct route.
     for (const offset of [0, 0.8, -0.8, 1.4, -1.4]) {
       const yaw = angle + offset, travel = Math.min(distance, dt * ROOM.walkSpeed * 0.85);
       const next = { x: cat.position.x + Math.sin(yaw) * travel, z: cat.position.z + Math.cos(yaw) * travel };
-      if (next.x < ROOM.minX || next.x > ROOM.maxX || next.z < ROOM.minZ || next.z > ROOM.maxZ) continue;
+      if (!clearFloor(next) || !clearFloorSegment(cat.position, next)) continue;
       if (cats.some(other => other !== cat && other.elevation < 0.3 && Math.hypot(other.position.x - next.x, other.position.z - next.z) < 0.62)) continue;
       const turn = this.face(cat, yaw, dt);
       if (Math.abs(turn) < 0.7) { cat.position = next; cat.stride += travel * 10; }
