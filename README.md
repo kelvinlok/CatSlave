@@ -122,6 +122,14 @@ Production builds automatically gzip the original GLBs at maximum compression an
 
 Run `npm run build` and `node scripts/verify-model-downloads.mjs` to check the compressed production transport on desktop Chromium and mobile WebKit. The verifier builds an isolated test fixture, loads all nine native rigs through a subdirectory URL, checks touch input and browser-decoded SHA-256 hashes, and opens the actual production bundle without test hooks. Reports and captures are saved under `artifacts/download-optimization/`. The normal unit suite also checks all model round trips. Native gzip decompression is required in production; an unsupported browser follows the existing procedural-model fallback.
 
+### Frame-time optimizations
+
+Native cat rigs update their controls and bone hierarchy without repeated full-model matrix traversals. Wheel hover first tests wheel surfaces and the tap volume, testing room occlusion only for possible hits. Static title, adoption, cat-dex and game-over HUDs reuse their canvas texture until invalidated; gameplay effects, hover changes, language changes, portrait loads and damage-flash cleanup still redraw. Model detail, texture resolution, lighting, antialiasing and render resolution are unchanged.
+
+`node scripts/profile-frames.mjs <label>` builds a minified test fixture and writes CPU measurements and a fixed-view capture to `artifacts/frame-performance/<label>/`. `--reuse` measures an existing build for before/after comparisons. The harness uses installed Chrome with D3D11 on Windows, five loaded native cats, and the loaded lounge; it measures 240 synchronous world/HUD updates independently of GPU frame scheduling. On the development RTX 2060 SUPER system, median world-update CPU time was approximately 0.4 ms before and 0.2 ms after (95th percentile 0.7 ms and 0.4 ms). This is not a phone FPS measurement. Static title HUD uploads fell from 60 to 0 over 120 unchanged frames. Captures retained the same 359 draw calls and 1,943,300 triangles; two of 740,610 pixels differed by at most one 8-bit channel value.
+
+Regression coverage includes `tests/wheel-picking.test.ts`, `tests/blender-cat-rig.test.ts`, and `tests/browser/frame-performance.spec.ts`, alongside the real-model rig, wheel interaction and texture-restoration browser tests. Wheel tests compare 300 screen positions against the original picker and confirm 100 wheel misses cause zero furniture raycasts instead of 100.
+
 ## Prototype boundaries
 
 - Modern WebGL 2 browsers only; no native app packaging, backend, or account system.

@@ -14,6 +14,7 @@ interface Driver {
 }
 interface RigBinding {
   visual: THREE.Object3D;
+  skins: THREE.SkinnedMesh[];
   drivers: Map<THREE.Object3D, Driver>;
   visibility: { visual: THREE.Object3D; controller: THREE.Object3D }[];
   desired: THREE.Matrix4;
@@ -113,12 +114,13 @@ function bindingFor(root: THREE.Object3D): RigBinding {
   const cached = bindings.get(root);
   if (cached) return cached;
   const visual = root.getObjectByName(nativeRootName)!;
-  const binding: RigBinding = { visual, drivers: new Map(), visibility: [], desired: new THREE.Matrix4(), inverse: new THREE.Matrix4(),
+  const binding: RigBinding = { visual, skins: [], drivers: new Map(), visibility: [], desired: new THREE.Matrix4(), inverse: new THREE.Matrix4(),
     candidate: new THREE.Matrix4(), positionA: new THREE.Vector3(), positionB: new THREE.Vector3(),
     rotationA: new THREE.Quaternion(), rotationB: new THREE.Quaternion(), scaleA: new THREE.Vector3(), scaleB: new THREE.Vector3() };
   const skeletons = new Map<string, THREE.Skeleton>();
   visual.traverse(object => {
     if (object instanceof THREE.SkinnedMesh) {
+      binding.skins.push(object);
       // SkeletonUtils clones one Skeleton per mesh. Skin/fur/details can share
       // a single palette within this cat when their exported binds agree exactly.
       // Bone UUIDs make it impossible for this cache to cross instance boundaries.
@@ -152,7 +154,10 @@ function bindingFor(root: THREE.Object3D): RigBinding {
 export function updateBlenderCatRig(root: THREE.Group) {
   if (root.userData.modelRig !== 'blender-armature') return;
   const binding = bindingFor(root);
-  root.updateWorldMatrix(true, true);
+  // Only the invisible controls are needed before driving the bones. Updating
+  // the imported skin here would traverse it once with yesterday's pose.
+  root.updateWorldMatrix(true, false);
+  for (const child of root.children) if (child !== binding.visual) child.updateWorldMatrix(false, true);
   const visit = (object: THREE.Object3D) => {
     const driver = binding.drivers.get(object);
     if (driver) {
@@ -179,5 +184,7 @@ export function updateBlenderCatRig(root: THREE.Group) {
   visit(binding.visual);
   for (const item of binding.visibility) item.visual.visible = item.controller.visible;
   // Also refresh SkinnedMesh.bindMatrixInverse when the resident root has moved.
-  root.updateMatrixWorld(true);
+  // The visual hierarchy is already current. Refresh Three.js's attached /
+  // detached skin inverses without walking the controls and all bones again.
+  for (const skin of binding.skins) skin.updateMatrixWorld(false);
 }

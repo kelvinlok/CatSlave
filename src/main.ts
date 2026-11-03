@@ -300,10 +300,10 @@ canvas.addEventListener('pointerdown', event => {
 canvas.addEventListener('pointermove', event => {
   const p = point(event), hover = hud.hit(p.x, p.y);
   if (event.pointerType === 'mouse') {
-    hud.hoveredId = hover?.eventId === undefined && !hover?.disabled ? hover?.id : undefined;
+    const hoveredId = hover?.eventId === undefined && !hover?.disabled ? hover?.id : undefined;
+    if (hud.hoveredId !== hoveredId) { hud.hoveredId = hoveredId; hud.invalidate(); }
     const wheelHover = !hover && game.phase === 'free-play' && game.freeInteraction === 'pet' && world.wheelHit(p);
     canvas.style.cursor = dexDrag ? 'grabbing' : hover?.disabled ? 'not-allowed' : hover || wheelHover ? 'pointer' : game.active || inDexPreview(p) ? 'grab' : 'default';
-    hud.invalidate();
   }
   if (event.pointerId !== pointerId) return;
   if (dexDrag) { world.rotateDex(dexDrag, p); dexDrag = p; return; }

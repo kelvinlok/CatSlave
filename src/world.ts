@@ -63,17 +63,27 @@ export class World {
   private dexSize = new THREE.Vector3(1, 1, 1);
   private dexCenter = new THREE.Vector3();
   private dexPivot = new THREE.Group();
+  private wheelPickables?: THREE.Object3D[];
 
   resetDexRotation() { this.dexPivot.quaternion.identity(); }
 
   wheelHit(point: Point) {
     const v = this.viewport;
     if (!this.room.userData.loaded || point.x < v.x || point.x > v.x + v.w || point.y < v.y || point.y > v.y + v.h) return false;
-    this.camera.updateMatrixWorld(); this.room.updateMatrixWorld(true);
+    this.camera.updateMatrixWorld();
     this.raycaster.setFromCamera(new THREE.Vector2((point.x - v.x) / v.w * 2 - 1, 1 - (point.y - v.y) / v.h * 2), this.camera);
+    // Most pointer moves miss the wheel. Only test the detailed room for
+    // occlusion after a wheel surface or its solid tap volume is on the ray.
+    if (!this.wheelPickables) {
+      this.wheelPickables = [];
+      this.room.traverse(object => { if (isWheelMesh(object)) this.wheelPickables!.push(object); });
+    }
+    for (const object of this.wheelPickables) object.updateWorldMatrix(true, false);
+    const target = this.raycaster.intersectObject(wheelTapTarget)[0];
+    if (!target && !this.raycaster.intersectObjects(this.wheelPickables, false).length) return false;
+    this.room.updateMatrixWorld(true);
     const hit = this.raycaster.intersectObject(this.room, true)[0];
     if (hit && isWheelMesh(hit.object)) return true;
-    const target = this.raycaster.intersectObject(wheelTapTarget)[0];
     // Keep walls and furniture in front of the wheel from becoming click-through.
     return !!target && (!hit || target.distance < hit.distance);
   }

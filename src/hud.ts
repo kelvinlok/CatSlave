@@ -1005,8 +1005,14 @@ export class Hud {
     this.animationTime += dt;
     if (!game.vacuumUnlocked || ['title', 'game-over', 'victory', 'free-play'].includes(game.phase)) this.vacuumUnlockAge = Infinity;
     else if (game.phase !== 'paused' && !this.rotateRequired) this.vacuumUnlockAge += dt;
+    const previousDamageFlash = this.damageFlash;
     this.damageFlash = game.phase === 'paused' ? 0 : Math.max(0, 1.15 - world.attackAge);
-    if (!force && !this.dirty && this.lastPhase === game.phase && this.elapsed < 1 / 30) return;
+    if (previousDamageFlash > 0 && this.damageFlash === 0) this.dirty = true;
+    // These screens have static canvas artwork; their animated cats live in
+    // the separate 3D scene. Keep animation/effect screens on the usual cadence.
+    const staticScreen = ['title', 'cat-dex', 'adoption', 'game-over'].includes(game.phase);
+    if (!force && !this.dirty && this.lastPhase === game.phase
+      && (this.elapsed < 1 / 30 || staticScreen && !this.damageFlash && !previousDamageFlash)) return;
     if (this.lastPhase !== game.phase) { this.modal = undefined; this.clearInteraction(); }
     this.lastPhase = game.phase; this.elapsed = 0; this.dirty = false;
     const ctx = this.ctx;
