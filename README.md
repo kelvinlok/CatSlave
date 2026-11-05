@@ -10,6 +10,12 @@ The lounge is dressed for Christmas throughout: evergreen garlands and warm fair
 
 Each cat wears a Christmas outfit chosen for its appearance, including Santa, elf, reindeer, winter knitwear, holly, and gift-bow variations. Matching footwear includes Santa buckle boots, curled elf shoes with bells, reindeer lace-up booties, and winter or festive slippers. Accessories follow the animated head, body, and each paw in the room and 3D previews. The theme is always active and does not depend on the calendar or change saved progress.
 
+### Closet
+
+Open **Closet** from the main menu or free play, or **Dress up** on an adopted cat's profile. The selected cat appears in the center; drag it sideways to turn. Use the cat arrows to choose another adopted cat, then switch between **Headwear**, **Neck & body**, and **Shoes**. Swipe or scroll the clothing strip, or use its arrow buttons, and tap any piece to see it immediately. All seasonal pieces can be mixed across cats; **None** removes just that category.
+
+Each cat starts with its original outfit. Choices save automatically on this browser and follow the cat in the room, profiles, and game previews. **Reset outfit** restores only the selected cat's defaults. **Done** or Escape returns to the previous screen; the room stays paused while dressing. If browser storage is unavailable, the closet keeps the choices for the current session and shows a notice.
+
 ## Run locally
 
 Requires Node.js 22.12+ (developed with Node 24).
@@ -156,6 +162,8 @@ Native cat rigs update their controls and bone hierarchy without repeated full-m
 Regression coverage includes `tests/wheel-picking.test.ts`, `tests/blender-cat-rig.test.ts`, and `tests/browser/frame-performance.spec.ts`, alongside the real-model rig, wheel interaction and texture-restoration browser tests. Wheel tests compare 300 screen positions against the original picker and confirm 100 wheel misses cause zero furniture raycasts instead of 100.
 
 ## Prototype boundaries
+
+Costume capes and scarves are authored in Blender with woven normal/roughness maps, sewn edges, fabric thickness, and fitted neck openings. Editable source and rebuild instructions are in [assets/costumes](assets/costumes/README.md). The game blends the neckline with the head/body pose and flexes boot shafts with the lower leg while keeping soles and toes rigid. Geometry and materials stay shared between outfits; each cat owns its deformation weights. This uses lightweight pose corrections rather than a runtime cloth simulation.
 
 - Modern WebGL 2 browsers only; no native app packaging, backend, or account system.
 - The nine custom cats—Choco, Latte, 的的, 小塞, Yelo, Miller, Momo, 震震子 and 丁丁—use imported Blender armatures with continuous weighted skin, painted coats and skinned fur. Game animation and foot IK drive their native bones. Editable sources, original photo references and rebuild instructions are in `assets/choco/`, `assets/latte/`, `assets/didi/`, `assets/xiaosai/`, `assets/yelo/`, `assets/miller/`, `assets/momo/`, `assets/zhenzhenzi/` and `assets/dingding/`; game assets are under `public/models/`. Yelo is featured at the fourth adoption opportunity and can join free play. All cats have identical behavior profiles.

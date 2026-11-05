@@ -14,6 +14,21 @@ export function languageLabel() { return language === 'yue-Hant' ? 'English' : '
 // Translate at the presentation boundary so existing game state and saved cats
 // remain language-independent, and a paused game can switch immediately.
 const cantonese: Record<string, string> = {
+  'Closet': '衣櫃', 'Dress up': '換衫', 'Done': '完成', 'None': '唔着',
+  'Headwear': '頭飾', 'Neck & body': '頸飾同衫', 'Shoes': '鞋仔',
+  'Previous cat': '上一隻貓', 'Next cat': '下一隻貓', 'Previous clothes': '前面嘅衫', 'More clothes': '更多衫仔',
+  'Wearing': '着緊', 'Reset outfit': '還原配搭', 'Drag to turn': '拖曳轉身睇吓', 'No mess': '唔使執手尾',
+  'Adopt a cat to open the closet.': '領養貓貓之後，就可以幫佢換衫。',
+  'Storage unavailable · kept for this visit': '暫時儲存唔到 · 今次換衫仍然有效',
+  'Santa hat': '聖誕帽', 'Santa cape': '聖誕披肩', 'Santa boots': '聖誕靴',
+  'Green elf hat': '綠色精靈帽', 'Elf scarf': '精靈頸巾', 'Green elf shoes': '綠色精靈鞋',
+  'Reindeer antlers': '馴鹿角', 'Reindeer scarf': '馴鹿頸巾', 'Reindeer booties': '馴鹿短靴',
+  'Red elf hat': '紅色精靈帽', 'Red elf scarf': '紅色精靈頸巾', 'Red elf shoes': '紅色精靈鞋',
+  'Evergreen Santa hat': '松綠聖誕帽', 'Evergreen cape': '松綠披肩', 'Evergreen boots': '松綠靴',
+  'Woodland antlers': '森林鹿角', 'Woodland scarf': '森林頸巾', 'Woodland booties': '森林短靴',
+  'Winter knit hat': '冬日冷帽', 'Winter scarf': '冬日頸巾', 'Winter slippers': '冬日棉拖',
+  'Holly crown': '冬青花冠', 'Holly cape': '冬青披肩', 'Holly slippers': '冬青棉拖',
+  'Christmas bow': '聖誕蝴蝶結', 'Gift bow scarf': '禮物蝴蝶頸巾', 'Gift slippers': '禮物棉拖',
   'Christmas at the cat lounge': '貓屋聖誕派對',
   'Cozy paws, festive mischief.': '暖笠笠嘅貓爪，聖誕搗蛋時間。',
   'Arrange room': '佈置房間', 'ARRANGE ROOM': '佈置房間', 'Room updated': '房間已更新',

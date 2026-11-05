@@ -4,6 +4,8 @@ import { ROOM } from './config';
 import { jumpCurve, JUMP_TAKEOFF, JUMP_TOUCHDOWN } from './cat-jump';
 import { updateBlenderCatRig } from './blender-cat-rig';
 import { WHEEL, WHEEL_RUN_SPEED, wheelTreadRise } from './cat-wheel';
+import { updateCatCostumeMotion } from './cat-costume-motion';
+import { updateCatClothMotion } from './cat-cloth-motion';
 
 const TAU = Math.PI * 2;
 const clamp = (n: number, min = 0, max = 1) => Math.max(min, Math.min(max, n));
@@ -420,6 +422,8 @@ export function animateCat(model: CatModel, cat: CatState, time: number, options
     model.head.rotation.x -= angle * 0.75;
   }
   updateBlenderCatRig(model.root);
+  updateCatCostumeMotion(model.root);
+  updateCatClothMotion(model.root, time);
 }
 
 /** Kept for callers outside World; the animator now owns the complete pose. */

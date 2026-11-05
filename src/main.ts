@@ -19,6 +19,8 @@ import { FURNITURE_DEFINITIONS, validateRoomLayout, type FurniturePose } from '.
 import { furnitureGroups, type FurnitureFilter } from './furniture-catalog';
 import { FurniturePreviews } from './furniture-previews';
 import { RoomLayoutPreviews } from './room-layout-previews';
+import { costumeItems, isCostumeSlot, isCostumeItemId } from './wardrobe';
+import { wardrobeMaxOffset } from './wardrobe-ui';
 
 syncDocumentLanguage();
 const canvas = document.querySelector<HTMLCanvasElement>('#game')!;
@@ -47,6 +49,7 @@ renderer.clear();
 const game = new Game(import.meta.env.MODE === 'test' ? 42 : undefined);
 try { game.restoreFreePlay(JSON.parse(localStorage.getItem('catslave-free-play') ?? 'null')); } catch { /* Storage may be unavailable. */ }
 try { game.restoreAdoptedCats(JSON.parse(localStorage.getItem('catslave-cat-dex') ?? 'null')); } catch { /* Keep session progress when storage is unavailable. */ }
+try { const saved = localStorage.getItem('catslave-wardrobe'); if (saved) game.wardrobe.restore(saved); } catch { /* Dressing still works for this session. */ }
 let savedAdoptedCats = '';
 let savedFreeRoster = JSON.stringify(game.freePlayRoster);
 // Standalone entry is a test fixture; players encounter Pawdicure in bonus rounds.
@@ -81,6 +84,7 @@ function finishEntrance() {
 let freeDrag: { point: Point; pan: boolean; mode: 'camera' | 'pet' | 'wand' } | undefined;
 const freeCameraTouches = new Map<number, Point>();
 let dexDrag: Point | undefined;
+let wardrobeDrag: { start: Point; offset: number; item?: string; moved: boolean } | undefined;
 const movementKeys = new Set<string>();
 const roomStore = new RoomLayoutStore();
 let editorView: RoomEditorView | undefined;
@@ -267,7 +271,8 @@ function roomAction(id: string) {
   refreshEditor();
 }
 function updateWorld(dt: number, time: number, effectsDt = dt) {
-  const profile = game.phase === 'cat-dex' && hud.dexCat !== undefined ? PALETTE[hud.dexCat] : undefined;
+  const profile = game.phase === 'wardrobe' ? PALETTE[game.wardrobeCatIndex]
+    : game.phase === 'cat-dex' && hud.dexCat !== undefined ? PALETTE[hud.dexCat] : undefined;
   if (profile && game.adoptedCats.includes(profile.name) && isBlenderCat(profile.appearance)) {
     void preloadBlenderCatAsset(profile.appearance);
   }
@@ -286,6 +291,7 @@ function cancelGesture() {
   const touches = [...freeCameraTouches.keys()]; freeCameraTouches.clear();
   for (const id of touches) if (canvas.hasPointerCapture(id)) canvas.releasePointerCapture(id);
   dexDrag = undefined;
+  wardrobeDrag = undefined;
   freeDrag = undefined; world.setFreePointer(undefined); movementKeys.clear();
   gesture.cancel(); hud.pointer = undefined; hud.pointerTool = undefined;
   hud.pressedId = undefined;
@@ -318,7 +324,7 @@ function resize() {
   canvas.style.left = viewport.x + 'px'; canvas.style.top = viewport.y + 'px';
   renderer.setPixelRatio(Math.min(devicePixelRatio || 1, 1.5)); renderer.setSize(width, height, false);
   const safe = safeInsets(); hud.resize(width, height, safe.top, safe.bottom, safe.left, safe.right);
-  world.resize(width, height, hud.worldViewport(game));
+  world.resize(width, height, hud.worldViewport(game), game.phase === 'wardrobe');
   if (hud.roomEditor) refreshEditor();
   updateWorld(0, performance.now() / 1000); hud.draw(game, world, 0, true);
   if (!contextLost) renderFrame();
@@ -326,7 +332,9 @@ function resize() {
 function syncWorldViewport() {
   world.dexCatIndex = game.phase === 'cat-dex' ? hud.dexCat : undefined;
   const next = hud.worldViewport(game), current = world.viewport;
-  if (next.x !== current.x || next.y !== current.y || next.w !== current.w || next.h !== current.h) world.resize(width, height, next);
+  const presentation = game.phase === 'wardrobe';
+  if (presentation !== world.isPresentationViewport || next.x !== current.x || next.y !== current.y || next.w !== current.w || next.h !== current.h)
+    world.resize(width, height, next, presentation);
 }
 function renderFrame() {
   const furnitureGallery = game.phase === 'room-editor' && ['items', 'unplaced'].includes(hud.roomPanel);
@@ -341,12 +349,40 @@ function renderFrame() {
   renderer.setViewport(v.x, height - v.y - v.h, v.w, v.h);
   renderer.setScissor(v.x, height - v.y - v.h, v.w, v.h); renderer.setScissorTest(true);
   if (!hud.rotateRequired && !gallery) {
-    if (game.phase === 'cat-dex' && hud.dexCat !== undefined) renderer.render(world.dexScene, world.dexCamera);
+    if (game.phase === 'wardrobe' || game.phase === 'cat-dex' && hud.dexCat !== undefined) renderer.render(world.dexScene, world.dexCamera);
     else renderer.render(world.scene, game.phase === 'room-editor' && editorView ? editorView.camera : world.camera);
   }
   renderer.setScissorTest(false); renderer.setViewport(0, 0, width, height);
-  renderer.clearDepth(); if (!hud.rotateRequired) renderer.render(world.attackScene, world.attackCamera);
+  renderer.clearDepth(); if (!hud.rotateRequired && game.phase !== 'wardrobe') renderer.render(world.attackScene, world.attackCamera);
   renderer.clearDepth(); renderer.render(hud.scene, hud.camera);
+}
+function saveWardrobe() {
+  try { localStorage.setItem('catslave-wardrobe', JSON.stringify(game.wardrobe.serialize())); game.wardrobeSaveFailed = false; }
+  catch { game.wardrobeSaveFailed = true; }
+  hud.invalidate();
+}
+function scrollWardrobe(offset: number) {
+  const layout = hud.wardrobeLayout;
+  const maximum = wardrobeMaxOffset(costumeItems(game.wardrobeSlot).length, layout);
+  game.wardrobeItemOffset = THREE.MathUtils.clamp(offset, 0, maximum);
+  hud.invalidate();
+}
+function wardrobeAction(id: string) {
+  if (id === 'wardrobe:open' || id === 'wardrobe:dress') {
+    game.openWardrobe(id === 'wardrobe:dress' ? hud.dexCat : undefined);
+  } else if (game.phase !== 'wardrobe') return;
+  else if (id === 'wardrobe:close') { if (game.wardrobeSaveFailed) saveWardrobe(); game.closeWardrobe(); lastTime = performance.now(); }
+  else if (id === 'wardrobe:previous-cat' || id === 'wardrobe:next-cat') game.cycleWardrobeCat(id.includes('previous') ? -1 : 1);
+  else if (id.startsWith('wardrobe:category:')) {
+    const slot = id.slice('wardrobe:category:'.length); if (isCostumeSlot(slot)) game.chooseWardrobeCategory(slot);
+  } else if (id.startsWith('wardrobe:item:')) {
+    const item = id.slice('wardrobe:item:'.length); if (isCostumeItemId(item) && game.equipWardrobe(item)) saveWardrobe();
+  } else if (id === 'wardrobe:reset') { game.resetWardrobe(); saveWardrobe(); }
+  else if (id === 'wardrobe:previous-items' || id === 'wardrobe:next-items') {
+    scrollWardrobe(game.wardrobeItemOffset + (id.includes('previous') ? -1 : 1));
+  }
+  hud.clearInteraction(); audio.setBlocked(!game.running || document.hidden);
+  syncWorldViewport(); updateWorld(0, performance.now() / 1000, 0); hud.draw(game, world, 0, true);
 }
 function action(id: string) {
   // Resolve against the current screen, even if another input arrived before a frame.
@@ -363,6 +399,11 @@ function action(id: string) {
     return;
   }
   if (id === 'sound') { audio.cycleVolume(); hud.soundLabel = audio.label; hud.invalidate(); return; }
+  if (id.startsWith('wardrobe:')) {
+    wardrobeAction(id);
+    if (keyboardFocus && hud.controls.some(hit => hit.id === keyboardFocus)) { hud.focusedId = keyboardFocus; hud.invalidate(); }
+    return;
+  }
   if (id.startsWith('room:')) {
     roomAction(id); syncWorldViewport(); updateWorld(0, performance.now() / 1000, 0); hud.draw(game, world, 0, true); return;
   }
@@ -459,7 +500,7 @@ function waveWand(p: Point) {
 function point(event: PointerEvent): Point { const rect = canvas.getBoundingClientRect(); return { x: event.clientX - rect.left, y: event.clientY - rect.top }; }
 function inDexPreview(p: Point) {
   const v = world.viewport;
-  return game.phase === 'cat-dex' && hud.dexCat !== undefined
+  return (game.phase === 'wardrobe' || game.phase === 'cat-dex' && hud.dexCat !== undefined)
     && p.x >= v.x && p.x <= v.x + v.w && p.y >= v.y && p.y <= v.y + v.h;
 }
 function dragFreeCamera(dx: number, dy: number, pan = false) {
@@ -519,6 +560,14 @@ canvas.addEventListener('pointerdown', event => {
   if (game.phase === 'bonus' && hit?.id.startsWith('pat:')) { action(hit.id); return; }
   if (game.phase === 'bonus' && hit?.id === 'paw-clip') { action(hit.id); return; }
   pointerId = event.pointerId; canvas.setPointerCapture(event.pointerId);
+  if (game.phase === 'wardrobe') {
+    const r = hud.wardrobeLayout.carousel;
+    if (p.x >= r.x && p.x <= r.x + r.w && p.y >= r.y && p.y <= r.y + r.h) {
+      wardrobeDrag = { start: p, offset: game.wardrobeItemOffset,
+        item: hit?.id.startsWith('wardrobe:item:') ? hit.id : undefined, moved: false };
+      hud.pressedId = wardrobeDrag.item; hud.invalidate(); return;
+    }
+  }
   if (!hit && inDexPreview(p)) { dexDrag = p; canvas.style.cursor = 'grabbing'; return; }
   if (game.phase === 'free-play' && !hit && p.x >= world.viewport.x && p.x <= world.viewport.x + world.viewport.w && p.y >= world.viewport.y && p.y <= world.viewport.y + world.viewport.h) {
     const catId = world.freeCatHit(p);
@@ -588,6 +637,16 @@ canvas.addEventListener('pointermove', event => {
     canvas.style.cursor = dexDrag || freeDrag?.mode === 'camera' ? 'grabbing' : hover?.disabled ? 'not-allowed' : hover || wheelHover ? 'pointer' : game.active || inDexPreview(p) || cameraHover ? 'grab' : 'default';
   }
   if (event.pointerId !== pointerId) return;
+  if (wardrobeDrag && game.phase === 'wardrobe') {
+    const dx = p.x - wardrobeDrag.start.x, dy = p.y - wardrobeDrag.start.y;
+    if (Math.hypot(dx, dy) > 7) wardrobeDrag.moved = true;
+    if (wardrobeDrag.moved) {
+      const layout = hud.wardrobeLayout;
+      scrollWardrobe(wardrobeDrag.offset - (Math.abs(dx) >= Math.abs(dy) ? dx : dy) / (layout.cardWidth + layout.cardGap));
+      hud.pressedId = undefined;
+    }
+    return;
+  }
   if (dexDrag) { world.rotateDex(dexDrag, p); dexDrag = p; return; }
   if (freeDrag && game.phase === 'free-play') {
     const dx = p.x - freeDrag.point.x, dy = p.y - freeDrag.point.y;
@@ -619,6 +678,11 @@ canvas.addEventListener('pointerup', event => {
     return;
   }
   if (event.pointerId !== pointerId) return;
+  if (wardrobeDrag) {
+    const p = point(event), drag = wardrobeDrag;
+    const item = !drag.moved && hud.hit(p.x, p.y)?.id === drag.item ? drag.item : undefined;
+    cancelGesture(); if (item) action(item); return;
+  }
   if (dexDrag) { cancelGesture(); canvas.style.cursor = 'grab'; return; }
   const p = point(event), route = gesture.route, hit = hud.hit(p.x, p.y);
   const inTarget = route?.kind === 'care' && careTarget(route.eventId, p);
@@ -630,6 +694,17 @@ canvas.addEventListener('lostpointercapture', event => { if (event.pointerId ===
 canvas.addEventListener('pointerleave', () => { hud.hoveredId = undefined; hud.invalidate(); });
 canvas.addEventListener('contextmenu', event => event.preventDefault());
 canvas.addEventListener('wheel', event => {
+  if (game.phase === 'wardrobe') {
+    const bounds = canvas.getBoundingClientRect(), r = hud.wardrobeLayout.carousel;
+    const x = event.clientX - bounds.left, y = event.clientY - bounds.top;
+    if (x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h) {
+      event.preventDefault();
+      const delta = Math.abs(event.deltaX) > Math.abs(event.deltaY) ? event.deltaX : event.deltaY;
+      const unit = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? r.w : 1;
+      scrollWardrobe(game.wardrobeItemOffset + delta * unit / (hud.wardrobeLayout.cardWidth + hud.wardrobeLayout.cardGap));
+    }
+    return;
+  }
   if (game.phase === 'room-editor' && editorView && hud.roomPanel === 'none') {
     event.preventDefault(); editorView.zoomBy(Math.exp(-event.deltaY * .002)); hud.invalidate(); return;
   }
@@ -677,6 +752,7 @@ window.addEventListener('keydown', event => {
   if (event.key === ' ' && game.phase === 'bonus' && game.bonus?.paw) { event.preventDefault(); action('paw-clip'); return; }
   if (event.key === 'Escape') {
     event.preventDefault(); cancelGesture();
+    if (game.phase === 'wardrobe') { action('wardrobe:close'); return; }
     if (game.phase === 'cat-dex') { action('dex-back'); return; }
     if (hud.modal) { hud.modal = undefined; hud.clearInteraction(); }
     else if (game.running) game.pause(); else if (game.phase === 'paused') game.resume();

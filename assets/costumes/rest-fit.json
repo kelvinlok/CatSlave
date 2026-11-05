@@ -1,0 +1,38 @@
+{
+  "cape": {
+    "minimum_signed_clearance": 0.004884486435201341,
+    "maximum_signed_clearance": 0.12692249432438985,
+    "p95_signed_clearance": 0.1060271634792116,
+    "vertices_inside_skin": 0,
+    "vertices": 2376,
+    "closest_point": [
+      0.3331,
+      0.631271,
+      0.39874
+    ]
+  },
+  "scarf": {
+    "minimum_signed_clearance": 0.005066441197413951,
+    "maximum_signed_clearance": 0.25685518857790157,
+    "p95_signed_clearance": 0.23035535560920833,
+    "vertices_inside_skin": 0,
+    "vertices": 2952,
+    "closest_point": [
+      0.228712,
+      0.735249,
+      0.566993
+    ]
+  },
+  "scarf_band": {
+    "minimum_signed_clearance": 0.005066441197413951,
+    "maximum_signed_clearance": 0.01849903119727969,
+    "p95_signed_clearance": 0.018336713733151554,
+    "vertices_inside_skin": 0,
+    "vertices": 1368,
+    "closest_point": [
+      0.228712,
+      0.735249,
+      0.566993
+    ]
+  }
+}

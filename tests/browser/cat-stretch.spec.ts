@@ -10,19 +10,27 @@ test('cats stretch autonomously, pause midway and recover; inspect all reference
   try {
     await page.goto('/'); await page.waitForFunction(() => !!window.__CATSLAVE_TEST__);
     await page.evaluate(() => {
-      const t = window.__CATSLAVE_TEST__, game = t.game; game.reset();
+      const t = window.__CATSLAVE_TEST__, game = t.game; t.setManualClock(true); game.reset();
       const cat = game.cats[0]; cat.nextNeedAt = Infinity; cat.nextStretchAt = game.clock + 0.2;
       cat.position = { x: 0, z: -0.8 }; cat.destination = { ...cat.position }; cat.yaw = Math.PI / 2;
-      cat.decisionAt = Infinity; t.world.zoomView(-10); t.refresh();
+      cat.decisionAt = Infinity; t.world.zoomView(-10);
+      // Advance the production scheduler deterministically. Software WebGL's
+      // long-frame interruption pause must not decide when this fixture stretches.
+      game.tick(.25); t.refresh();
     });
-    await expect.poll(() => page.evaluate(() => window.__CATSLAVE_TEST__.game.cats[0].activity)).toBe('stretching');
-    await page.waitForTimeout(1500);
-    const frozen = await page.evaluate(() => { const g = window.__CATSLAVE_TEST__.game; g.pause(); return g.cats[0].pose; });
+    expect(await page.evaluate(() => window.__CATSLAVE_TEST__.game.cats[0].activity)).toBe('stretching');
+    const frozen = await page.evaluate(() => {
+      const t = window.__CATSLAVE_TEST__, game = t.game;
+      game.tick(1.5); t.refresh(); game.pause(); return game.cats[0].pose;
+    });
+    await page.evaluate(() => window.__CATSLAVE_TEST__.game.tick(.3));
     await page.waitForTimeout(300);
     expect(await page.evaluate(() => window.__CATSLAVE_TEST__.game.cats[0].pose)).toBe(frozen);
     await page.screenshot({ path: `${folder}/in-game-hold.png` });
-    await page.evaluate(() => window.__CATSLAVE_TEST__.game.resume());
-    await expect.poll(() => page.evaluate(() => window.__CATSLAVE_TEST__.game.cats[0].activity), { timeout: 6000 }).not.toBe('stretching');
+    await page.evaluate(() => {
+      const t = window.__CATSLAVE_TEST__; t.game.resume(); t.game.tick(3); t.refresh();
+    });
+    expect(await page.evaluate(() => window.__CATSLAVE_TEST__.game.cats[0].activity)).not.toBe('stretching');
     await page.setViewportSize({ width: 1200, height: 700 });
     await page.goto('/tests/browser/cat-studio.html'); await page.waitForFunction(() => !!window.__CAT_STUDIO__);
     for (const variant of [0, 1, 2, 3]) {
@@ -51,4 +59,49 @@ test('cats stretch autonomously, pause midway and recover; inspect all reference
     }
     expect(errors).toEqual([]);
   } finally { await context.close(); await video.saveAs(`${folder}/stretch-motion.webm`); }
+});
+
+
+test('native boot cuffs follow every cat shin while toes and soles stay fixed', async ({ page }) => {
+  await page.setViewportSize({ width: 1200, height: 700 });
+  await page.goto('/tests/browser/cat-studio.html'); await page.waitForFunction(() => !!window.__CAT_STUDIO__);
+  const bootFit = await page.evaluate(() => {
+    const studio = window.__CAT_STUDIO__;
+    return Array.from({ length: studio.variantCount }, (_, variant) => {
+      studio.pose('stretching', 1, variant, 0, .5); studio.pose('stretching', 1.3, variant, 0, .5);
+      const model = studio.model;
+      return model.paws.map((paw, i) => {
+        const shoe = model.root.getObjectByName(`christmas-shoe${i}`)!;
+        const meshes: { active: boolean; minY: number; cuffError: number; rigidError: number; cuffSamples: number }[] = [];
+        shoe.traverse(object => {
+          if (!('geometry' in object) || !('getVertexPosition' in object)) return;
+          const mesh = object as import('three').Mesh;
+          const positions = mesh.geometry.getAttribute('position'), flex = mesh.geometry.getAttribute('ankleFlex');
+          const point = paw.position.clone(), expected = point.clone(), ankle = point.clone().set(0, 0, -.067);
+          const shinRotation = paw.quaternion.clone().invert();
+          let minY = Infinity, cuffError = 0, rigidError = 0, cuffSamples = 0;
+          for (let j = 0; j < positions.count; j++) {
+            mesh.getVertexPosition(j, point); expected.fromBufferAttribute(positions, j);
+            if (flex?.getX(j) === 0) rigidError = Math.max(rigidError, point.distanceTo(expected));
+            else if (flex?.getX(j) === 1 && positions.getY(j) > .07) {
+              expected.sub(ankle).applyQuaternion(shinRotation).add(ankle);
+              cuffError = Math.max(cuffError, point.distanceTo(expected)); cuffSamples++;
+            }
+            point.applyMatrix4(mesh.matrixWorld); minY = Math.min(minY, point.y);
+          }
+          meshes.push({ active: !!mesh.morphTargetInfluences?.some(weight => weight > 0), minY, cuffError, rigidError, cuffSamples });
+        });
+        return { native: model.root.userData.modelRig === 'blender-armature', meshes };
+      });
+    });
+  });
+  for (const cat of bootFit) for (const shoe of cat) {
+    expect(shoe.native).toBe(true);
+    expect(shoe.meshes.some(mesh => mesh.active)).toBe(true);
+    expect(shoe.meshes.reduce((sum, mesh) => sum + mesh.cuffSamples, 0)).toBeGreaterThan(0);
+    for (const mesh of shoe.meshes) {
+      expect(mesh.minY).toBeGreaterThanOrEqual(-.002);
+      expect(mesh.cuffError).toBeLessThan(.004); expect(mesh.rigidError).toBeLessThan(.000001);
+    }
+  }
 });

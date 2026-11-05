@@ -4,7 +4,11 @@ import { clone as cloneRig } from 'three/addons/utils/SkeletonUtils.js';
 import type { CatDefinition } from './types';
 import { applyBlenderCatAsset, hasBlenderCatAsset } from './blender-cat-asset';
 import { blenderRigControls, updateBlenderCatRig } from './blender-cat-rig';
-import { attachChristmasCostume } from './cat-costumes';
+import { applyCatOutfit } from './cat-costumes';
+import { updateCatCostumeMotion } from './cat-costume-motion';
+import { updateCatClothMotion } from './cat-cloth-motion';
+import type { CatOutfit } from './wardrobe';
+export { applyCatOutfit } from './cat-costumes';
 
 export interface CatModel {
   root: THREE.Group; body: THREE.Group; head: THREE.Group; tail: THREE.Group; anger: THREE.Group;
@@ -456,16 +460,16 @@ function buildCat(cat: Appearance) {
 }
 
 /** Forward is +Z. Every cat shares an articulated rig and an independent pose. */
-export function createCat(cat: Appearance): CatModel {
+export function createCat(cat: Appearance, outfit?: CatOutfit): CatModel {
   const imported = hasBlenderCatAsset(cat.appearance);
   const key = `${cat.appearance ?? 'primitive'}:${cat.color}:${cat.accent}:${imported ? 'blender' : 'builtin'}`;
   if (!templates.has(key)) {
     const template = buildCat(cat);
     if (imported && hasBlenderCatAsset(cat.appearance)) applyBlenderCatAsset(cat.appearance, template);
-    attachChristmasCostume(template, cat.appearance);
     templates.set(key, template);
   }
   const root = cloneRig(templates.get(key)!) as THREE.Group;
+  applyCatOutfit(root, cat.appearance, outfit);
   const joint = (name: string) => root.getObjectByName(name) as THREE.Group;
   return { root, body: joint('body'), head: joint('head'), tail: joint('tail'), anger: joint('anger'),
     eyes: [0, 1].map(i => root.getObjectByName(`eye${i}`) as THREE.Mesh), closedEyes: [0, 1].map(i => joint(`closedEye${i}`)), eyeHeight: (root.getObjectByName('eye0') as THREE.Mesh).scale.y,
@@ -479,7 +483,7 @@ export function refreshCatModel(model: CatModel, cat: Appearance) {
   if (model.root.userData.modelSource === 'blender' || !hasBlenderCatAsset(cat.appearance)) return;
   // Bind the authored rig in its rest pose first; attaching to an already posed
   // cat would bake its current movement into the native bone offsets.
-  const replacement = createCat(cat);
+  const replacement = createCat(cat, model.root.userData.catOutfit);
   for (const name of [...blenderRigControls, 'anger']) {
     const before = model.root.getObjectByName(name)!, after = replacement.root.getObjectByName(name)!;
     after.position.copy(before.position); after.quaternion.copy(before.quaternion);
@@ -491,6 +495,8 @@ export function refreshCatModel(model: CatModel, cat: Appearance) {
   Object.assign(root.userData, replacement.root.userData);
   Object.assign(model, replacement, { root });
   updateBlenderCatRig(root);
+  updateCatCostumeMotion(root);
+  updateCatClothMotion(root);
 }
 
 /** Only skeleton textures belong to an instance; cached meshes and coat maps are shared. */

@@ -26,7 +26,7 @@ describe('Choco', () => {
     };
     expect(colors(model.legs[0])).toContain('604239'); expect(colors(model.legs[0])).toContain('faf6ef');
     expect(colors(model.legs[1])).toContain('faf6ef'); expect(colors(model.legs[1])).not.toContain('604239');
-    model.legs.forEach(leg => expect(new THREE.Box3().setFromObject(leg).min.y).toBeCloseTo(0, 3));
+    model.legs.forEach(leg => expect(new THREE.Box3().setFromObject(leg, true).min.y).toBeCloseTo(0, 3));
     expect(colors(model.head)).toContain('cbb45e');
     expect(colors(model.head)).toContain('d99b9f');
   });

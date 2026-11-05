@@ -1,5 +1,10 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
+import { COSTUME_SLOTS, isCatOutfit, normalizeCatOutfit, outfitKey } from './wardrobe';
+import type { CatOutfit, CostumeItemId, CostumeSlot } from './wardrobe';
+import { buildFootwearFlex, updateCatCostumeMotion } from './cat-costume-motion';
+import { buildClothDrape, clothDrapeMaterial, updateCatClothMotion } from './cat-cloth-motion';
+import clothGeometry from './generated/costume-geometry.json';
 
 export type ChristmasCostume = 'santa' | 'elf' | 'reindeer' | 'winter' | 'holly' | 'gift';
 const outfits: Record<string, { style: ChristmasCostume; name: string; color?: string }> = {
@@ -16,17 +21,51 @@ const outfits: Record<string, { style: ChristmasCostume; name: string; color?: s
 export function christmasCostumeFor(appearance?: string) { return outfits[appearance ?? ''] ?? outfits.choco; }
 
 // Small, shared fabric/trim palette: batches are cached with the cat templates.
-const fabric = new THREE.MeshStandardMaterial({ name: 'Christmas wool', vertexColors: true, roughness: 0.94, side: THREE.DoubleSide });
-const trim = new THREE.MeshStandardMaterial({ name: 'Christmas fleece', vertexColors: true, roughness: 1 });
+const fabric = new THREE.MeshPhysicalMaterial({ name: 'Christmas woven wool', vertexColors: true, roughness: 0.94,
+  sheen: .24, sheenRoughness: .88, sheenColor: '#e4d3be', side: THREE.DoubleSide });
+const trim = new THREE.MeshPhysicalMaterial({ name: 'Christmas brushed fleece', vertexColors: true, roughness: 1,
+  sheen: .42, sheenRoughness: 1, sheenColor: '#fff3dc' });
 const metal = new THREE.MeshStandardMaterial({ name: 'Christmas brass', vertexColors: true, roughness: 0.3, metalness: 0.65 });
+// Blender-authored, seamless data maps are shared by every garment. DOM-backed
+// images remain restorable after a mobile WebGL context loss.
+if (typeof document !== 'undefined') {
+  const loader = new THREE.TextureLoader();
+  for (const [file, property] of [['fabric-normal.png', 'normalMap'], ['fabric-roughness.png', 'roughnessMap']] as const) {
+    const texture = loader.load(`${import.meta.env.BASE_URL}textures/costumes/${file}`);
+    texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
+    texture.repeat.set(8, 8); texture.anisotropy = 4;
+    fabric[property] = texture; trim[property] = texture;
+  }
+  fabric.normalScale.set(.46, .46); trim.normalScale.set(.7, .7);
+}
 const red = '#b62d3c', green = '#285f48', ivory = '#fff3dc', gold = '#d9aa50';
 type Layer = 'fabric' | 'trim' | 'metal';
 const materials = { fabric, trim, metal };
+const clothMaterials = { fabric: clothDrapeMaterial(fabric), trim: clothDrapeMaterial(trim), metal: clothDrapeMaterial(metal) };
 type Vec = [number, number, number];
+
+/** Three's relative-target bounds accumulate deltas; bound each pose from rest. */
+function costumeBounds(geometry: THREE.BufferGeometry) {
+  const positions = geometry.getAttribute('position');
+  const bounds = new THREE.Box3().setFromBufferAttribute(positions as THREE.BufferAttribute);
+  const point = new THREE.Vector3();
+  for (const target of geometry.morphAttributes.position ?? []) {
+    for (let i = 0; i < positions.count; i++) {
+      point.fromBufferAttribute(positions, i);
+      point.x += target.getX(i); point.y += target.getY(i); point.z += target.getZ(i);
+      bounds.expandByPoint(point);
+    }
+  }
+  // Signed neck corrections are bounded by .42 * .58 / .88 (smallest fit).
+  if (geometry.userData.clothDrape) bounds.expandByScalar(.30);
+  geometry.boundingBox = bounds;
+  geometry.boundingSphere = bounds.getBoundingSphere(new THREE.Sphere());
+}
 
 /** Bake color and transforms into one mesh per material and animated attachment. */
 class CostumePart {
   readonly root = new THREE.Group();
+  ankleFlex = 0;
   private readonly pieces: Record<Layer, THREE.BufferGeometry[]> = { fabric: [], trim: [], metal: [] };
   constructor(name: string) { this.root.name = name; this.root.userData.isCatCostume = true; }
   add(geometry: THREE.BufferGeometry, color: string, layer: Layer = 'fabric', position: Vec = [0, 0, 0], scale: Vec = [1, 1, 1], rotation: Vec = [0, 0, 0]) {
@@ -34,12 +73,25 @@ class CostumePart {
       new THREE.Quaternion().setFromEuler(new THREE.Euler(...rotation)), new THREE.Vector3(...scale)));
     const flat = geometry.index ? geometry.toNonIndexed() : geometry;
     if (flat !== geometry) geometry.dispose();
-    // All primitives have normals; UVs are unused by this texture-free kit.
-    flat.deleteAttribute('uv');
+    // Authored cloth keeps its unwrapped meter-scale UVs. Small trim/details
+    // get a local projection at the same texel density instead of stretched UVs.
+    if (!geometry.userData.authoredUV) {
+      const points = flat.getAttribute('position'), normals = flat.getAttribute('normal');
+      const uv = new Float32Array(points.count * 2);
+      for (let i = 0; i < points.count; i += 3) {
+        const nx = Math.abs(normals.getX(i)), ny = Math.abs(normals.getY(i)), nz = Math.abs(normals.getZ(i));
+        for (let j = i; j < Math.min(i + 3, points.count); j++) {
+          uv[j * 2] = nx > ny && nx > nz ? points.getZ(j) : points.getX(j);
+          uv[j * 2 + 1] = ny > nx && ny > nz ? points.getZ(j) : points.getY(j);
+        }
+      }
+      flat.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+    }
     const tint = new THREE.Color(color), count = flat.getAttribute('position').count;
     const colors = new Float32Array(count * 3);
     for (let i = 0; i < count; i++) colors.set([tint.r, tint.g, tint.b], i * 3);
     flat.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+    flat.setAttribute('ankleFlex', new THREE.Float32BufferAttribute(new Float32Array(count).fill(this.ankleFlex), 1));
     this.pieces[layer].push(flat);
   }
   ball(position: Vec, size: Vec, color: string, layer: Layer = 'fabric') {
@@ -55,8 +107,10 @@ class CostumePart {
     for (const layer of Object.keys(this.pieces) as Layer[]) {
       const pieces = this.pieces[layer]; if (!pieces.length) continue;
       const geometry = mergeGeometries(pieces)!; pieces.forEach(piece => piece.dispose());
-      geometry.computeBoundingBox(); geometry.computeBoundingSphere();
-      const mesh = new THREE.Mesh(geometry, materials[layer]);
+      if (this.root.name === 'christmas-footwear') buildFootwearFlex(geometry);
+      if (this.root.name === 'christmas-neckwear') buildClothDrape(geometry);
+      costumeBounds(geometry);
+      const mesh = new THREE.Mesh(geometry, geometry.userData.clothDrape ? clothMaterials[layer] : materials[layer]);
       mesh.name = `${this.root.name}-${layer}`; mesh.castShadow = true; mesh.receiveShadow = true;
       this.root.add(mesh);
     }
@@ -72,16 +126,23 @@ function cap(part: CostumePart, color: string, elf = false) {
     [0.135, 0.655, -0.045, 0.065, 0.056], [0.215, 0.63, -0.025, 0.032, 0.03],
     [0.255, elf ? 0.62 : 0.565, 0, 0.004, 0.004],
   ];
-  const points: number[] = [], indices: number[] = [], around = 28;
-  sections.forEach(([x, y, z, rx, rz], row) => {
+  const points: number[] = [], indices: number[] = [], uvs: number[] = [], around = 36, rows = 24;
+  const spine = new THREE.CatmullRomCurve3(sections.map(([x, y, z]) => new THREE.Vector3(x, y, z)));
+  const widths = new THREE.CatmullRomCurve3(sections.map(([, , , x, z]) => new THREE.Vector3(x, z, 0)));
+  for (let row = 0; row <= rows; row++) {
+    const t = row / rows, center = spine.getPoint(t), width = widths.getPoint(t);
     for (let i = 0; i <= around; i++) {
       const a = i / around * Math.PI * 2;
-      points.push(x + Math.cos(a) * rx, y, z + Math.sin(a) * rz);
+      const fold = (.004 * Math.sin(a * 7 + t * 2) + .002 * Math.sin(a * 11 - t)) * Math.sin(Math.PI * t);
+      points.push(center.x + Math.cos(a) * (width.x + fold), center.y,
+        center.z + Math.sin(a) * (width.y + fold));
+      uvs.push(i / around * 1.16, t * .52);
       if (row && i) { const n = row * (around + 1) + i, b = n - around - 1; indices.push(b - 1, n - 1, n, b - 1, n, b); }
     }
-  });
+  }
   const geometry = new THREE.BufferGeometry();
   geometry.setAttribute('position', new THREE.Float32BufferAttribute(points, 3));
+  geometry.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2)); geometry.userData.authoredUV = true;
   geometry.setIndex(indices); geometry.computeVertexNormals(); part.add(geometry, color);
   part.ring([-0.035, 0.29, -0.06], 0.213, elf ? 0.036 : 0.044, elf ? (color === red ? green : red) : ivory, elf ? 'fabric' : 'trim', [1, 0.78, 1]);
   if (elf) {
@@ -106,37 +167,29 @@ function bell(part: CostumePart, position: Vec, radius = .046) {
   part.ball([position[0], position[1] - .016, position[2] + radius * .91], [.011, .012, .005], '#54402e', 'metal');
 }
 
-function scarf(part: CostumePart, color = red, fluffy = false) {
-  const width = fluffy ? .37 : .31, z = fluffy ? .5 : .46;
-  part.ring([0, .79, z], width, .051, color, 'fabric', [1, .77, 1]);
-  part.ring([0, .84, z], width, .033, color, 'fabric', [1, .77, 1]);
-  part.tube([[-.11, .79, z + .24], [-.13, .63, z + .29], [-.19, .44, z + .25]], .055, color);
-  part.tube([[.075, .79, z + .25], [.09, .64, z + .30], [.13, .52, z + .27]], .049, color);
-  for (const [x, y, zz, w] of [[-.18, .47, z + .26, .06], [-.145, .59, z + .285, .057], [.125, .55, z + .277, .053]]) {
-    part.add(new THREE.CylinderGeometry(w, w, .027, 14, 1, true), ivory, 'trim', [x, y, zz], [1, 1, 1], [0, 0, -.14]);
+function authoredCloth(part: CostumePart, kind: 'cape' | 'scarf', color: string, fluffy = false) {
+  for (const source of clothGeometry[kind]) {
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.Float32BufferAttribute(source.positions, 3));
+    geometry.setAttribute('normal', new THREE.Float32BufferAttribute(source.normals, 3));
+    geometry.setAttribute('uv', new THREE.Float32BufferAttribute(source.uvs, 2));
+    geometry.setIndex(source.indices); geometry.userData.authoredUV = true;
+    part.add(geometry, source.role === 'trim' ? ivory : color, source.role as Layer,
+      [0, 0, fluffy ? .04 : 0], [fluffy ? 1.19 : 1, 1, 1]);
   }
-  for (const x of [-.22, -.19, -.16]) part.tube([[x, .445, z + .26], [x - .008, .399, z + .25]], .009, ivory, 'trim', 3);
+}
+
+function scarf(part: CostumePart, color = red, fluffy = false) {
+  authoredCloth(part, 'scarf', color, fluffy);
 }
 
 /** Open shoulder cape leaves the belly, all legs and tail unobstructed. */
 function cape(part: CostumePart, color: string) {
-  const vertices: number[] = [], indices: number[] = [], sides = 24, rows = 10;
-  const edge: Vec[] = [];
-  for (let row = 0; row <= rows; row++) {
-    const t = row / rows, z = .40 - t * .78;
-    for (let i = 0; i <= sides; i++) {
-      const angle = -.15 + i / sides * (Math.PI + .3);
-      const x = Math.cos(angle) * (.35 + t * .065), y = .69 + Math.sin(angle) * (.39 - t * .015);
-      vertices.push(x, y, z);
-      if (row === rows) edge.push([x, y, z]);
-      if (row && i) { const n = row * (sides + 1) + i, b = n - sides - 1; indices.push(b - 1, n, n - 1, b - 1, b, n); }
-    }
-  }
-  const geometry = new THREE.BufferGeometry(); geometry.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
-  geometry.setIndex(indices); geometry.computeVertexNormals(); part.add(geometry, color);
-  part.tube(edge, .026, ivory, 'trim', 24);
-  for (const side of [-1, 1]) part.tube([[side * .346, .632, .4], [side * .378, .633, .01], [side * .410, .634, -.38]], .023, ivory, 'trim');
-  part.ring([0, .80, .46], .31, .035, ivory, 'trim', [1, .77, 1]);
+  authoredCloth(part, 'cape', color);
+  // The scooped neckline holds the back; soft front ties meet at the clasp.
+  // A full tilted torus would hang as a rigid hoop around the cat's cheeks.
+  for (const side of [-1, 1]) part.tube([[side * .33, .66, .40], [side * .29, .68, .57],
+    [side * .17, .67, .72], [0, .69, .75]], .017, ivory, 'trim', 18);
   bell(part, [0, .69, .75], .049);
 }
 
@@ -192,12 +245,12 @@ const shoeTemplates = new Map<string, THREE.Group>();
 function shoeShell(part: CostumePart, color: string) {
   const profile = [
     [-.166, .005, .005], [-.145, .075, .075], [-.09, .12, .105],
-    [-.015, .134, .108], [.07, .128, .105], [.135, .085, .073],
-    [.17, .04, .025], [.19, .001, -.045],
+    [-.015, .134, .108], [.07, .128, .105], [.115, .108, .088],
+    [.145, .078, .065, -.046], [.168, .042, .041, -.022], [.18, .003, .014, .01],
   ];
-  const vertices: number[] = [], indices: number[] = [], around = 16;
-  profile.forEach(([z, width, top], row) => {
-    const bottom = -.055, center = (top + bottom) / 2, height = (top - bottom) / 2;
+  const vertices: number[] = [], indices: number[] = [], around = 24;
+  profile.forEach(([z, width, top, bottom = -.055], row) => {
+    const center = (top + bottom) / 2, height = (top - bottom) / 2;
     for (let i = 0; i <= around; i++) {
       const a = i / around * Math.PI * 2;
       vertices.push(Math.cos(a) * width, center + Math.sin(a) * height, z);
@@ -210,9 +263,11 @@ function shoeShell(part: CostumePart, color: string) {
 }
 
 function ankle(part: CostumePart, color: string, cuff: string, height = .12) {
-  part.add(new THREE.CylinderGeometry(.088, .102, height, 16, 1, true), color, 'fabric',
+  part.ankleFlex = 1;
+  part.add(new THREE.CylinderGeometry(.088, .102, height, 24, 6, true), color, 'fabric',
     [0, height / 2, -.067], [1, 1, .88]);
   part.ring([0, height, -.067], .088, .019, cuff, 'fabric', [1, .88, 1]);
+  part.ankleFlex = 0;
 }
 
 /** A tapered upturned elf toe, kept above the sole even at its lowest point. */
@@ -252,10 +307,12 @@ function shoeFor(style: ChristmasCostume, color: string) {
   const part = new CostumePart('christmas-footwear');
   if (style === 'santa') {
     shoeShell(part, '#3b3030'); ankle(part, color, ivory, .16);
+    part.ankleFlex = 1;
     const y = .128, z = .028;
     for (const x of [-.033, .033]) part.add(new THREE.BoxGeometry(.009, .044, .008), gold, 'fabric', [x, y, z]);
     for (const offset of [-.022, .022]) part.add(new THREE.BoxGeometry(.075, .009, .008), gold, 'fabric', [0, y + offset, z]);
     part.add(new THREE.BoxGeometry(.009, .037, .009), gold, 'fabric', [0, y, z + .004]);
+    part.ankleFlex = 0;
   } else if (style === 'elf') {
     shoeShell(part, color); ankle(part, color, color === green ? red : green, .105); curledToe(part, color);
   } else if (style === 'reindeer') {
@@ -273,37 +330,93 @@ function shoeFor(style: ChristmasCostume, color: string) {
   const result = part.finish(); shoeTemplates.set(key, result); return result;
 }
 
-/**
- * Install after anatomy replacement. These gameplay pivots drive the native
- * Blender bones too, giving identical motion without depending on bone axes.
- * No parts are children of blink controls, so closing eyes never hides a hat.
- */
-export function attachChristmasCostume(root: THREE.Group, appearance?: string) {
-  const costume = christmasCostumeFor(appearance);
-  const head = new CostumePart('christmas-headwear'), body = new CostumePart('christmas-neckwear');
+const slotTemplates = new Map<string, THREE.Group>();
+
+/** Cache the individual garments, never the combinatorial outfits or recipient cats. */
+function garmentFor(slot: CostumeSlot, item: Exclude<CostumeItemId, 'none'>) {
+  const key = `${slot}:${item}`, cached = slotTemplates.get(key); if (cached) return cached;
+  const costume = christmasCostumeFor(item);
   const color = costume.color ?? (costume.style === 'elf' ? green : red);
-  switch (costume.style) {
-    case 'santa': cap(head, color); cape(body, color); break;
-    case 'elf':
-      cap(head, color, true); scarf(body, color);
-      for (const x of [-.18, 0, .18]) bell(body, [x, .66, .70], .034);
-      break;
-    case 'reindeer': antlers(head); scarf(body, color); bell(body, [0, .72, .75]); break;
-    case 'winter': knitHat(head); scarf(body, '#527e8c', true); break;
-    case 'holly':
-      head.ring([0, .28, -.06], .27, .026, gold, 'metal', [1, .67, 1]);
-      holly(head, [-.13, .30, .13]); cape(body, green); break;
-    case 'gift':
-      bow(head, [-.14, .29, -.01], .7); scarf(body, green); bow(body, [0, .74, .74], .78);
-      bell(body, [0, .58, .77]); break;
+  if (slot === 'footwear') {
+    const shoe = shoeFor(costume.style, color); slotTemplates.set(key, shoe); return shoe;
   }
-  root.getObjectByName('head')!.add(head.finish());
-  root.getObjectByName('body')!.add(body.finish());
-  for (let i = 0; i < 4; i++) {
-    const shoe = shoeFor(costume.style, color).clone(); shoe.name = `christmas-shoe${i}`;
-    root.getObjectByName(`paw${i}`)!.add(shoe);
+  const part = new CostumePart(slot === 'headwear' ? 'christmas-headwear' : 'christmas-neckwear');
+  if (slot === 'headwear') {
+    switch (costume.style) {
+      case 'santa': cap(part, color); break;
+      case 'elf': cap(part, color, true); break;
+      case 'reindeer': antlers(part); break;
+      case 'winter': knitHat(part); break;
+      case 'holly': part.ring([0, .28, -.06], .27, .026, gold, 'metal', [1, .67, 1]); holly(part, [-.13, .30, .13]); break;
+      case 'gift': bow(part, [-.14, .29, -.01], .7); break;
+    }
+  } else {
+    switch (costume.style) {
+      case 'santa': cape(part, color); break;
+      case 'elf': scarf(part, color); for (const x of [-.18, 0, .18]) bell(part, [x, .66, .70], .034); break;
+      case 'reindeer': scarf(part, color); bell(part, [0, .72, .75]); break;
+      case 'winter': scarf(part, '#527e8c', true); break;
+      case 'holly': cape(part, green); break;
+      case 'gift': scarf(part, green); bow(part, [0, .74, .74], .78); bell(part, [0, .58, .77]); break;
+    }
   }
-  root.userData.christmasCostume = costume.style;
-  root.userData.christmasCostumeName = costume.name;
-  root.userData.christmasFootwear = costume.style;
+  const result = part.finish(); slotTemplates.set(key, result); return result;
+}
+
+/**
+ * Attach to the independent gameplay pivots that also drive the native Blender
+ * bones. Re-equipping never changes anatomy, controller transforms or other cats.
+ */
+export function applyCatOutfit(root: THREE.Group, appearance?: string, outfit?: CatOutfit): void {
+  const selected = normalizeCatOutfit(outfit, appearance);
+  const selectedKey = outfitKey(selected);
+  const previous = isCatOutfit(root.userData.catOutfit) ? root.userData.catOutfit : undefined;
+  // Residents and previews can call this every frame; only an equip traverses
+  // the controller tree. New native models are equipped before transplantation.
+  if (previous && root.userData.catOutfitKey === selectedKey && outfitKey(previous) === selectedKey) return;
+  for (const { id: slot } of COSTUME_SLOTS) {
+    const item = selected[slot];
+    const anchors = slot === 'headwear' ? ['head'] : slot === 'neckwear' ? ['body'] : ['paw0', 'paw1', 'paw2', 'paw3'];
+    anchors.forEach((name, i) => {
+      const parent = root.getObjectByName(name); if (!parent) return;
+      const existing = parent.children.filter(child => child.userData.isCatCostume);
+      if (previous?.[slot] === item && (item === 'none' ? !existing.length : existing.length === 1 && existing[0].userData.costumeItem === item)) return;
+      existing.forEach(child => child.removeFromParent());
+      if (item === 'none') return;
+      const garment = garmentFor(slot, item).clone();
+      if (slot === 'footwear') garment.name = `christmas-shoe${i}`;
+      // Momo's long guard hairs sit beyond the short-haired torso envelope.
+      // Fit the draped cape on this instance, keeping item geometry shared.
+      const style = christmasCostumeFor(item).style;
+      if (appearance === 'momo' && slot === 'neckwear' && (style === 'santa' || style === 'holly')) garment.scale.set(1.16, 1.05, 1);
+      if (slot === 'neckwear' && style !== 'santa' && style !== 'holly') {
+        // The Blender pattern is fitted to broad-necked Choco. Match the
+        // slimmer native necks without baking a duplicate mesh per recipient.
+        const slim = appearance === 'latte' || appearance === 'xiaosai';
+        const medium = ['yelo', 'miller', 'zhenzhenzi', 'dingding'].includes(appearance ?? '');
+        if (slim || medium) {
+          garment.scale.set(slim ? .88 : .95, 1, slim ? .96 : 1);
+          garment.position.z = .46 * (1 - garment.scale.z);
+        }
+      }
+      if (appearance === 'momo' && slot === 'neckwear' && style !== 'santa' && style !== 'holly' && style !== 'winter') {
+        garment.scale.set(1.19, 1.04, 1.04); garment.position.z = .035;
+      }
+      garment.userData.costumeSlot = slot; garment.userData.costumeItem = item;
+      parent.add(garment);
+    });
+  }
+  root.userData.catOutfit = { ...selected };
+  root.userData.catOutfitKey = selectedKey;
+  const matching = selected.headwear === selected.neckwear && selected.headwear === selected.footwear;
+  root.userData.christmasCostume = matching ? (selected.headwear === 'none' ? 'none' : christmasCostumeFor(selected.headwear).style) : 'mixed';
+  root.userData.christmasCostumeName = matching ? (selected.headwear === 'none' ? 'No outfit' : christmasCostumeFor(selected.headwear).name) : 'Mix and match';
+  root.userData.christmasFootwear = selected.footwear === 'none' ? 'none' : christmasCostumeFor(selected.footwear).style;
+  updateCatCostumeMotion(root);
+  updateCatClothMotion(root);
+}
+
+/** Backward-compatible entry point for the default seasonal look. */
+export function attachChristmasCostume(root: THREE.Group, appearance?: string) {
+  applyCatOutfit(root, appearance);
 }

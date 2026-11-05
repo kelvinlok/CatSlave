@@ -8,6 +8,7 @@ import { FreeRoam } from './free-roam';
 import { BONUS_GAMES, BonusRound } from './bonus';
 import { WHEEL } from './cat-wheel';
 import { roomFloorContains, type FloorArea } from './room-boundaries';
+import { Wardrobe, isCostumeSlot, type CostumeSlot, type CostumeItemId } from './wardrobe';
 
 export class Random {
   constructor(private seed: number) {}
@@ -20,6 +21,52 @@ export class Game {
   phase: Phase = 'title';
   resumePhase: 'playing' | 'tutorial' | 'bonus' | 'free-play' = 'playing';
   adoptedCats: string[] = [PALETTE[0].name];
+  readonly wardrobe = new Wardrobe();
+  wardrobeCatIndex = 0;
+  wardrobeSlot: CostumeSlot = 'headwear';
+  wardrobeItemOffset = 0;
+  wardrobeSaveFailed = false;
+  private wardrobeReturnPhase: 'title' | 'cat-dex' | 'free-play' = 'title';
+  openWardrobe(index?: number) {
+    if (!['title', 'cat-dex', 'free-play'].includes(this.phase)) return false;
+    this.wardrobeReturnPhase = this.phase as typeof this.wardrobeReturnPhase;
+    if (index === undefined && this.phase === 'free-play') {
+      const selected = this.cats.find(cat => cat.id === this.selectedFreeCatId);
+      index = PALETTE.findIndex(cat => cat.name === selected?.name);
+    }
+    const owned = PALETTE.map((cat, i) => this.adoptedCats.includes(cat.name) ? i : -1).filter(i => i >= 0);
+    this.wardrobeCatIndex = index !== undefined && owned.includes(index) ? index
+      : owned.includes(this.wardrobeCatIndex) ? this.wardrobeCatIndex : owned[0] ?? 0;
+    this.wardrobeItemOffset = 0; this.phase = 'wardrobe'; this.revision++; return true;
+  }
+  closeWardrobe() {
+    if (this.phase !== 'wardrobe') return false;
+    this.phase = this.wardrobeReturnPhase; this.revision++; return true;
+  }
+  cycleWardrobeCat(direction: number) {
+    if (this.phase !== 'wardrobe' || !Number.isFinite(direction) || !direction) return;
+    const owned = PALETTE.map((cat, i) => this.adoptedCats.includes(cat.name) ? i : -1).filter(i => i >= 0);
+    if (!owned.length) return;
+    const current = Math.max(0, owned.indexOf(this.wardrobeCatIndex));
+    this.wardrobeCatIndex = owned[(current + (direction < 0 ? -1 : 1) + owned.length) % owned.length];
+    this.wardrobeItemOffset = 0; this.revision++;
+  }
+  chooseWardrobeCategory(slot: CostumeSlot) {
+    if (this.phase !== 'wardrobe' || !isCostumeSlot(slot) || slot === this.wardrobeSlot) return;
+    this.wardrobeSlot = slot; this.wardrobeItemOffset = 0; this.revision++;
+  }
+  equipWardrobe(item: CostumeItemId) {
+    const cat = PALETTE[this.wardrobeCatIndex];
+    if (this.phase !== 'wardrobe' || !cat || !this.adoptedCats.includes(cat.name)) return false;
+    const changed = this.wardrobe.equip(cat.appearance!, this.wardrobeSlot, item);
+    if (changed) this.revision++;
+    return changed;
+  }
+  resetWardrobe() {
+    const cat = PALETTE[this.wardrobeCatIndex];
+    if (this.phase !== 'wardrobe' || !cat || !this.adoptedCats.includes(cat.name)) return;
+    this.wardrobe.reset(cat.appearance!); this.revision++;
+  }
   restoreAdoptedCats(names: unknown) {
     if (!Array.isArray(names)) return;
     this.adoptedCats = PALETTE.filter(cat => this.adoptedCats.includes(cat.name) || names.includes(cat.name)).map(cat => cat.name);
@@ -33,7 +80,8 @@ export class Game {
   readonly freeRoam = new FreeRoam();
   readonly roomLayout = new RoomLayoutRuntime();
   private get layoutRuntime() { return this.inFreePlay ? this.roomLayout : undefined; }
-  get inFreePlay() { return this.phase === 'free-play' || this.phase === 'room-editor' || this.phase === 'room-notice' || this.phase === 'paused' && this.resumePhase === 'free-play'; }
+  get inFreePlay() { return this.phase === 'free-play' || this.phase === 'room-editor' || this.phase === 'room-notice' || this.phase === 'paused' && this.resumePhase === 'free-play'
+    || this.phase === 'wardrobe' && this.wardrobeReturnPhase === 'free-play'; }
   private get catFloorArea(): FloorArea { return this.inFreePlay ? 'whole-room' : 'main-room'; }
   pauseReason = 'A little breather';
   hp = 100;

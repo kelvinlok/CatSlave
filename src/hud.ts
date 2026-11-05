@@ -13,6 +13,8 @@ import { FURNITURE_DEFINITIONS, type RoomLayout } from './room-layout';
 import { furnitureGroups, furnitureGrid, type FurnitureFilter } from './furniture-catalog';
 import type { LayoutPreviewRequest } from './room-layout-previews';
 import { CHRISTMAS_UI, christmasFrame, christmasGarland, christmasHolly, christmasSnowflake } from './christmas-ui';
+import { COSTUME_SLOTS, costumeItems } from './wardrobe';
+import { wardrobeLayout, wardrobeCards, wardrobeItemIcon, wardrobeMaxOffset } from './wardrobe-ui';
 
 const C = CHRISTMAS_UI;
 export interface Hit { id: string; x: number; y: number; w: number; h: number; eventId?: number; tool?: ToolId; arch?: PlayArea; regions?: { x: number; y: number; rx: number; ry: number }[]; label?: string; disabled?: boolean; }
@@ -234,6 +236,7 @@ export class Hud {
   get compact() { return this.height < 540; }
   get panelWidth() { return Math.min(this.width - this.left - this.right - 32, 500); }
   get center() { return (this.left + this.width - this.right) / 2; }
+  get wardrobeLayout() { return wardrobeLayout(this.width, this.height, this.top, this.bottom); }
   private addHit(hit: Hit) { this.hits.push({ ...hit, label: hit.label ? translate(hit.label) : undefined }); }
   hit(x: number, y: number): Hit | undefined {
     this.camera.updateMatrixWorld(); this.scene.updateMatrixWorld(true);
@@ -316,15 +319,18 @@ export class Hud {
     if (!this.compact) text(ctx, 'Cozy paws, festive mischief.', center, titleY + 73, 12, C.muted, 'center', 'sans', panel - 32);
     christmasSnowflake(ctx, x + 8, titleY + 48, 6);
     christmasSnowflake(ctx, x + panel - 8, titleY + 48, 6);
-    const gap = 10, cellWidth = (panel - gap) / 2, rowHeight = 48;
-    const bottomY = h - this.bottom - (rowHeight * 3 + gap * 2 + 4);
+    const gap = this.compact && game.freePlayUnlocked ? 8 : 10;
+    const cellWidth = (panel - gap) / 2, rowHeight = this.compact && game.freePlayUnlocked ? 44 : 48;
+    const rows = game.freePlayUnlocked ? 4 : 3;
+    const bottomY = h - this.bottom - (rowHeight * rows + gap * (rows - 1) + 4);
     const rightX = x + cellWidth + gap;
     this.button('start', 'Play  →', x, bottomY, cellWidth, rowHeight, true);
     this.button('learn', 'Practice', rightX, bottomY, cellWidth, rowHeight);
     this.button('cat-dex', 'Cat dex', x, bottomY + rowHeight + gap, cellWidth, rowHeight);
-    if (game.freePlayUnlocked) this.button('free-play', 'Free play →', rightX, bottomY + rowHeight + gap, cellWidth, rowHeight);
-    this.button('sound', this.soundLabel, x, bottomY + 2 * (rowHeight + gap), cellWidth, rowHeight);
-    this.button('language', languageLabel(), rightX, bottomY + 2 * (rowHeight + gap), cellWidth, rowHeight);
+    this.button('wardrobe:open', 'Closet', rightX, bottomY + rowHeight + gap, cellWidth, rowHeight);
+    if (game.freePlayUnlocked) this.button('free-play', 'Free play →', x, bottomY + 2 * (rowHeight + gap), panel, rowHeight);
+    this.button('sound', this.soundLabel, x, bottomY + (rows - 1) * (rowHeight + gap), cellWidth, rowHeight);
+    this.button('language', languageLabel(), rightX, bottomY + (rows - 1) * (rowHeight + gap), cellWidth, rowHeight);
   }
 
   private dexPortrait(index: number, x: number, y: number, size: number, unlocked: boolean) {
@@ -366,7 +372,7 @@ export class Hud {
       const preview = this.worldViewport(game), y = preview.y + preview.h;
       ctx.clearRect(preview.x, preview.y, preview.w, preview.h);
       text(ctx, selected.name, this.center, y + 26, 30, C.ink, 'center', 'serif', width);
-      text(ctx, 'Adopted · Profile unlocked', this.center, y + 60, 14, C.green, 'center', 'bold', width);
+      this.button('wardrobe:dress', 'Dress up', this.center - Math.min(180, width) / 2, y + 42, Math.min(180, width), 44, true);
       const coats = ['Chocolate brown', 'Cream with dark accents', 'Slate grey', 'Golden ginger', 'Amber ginger', 'Brown with dark accents', 'Taupe with dark accents', 'White with grey-brown tabby patches', 'Grey-brown tabby with white toe tips'];
       text(ctx, 'Coat', x + 16, y + 106, 13, C.muted, 'left', 'bold');
       text(ctx, coats[this.dexCat!], x + 16, y + 134, 18, C.ink, 'left', 'serif', width - 32);
@@ -398,7 +404,74 @@ export class Hud {
     });
   }
 
+  private wardrobe(game: Game) {
+    const ctx = this.ctx, layout = this.wardrobeLayout, center = layout.header.x + layout.header.w / 2;
+    ctx.fillStyle = C.cream; ctx.fillRect(0, 0, this.width, this.height);
+    text(ctx, 'Closet', layout.header.x + 4, layout.header.y + 24, 29, C.ink, 'left', 'serif', layout.header.w - 100);
+    this.button('wardrobe:close', 'Done', layout.done.x, layout.done.y, layout.done.w, layout.done.h, true);
+    const owned = PALETTE.filter(cat => game.adoptedCats.includes(cat.name));
+    const selected = PALETTE[game.wardrobeCatIndex];
+    if (!selected || !owned.some(cat => cat.name === selected.name)) {
+      text(ctx, 'Adopt a cat to open the closet.', center, this.height / 2, 15, C.muted, 'center', 'sans', layout.header.w - 16);
+      return;
+    }
+    const index = owned.indexOf(selected), previous = layout.catPrevious, next = layout.catNext;
+    const navigationButton = (id: string, glyph: string, label: string, rect: GameLayout['room'], disabled: boolean) => {
+      ctx.save(); if (disabled) ctx.globalAlpha *= .38;
+      this.button(id, glyph, rect.x, rect.y, rect.w, rect.h); ctx.restore();
+      this.hits[this.hits.length - 1].label = translate(label); this.hits[this.hits.length - 1].disabled = disabled;
+    };
+    navigationButton('wardrobe:previous-cat', '‹', 'Previous cat', previous, owned.length < 2);
+    navigationButton('wardrobe:next-cat', '›', 'Next cat', next, owned.length < 2);
+    text(ctx, selected.name, center, previous.y + 16, 22, C.ink, 'center', 'serif', layout.header.w - 112);
+    text(ctx, `${index + 1} / ${owned.length}`, center, previous.y + 36, 11, C.muted, 'center');
+
+    const preview = layout.preview;
+    ctx.clearRect(preview.x, preview.y, preview.w, preview.h);
+    // Corner details stay at the boundary of the live model rather than covering it.
+    ctx.save(); ctx.strokeStyle = C.line; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.roundRect(preview.x + .5, preview.y + .5, preview.w - 1, preview.h - 1, 18); ctx.stroke(); ctx.restore();
+    christmasSnowflake(ctx, preview.x + 17, preview.y + 17, 5);
+    christmasSnowflake(ctx, preview.x + preview.w - 17, preview.y + 17, 5);
+    if (game.wardrobeSaveFailed) {
+      round(ctx, center - (preview.w - 12) / 2, layout.hintY - 17, preview.w - 12, 28, 8, C.paper);
+      text(ctx, 'Storage unavailable · kept for this visit', center, layout.hintY - 3, 11, C.coral, 'center', 'sans', preview.w - 24);
+    } else text(ctx, 'Drag to turn', center, layout.hintY, 11, C.muted, 'center');
+
+    COSTUME_SLOTS.forEach((slot, i) => {
+      const rect = layout.categoryTabs[i], active = game.wardrobeSlot === slot.id;
+      round(ctx, rect.x, rect.y, rect.w, rect.h, 11, active ? C.green : C.paper, active ? C.green : C.line);
+      text(ctx, slot.label, rect.x + rect.w / 2, rect.y + 21, 12, active ? C.paper : C.ink, 'center', 'bold', rect.w - 12);
+      if (active) line(ctx, [[rect.x + 16, rect.y + rect.h - 6], [rect.x + rect.w - 16, rect.y + rect.h - 6]], '#d9b665', 2);
+      this.addHit({ id: `wardrobe:category:${slot.id}`, label: slot.label, ...rect });
+    });
+    const items = costumeItems(game.wardrobeSlot), outfit = game.wardrobe.get(selected.appearance);
+    const wearing = items.find(item => item.id === outfit[game.wardrobeSlot])!;
+    text(ctx, `${translate('Wearing')} · ${translate(wearing.label)}`, center, layout.selectedLabelY, 12, C.green, 'center', 'bold', layout.header.w - 12);
+
+    ctx.save(); ctx.beginPath(); ctx.rect(layout.carousel.x, layout.carousel.y, layout.carousel.w, layout.carousel.h); ctx.clip();
+    for (const { index: itemIndex, rect, hit } of wardrobeCards(layout, game.wardrobeItemOffset, items.length)) {
+      const item = items[itemIndex], equipped = item.id === wearing.id;
+      round(ctx, rect.x + 1, rect.y + 1, rect.w - 2, rect.h - 2, 12, equipped ? '#e2ece0' : C.paper, equipped ? C.green : C.line);
+      const compact = rect.h < 100, iconY = rect.y + (compact ? 26 : 37), iconSize = compact ? 39 : 52;
+      wardrobeItemIcon(ctx, game.wardrobeSlot, item, rect.x + rect.w / 2, iconY, iconSize);
+      this.roomText(item.label, rect.x + 9, rect.y + rect.h - (compact ? 25 : 29), rect.w - 18, C.ink, 11, 2);
+      if (equipped) {
+        ellipse(ctx, rect.x + rect.w - 12, rect.y + 12, 8, 8, C.green);
+        line(ctx, [[rect.x + rect.w - 16, rect.y + 12], [rect.x + rect.w - 13, rect.y + 15], [rect.x + rect.w - 8, rect.y + 9]], C.paper, 1.6);
+      }
+      // A narrow sliver hints that more pieces are available; swiping reveals its full target.
+      if (hit.w >= 44) this.addHit({ id: `wardrobe:item:${item.id}`, label: item.label, ...hit });
+    }
+    ctx.restore();
+    const maxOffset = wardrobeMaxOffset(items.length, layout), before = layout.previousItems, after = layout.nextItems;
+    navigationButton('wardrobe:previous-items', '‹', 'Previous clothes', before, game.wardrobeItemOffset <= .001);
+    navigationButton('wardrobe:next-items', '›', 'More clothes', after, game.wardrobeItemOffset >= maxOffset - .001);
+    this.button('wardrobe:reset', 'Reset outfit', layout.reset.x, layout.reset.y, layout.reset.w, layout.reset.h);
+  }
+
   worldViewport(game: Game): GameLayout['room'] {
+    if (game.phase === 'wardrobe') return this.wardrobeLayout.preview;
     if (game.phase === 'room-editor') {
       const y = this.top + 148;
       return { x: this.left + 6, y, w: this.width - this.left - this.right - 12,
@@ -595,10 +668,13 @@ export class Hud {
     const { ctx, layout } = this, center = this.center, width = this.panelWidth, x = center - width / 2;
     const { header, pause } = layout;
     round(ctx, header.x, header.y, header.w, header.h, 12, C.paper, C.line);
-    text(ctx, 'FREE PLAY', header.x + 14, header.y + 17, 14, C.green, 'left', 'bold');
-    text(ctx, 'No mess · always-fed cats', header.x + 14, header.y + 35, 11, C.muted, 'left', 'sans', Math.max(110, header.w - 150));
+    const arrangeWidth = Math.min(126, Math.max(104, header.w * .3));
+    const closetWidth = Math.min(78, Math.max(64, header.w * .2));
+    const titleWidth = header.w - arrangeWidth - closetWidth - 24;
+    text(ctx, 'FREE PLAY', header.x + 12, header.y + 17, 14, C.green, 'left', 'bold', titleWidth);
+    text(ctx, 'No mess', header.x + 12, header.y + 35, 11, C.muted, 'left', 'sans', titleWidth);
     this.button('pause', 'Ⅱ', pause.x, pause.y, pause.w, pause.h);
-    const arrangeWidth = Math.min(126, header.w * .46);
+    this.button('wardrobe:open', 'Closet', header.x + header.w - arrangeWidth - closetWidth - 6, header.y, closetWidth, 44);
     this.button('room:open', 'Arrange room', header.x + header.w - arrangeWidth, header.y, arrangeWidth, 44);
     if (!world.roomEditable) this.hits[this.hits.length - 1].disabled = true;
     const catWidth = width / Math.max(1, game.cats.length);
@@ -1298,7 +1374,7 @@ export class Hud {
     if (previousDamageFlash > 0 && this.damageFlash === 0) this.dirty = true;
     // These screens have static canvas artwork; their animated cats live in
     // the separate 3D scene. Keep animation/effect screens on the usual cadence.
-    const staticScreen = ['title', 'cat-dex', 'adoption', 'game-over', 'room-editor', 'room-notice'].includes(game.phase);
+    const staticScreen = ['title', 'cat-dex', 'wardrobe', 'adoption', 'game-over', 'room-editor', 'room-notice'].includes(game.phase);
     if (!force && !this.dirty && this.lastPhase === game.phase
       && (this.elapsed < 1 / 30 || staticScreen && !this.damageFlash && !previousDamageFlash)) return;
     if (this.lastPhase !== game.phase) { this.modal = undefined; this.clearInteraction(); }
@@ -1310,6 +1386,7 @@ export class Hud {
     else if (game.phase === 'room-notice') this.roomScreen(true, world.roomEditable);
     else if (game.phase === 'title') this.title(game);
     else if (game.phase === 'cat-dex') this.catDex(game);
+    else if (game.phase === 'wardrobe') this.wardrobe(game);
     else if (game.phase === 'adoption') this.adoption(game);
     else if (game.phase === 'upgrade') this.upgrade(game);
     else if (game.phase === 'victory') this.victory(game, world);

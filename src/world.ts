@@ -18,6 +18,7 @@ import { PawdicureModel } from './pawdicure-model';
 import type { PawdicureRound } from './pawdicure';
 import { updateBlenderCatRig } from './blender-cat-rig';
 import { hasBlenderCatAsset } from './blender-cat-asset';
+import { applyCatOutfit } from './cat-costumes';
 
 const sphere = new THREE.SphereGeometry(1, 16, 10);
 const box = new THREE.BoxGeometry(1, 1, 1);
@@ -65,6 +66,8 @@ export class World {
   private dexSize = new THREE.Vector3(1, 1, 1);
   private dexCenter = new THREE.Vector3();
   private dexPivot = new THREE.Group();
+  private dexWardrobe = false;
+  private wardrobeStage = new THREE.Group();
   private wheelPickables?: THREE.Object3D[];
   editorLayout?: RoomLayout;
   get roomRoot() { return this.room; }
@@ -106,6 +109,7 @@ export class World {
 
   rotateDex(from: Point, to: Point) {
     if (!this.dexModel) return;
+    if (this.dexWardrobe) { this.dexPivot.rotation.y += (to.x - from.x) * .012; return; }
     // A virtual trackball rotates in X/Y through its center and rolls in Z near its rim.
     const project = (point: Point) => {
       const v = this.viewport, radius = Math.min(v.w, v.h) / 2;
@@ -136,6 +140,8 @@ export class World {
     this.entranceAge = ENTRANCE_DURATION; this.resetView();
   }
   private viewReady = false;
+  private presentationViewport = false;
+  get isPresentationViewport() { return this.presentationViewport; }
   private residents = new Map<number, Resident>();
   private messes = new Map<number, THREE.Group>();
   private completedMesses = new Map<number, { mesh: THREE.Group; age: number; kind: CareEvent['kind'] }>();
@@ -162,6 +168,12 @@ export class World {
 
   constructor() {
     this.dexScene.add(this.dexPivot);
+    this.wardrobeStage.name = 'wardrobe-display-plinth';
+    const plinth = new THREE.Mesh(new THREE.CylinderGeometry(1.12, 1.18, .09, 64), material('#e3ece3'));
+    plinth.position.y = -.05; this.wardrobeStage.add(plinth);
+    const rim = new THREE.Mesh(new THREE.TorusGeometry(1.12, .012, 6, 64), material('#cfb785'));
+    rim.rotation.x = Math.PI / 2; rim.position.y = -.003; this.wardrobeStage.add(rim);
+    this.wardrobeStage.visible = false; this.dexScene.add(this.wardrobeStage);
     this.dexScene.background = new THREE.Color('#f6f1e7');
     this.dexScene.add(new THREE.HemisphereLight('#fff2e7', '#604540', 3));
     const dexLight = new THREE.DirectionalLight('#ffffff', 3);
@@ -187,8 +199,12 @@ export class World {
     this.freeWand.visible = false; this.scene.add(this.freeWand);
   }
 
-  resize(width: number, height: number, viewport = gameLayout(width, height).room) {
+  resize(width: number, height: number, viewport = gameLayout(width, height).room, presentationOnly = false) {
     this.width = width; this.height = height; this.viewport = viewport;
+    this.presentationViewport = presentationOnly;
+    // The closet has its own camera. Its short/wide preview must never change
+    // the room camera's near-plane clearance or push an eye away from a wall.
+    if (presentationOnly) return;
     this.camera.aspect = viewport.w / viewport.h;
     // A fixed eye position at the front of the room: swipes turn your head.
     if (!this.freeCamera && !this.enteringRoom) this.camera.position.copy(ROOM_EYE);
@@ -482,11 +498,12 @@ export class World {
     for (const [index, cat] of game.cats.entries()) {
       let resident = this.residents.get(cat.id);
       if (!resident) {
-        const model = createCat(cat); model.root.userData.catId = cat.id; this.scene.add(model.root);
+        const model = createCat(cat, game.wardrobe.get(cat.appearance)); model.root.userData.catId = cat.id; this.scene.add(model.root);
         resident = { model, base: new THREE.Vector3() }; this.residents.set(cat.id, resident);
       }
       const { model, base } = resident;
       refreshCatModel(model, cat);
+      applyCatOutfit(model.root, cat.appearance, game.wardrobe.get(cat.appearance));
       base.set(cat.position.x, cat.elevation > 0 ? cat.elevation + 0.012 : this.floorHeight(cat.position.x, cat.position.z), cat.position.z);
       model.root.position.copy(base); model.root.rotation.y = cat.yaw;
       model.root.visible = game.phase !== 'room-editor' && !isPreview && (!paw || cat.id === (paw.selectedCatId ?? game.cats[0]?.id));
@@ -577,7 +594,7 @@ export class World {
       this.attackAge = 0;
       if (this.attackModel) { this.attackModel.root.removeFromParent(); disposeCat(this.attackModel); }
       const cat = game.cats.find(c => c.id === game.lastAttackCatId);
-      if (cat) { this.attackModel = createCat(cat); this.attackScene.add(this.attackModel.root); }
+      if (cat) { this.attackModel = createCat(cat, game.wardrobe.get(cat.appearance)); this.attackScene.add(this.attackModel.root); }
     }
     this.lastDamage = game.damageSerial;
     if (game.phase !== 'paused') this.attackAge += dt;
@@ -601,25 +618,28 @@ export class World {
   }
 
   private updateDex(game: Game, time: number) {
-    const definition = this.dexCatIndex === undefined ? undefined : PALETTE[this.dexCatIndex];
-    const index = game.phase === 'cat-dex' && definition && game.adoptedCats.includes(definition.name) ? this.dexCatIndex : undefined;
+    const wardrobe = game.phase === 'wardrobe';
+    const selected = wardrobe ? game.wardrobeCatIndex : this.dexCatIndex;
+    const definition = selected === undefined ? undefined : PALETTE[selected];
+    const index = (wardrobe || game.phase === 'cat-dex') && definition && game.adoptedCats.includes(definition.name) ? selected : undefined;
     const upgrading = index !== undefined && this.dexModel?.root.userData.modelSource !== 'blender'
       && hasBlenderCatAsset(definition?.appearance);
-    if (index !== this.dexModelIndex || upgrading) {
+    this.wardrobeStage.visible = wardrobe;
+    if (index !== this.dexModelIndex || upgrading || wardrobe !== this.dexWardrobe) {
       const rotation = upgrading && index === this.dexModelIndex ? this.dexPivot.quaternion.clone() : undefined;
       if (this.dexModel) { this.dexModel.root.removeFromParent(); disposeCat(this.dexModel); }
       this.dexModel = undefined; this.dexModelIndex = index;
       this.resetDexRotation(); this.dexPivot.position.set(0, 0, 0);
       if (index !== undefined) {
-        this.dexModel = createCat(PALETTE[index]);
-        this.dexModel.root.name = 'dex-cat-model';
-        this.dexModel.root.rotation.y = -0.5;
+        this.dexModel = createCat(PALETTE[index], game.wardrobe.get(PALETTE[index].appearance));
+        this.dexModel.root.name = wardrobe ? 'wardrobe-cat-model' : 'dex-cat-model';
+        this.dexModel.root.rotation.y = wardrobe ? -.3 : -.5;
         this.dexPivot.add(this.dexModel.root);
         // Refresh the reset parent before measuring: setFromObject does not update
         // ancestors, so a previous profile's pivot otherwise offsets these bounds.
         this.dexPivot.updateWorldMatrix(true, true);
         animateCat(this.dexModel, { ...game.cats[0], ...PALETTE[index], id: index + 1,
-          activity: 'grooming', stride: 0, pose: 0 }, time);
+          activity: wardrobe ? 'idle' : 'grooming', stride: 0, pose: 0 }, time);
         const bounds = new THREE.Box3();
         this.dexModel.root.traverseVisible(object => {
           if (object instanceof THREE.Mesh && object.geometry.getAttribute('position')?.count) {
@@ -628,12 +648,17 @@ export class World {
         });
         bounds.getCenter(this.dexCenter);
         bounds.getSize(this.dexSize);
+        // Reserve room for the tallest antlers and curled shoes; changing one
+        // item must not zoom or recenter the cat while comparing outfits.
+        if (wardrobe) { this.dexCenter.set(0, .92, 0); this.dexSize.set(1.65, 2.05, 2.25); }
         this.dexPivot.position.copy(this.dexCenter);
         this.dexModel.root.position.copy(this.dexCenter).negate();
         if (rotation) this.dexPivot.quaternion.copy(rotation);
       }
     }
+    this.dexWardrobe = wardrobe;
     if (!this.dexModel || index === undefined) return;
+    applyCatOutfit(this.dexModel.root, definition?.appearance, game.wardrobe.get(definition?.appearance));
     this.dexCamera.aspect = this.viewport.w / this.viewport.h;
     const halfFov = THREE.MathUtils.degToRad(20);
     const distance = 1.1 * (Math.max(this.dexSize.y, this.dexSize.x / this.dexCamera.aspect)
@@ -641,7 +666,7 @@ export class World {
     this.dexCamera.position.copy(this.dexCenter).add(new THREE.Vector3(0, distance * .12, distance));
     this.dexCamera.lookAt(this.dexCenter); this.dexCamera.updateProjectionMatrix();
     animateCat(this.dexModel, { ...game.cats[0], ...PALETTE[index], id: index + 1,
-      activity: 'grooming', stride: 0, pose: 0 }, time);
+      activity: wardrobe ? 'idle' : 'grooming', stride: 0, pose: 0 }, time);
   }
 
   private updatePreview(game: Game, time: number) {
@@ -651,7 +676,7 @@ export class World {
       this.previewCats.forEach(disposeCat); this.previews.clear(); this.previewCats = []; this.previewKey = key;
       this.previewStartedAt = time;
       if (['title', 'adoption', 'game-over', 'victory'].includes(game.phase)) cats.forEach((cat, i) => {
-        const model = createCat(cat); const adoption = game.phase === 'adoption';
+        const model = createCat(cat, game.wardrobe.get(cat.appearance)); const adoption = game.phase === 'adoption';
         model.root.userData.catId = cat.id;
         model.root.name = `preview-cat-${cat.id}`;
         model.root.position.set(adoption ? (i ? 1.2 : -1.2) : 0, 0.08, 0.2);
@@ -662,6 +687,7 @@ export class World {
     this.previewCats.forEach((model, i) => {
       const definition = cats[i];
       refreshCatModel(model, definition);
+      applyCatOutfit(model.root, definition.appearance, game.wardrobe.get(definition.appearance));
       if (game.phase === 'victory') {
         const elapsed = Math.max(0, time - this.previewStartedAt);
         const progress = THREE.MathUtils.clamp((elapsed - i * 0.24) / 3.2, 0, 1);

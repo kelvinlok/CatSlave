@@ -85,4 +85,45 @@ describe('occasional stretch', () => {
       expect(model.legs[0].position.y).toBeCloseTo(model.legs[2].position.y);
     }
   });
+
+  it('bends boot cuffs with the shins through a stretch without deforming the soles or another cat', () => {
+    for (const definition of PALETTE) {
+      const model = createCat(definition), twin = createCat(definition), cat = new Game(42).cats[0];
+      cat.activity = 'stretching';
+      const point = new THREE.Vector3(), expected = new THREE.Vector3(), axis = new THREE.Vector3(1, 0, 0);
+      const ankle = new THREE.Vector3(0, 0, -.067);
+      let cuffSamples = 0, rigidError = 0, cuffError = 0;
+      for (const progress of [0, .15, .3, .5, .7, .85, 1]) {
+        cat.pose = progress; animateCat(model, cat, progress * STRETCH_DURATION);
+        for (let foot = 0; foot < 4; foot++) {
+          const shoe = model.root.getObjectByName(`christmas-shoe${foot}`)!;
+          shoe.traverse(object => {
+            if (!(object instanceof THREE.Mesh)) return;
+            const positions = object.geometry.getAttribute('position'), flex = object.geometry.getAttribute('ankleFlex');
+            if (!flex) return;
+            const sibling = twin.root.getObjectByName(object.name) as THREE.Mesh;
+            expect(object.geometry).toBe(sibling.geometry);
+            expect(sibling.morphTargetInfluences?.every(weight => weight === 0)).toBe(true);
+            for (let vertex = 0; vertex < positions.count; vertex++) {
+              object.getVertexPosition(vertex, point);
+              expected.fromBufferAttribute(positions, vertex);
+              if (flex.getX(vertex) === 0) {
+                // Any changing toe or sole can rock the contact or expose fur.
+                rigidError = Math.max(rigidError, point.distanceTo(expected));
+              } else if (positions.getY(vertex) > .07) {
+                expected.sub(ankle).applyAxisAngle(axis, -model.paws[foot].rotation.x).add(ankle);
+                // Adjacent rotation samples preserve a round, shin-aligned
+                // opening within 4 mm through reach, hold and recovery.
+                cuffError = Math.max(cuffError, point.distanceTo(expected));
+                cuffSamples++;
+              }
+            }
+          });
+        }
+      }
+      expect(cuffSamples, definition.name).toBeGreaterThan(0);
+      expect(rigidError, definition.name).toBeLessThan(.000001);
+      expect(cuffError, definition.name).toBeLessThan(.004);
+    }
+  });
 });

@@ -53,7 +53,8 @@ describe('cat presentation', () => {
     const a = createCat(coat), b = createCat(coat);
     expect(a.legs).toHaveLength(4);
     for (const leg of a.legs) {
-      const bounds = new THREE.Box3().setFromObject(leg);
+      // Measure the current pose, not the conservative bounds of every cuff morph.
+      const bounds = new THREE.Box3().setFromObject(leg, true);
       expect(bounds.min.y).toBeCloseTo(0, 3);
     }
     a.legs[0].rotation.x = 1;
