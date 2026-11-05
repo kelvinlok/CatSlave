@@ -4,6 +4,12 @@ A touch-first, five-stage cat-care survival game. One devoted human, up to five 
 
 The room, cats, menus, text, meters, and controls are all rendered in **Three.js**. The page contains a single game canvas; canvas-generated textures provide the typography and illustrated tool icons. The room and cats use local Blender assets; there are no HTML gameplay controls.
 
+## Christmas edition
+
+The lounge is dressed for Christmas throughout: evergreen garlands and warm fairy lights, decorated trees on the cubbies and feeding shelf, wreaths, stockings, wrapped presents, and window snowflakes. Decorations sit on fixed walls and shelves, leaving cat routes and editable furniture layouts intact. The menus, care controls, and mini-game presentation share a cranberry, evergreen, ivory, and gold palette in both English and Cantonese.
+
+Each cat wears a Christmas outfit chosen for its appearance, including Santa, elf, reindeer, winter knitwear, holly, and gift-bow variations. Matching footwear includes Santa buckle boots, curled elf shoes with bells, reindeer lace-up booties, and winter or festive slippers. Accessories follow the animated head, body, and each paw in the room and 3D previews. The theme is always active and does not depend on the calendar or change saved progress.
+
 ## Run locally
 
 Requires Node.js 22.12+ (developed with Node 24).
@@ -78,6 +84,22 @@ Mouse input works on desktop. Tab / Shift+Tab cycle menu controls, arrow keys mo
 - **Core loop:** Tap each cat’s rump before its individual three-second patience ring empties. Each press counts one pat, lifts the rump and then lets it settle over 1.4 seconds. Holding does not repeat. Surviving ten seconds earns one extra upgrade. Neglecting any cat triggers its scratch animation and forfeits only the bonus reward, without changing run HP. Both outcomes continue to adoption after the result screen.
 - **Encounter plan:** A short instruction screen and Ready button precede a 3–2–1 countdown. All existing cats stand side by side, face away and look back at the player. The fixed camera fits the whole lineup; each rump has a separate touch target and patience ring. A large timer turns red and pulses in the final three seconds. Pause, blur and rotation freeze the countdown, patience and scratch recovery. Number keys 1–5 can also pat the corresponding cat.
 
+## Arrange the Free Play room
+
+After the furnished room loads, choose **Arrange room** in Free Play. Cats pause and hide while you edit. Drag any freestanding furniture, use **Rotate** for quarter turns, and toggle **Grid** for 0.25-unit snapping. Drag empty floor to pan; use two fingers to pan/pinch on a phone, or the mouse wheel to zoom. **Turn view** and **Fit room** change the editor camera. On desktop, R rotates, arrows nudge, and Ctrl/Cmd+Z / Ctrl+Y undo and redo.
+
+**Furniture** lists all 18 movable units. The recliners move with their footstools; cushions, blankets and soft contact shadows stay with their furniture. Built-ins, walls, the feeding shelf and the window access step stay fixed. Placement checks keep furniture inside the room and preserve access for cats. Red outlines explain invalid placements; releasing an invalid move restores its previous position.
+
+**Layouts** loads one of three slots into a draft. **Save** chooses the destination slot and applies the room; saving to another slot copies it. **Cancel** discards the draft, and **Reset room** is undoable. Saves belong to this browser profile and site address, with no backend or device synchronization. **Export JSON** backs up or shares a layout; **Import JSON** previews it before saving. If storage is unavailable, the editor offers retry, export and session-only use.
+
+Drag furniture to move it. A selected piece shows **↻** to rotate and **×** to store it in Inventory; a brief toast names the stored item. Open **Furniture**, choose the box filter, and place a stored item on clear floor to return it. **Free view / Top view** switches between an orbitable perspective and the overhead editing camera; drag empty floor to orbit in free view, or pan in top view. Pinch/wheel zoom works in either view. Undo, redo, grid snapping, fit-room and reset are directly accessible in the compact toolbar. Keyboard shortcuts remain available. Save and Layouts show visual room cards for the draft and three slots, including placed/inventory counts and an active-slot marker. Storing is undoable; slots and JSON exports retain stored items and their last positions. Deliberately stored furniture does not trigger update warnings.
+
+Furniture and Inventory share a visual grid rendered from the actual room models. Identical chairs, tables and recliner sets share one card with a quantity badge. Each copy has a green room button or a storage-box button; tap a copy to move or place it. The top filters show all furniture, room items, or inventory. Different colours and designs keep separate cards. Previews are generated once and cached, without downloading additional assets.
+
+Every saved layout is checked against the current room when loaded. After an update, furniture outside the new floorplan, intersecting walls or blocking access is omitted; valid furniture stays where it was. The notice lists every omitted item and its reason. **Inventory** retains each item's last position so it can be placed again. Retired items remain listed and exportable. Loading an old save never overwrites it automatically; only an explicit Save replaces a slot. Tutorial and timed play always use the original arrangement.
+
+The exporter generates a room revision from the floorplan and furniture definitions. Keep furniture IDs stable when updating assets; change the save-format version only when its data structure requires migration. See `assets/lounge/README.md` for the export contract.
+
 ## Project structure
 
 - `src/simulation.ts`: deterministic locomotion, fixed mess positions, care scheduling, patience, damage, tutorial, progression, and run state. Movement uses a separate seeded random stream. No rendering dependencies.
@@ -86,6 +108,9 @@ Mouse input works on desktop. Tab / Shift+Tab cycle menu controls, arrow keys mo
 - `src/gyro.ts`: opt-in sensor permission, reference-pose calibration, and direct quaternion orientation tracking with screen-rotation compensation.
 - `src/cat-model.ts`: cached sculpted cats with smooth procedural coat maps, jointed paws, animated ears and independently cloned tail skeletons. Instance bone textures are released when cats are removed; shared geometry and materials remain cached.
 - `src/room-asset.ts`, `src/furniture.ts`, `src/room-navigation.ts`: Blender lounge loading, shared interaction locations, and floor paths around furniture footprints from `assets/lounge/layout.json`.
+- `src/room-layout.ts`, `src/room-layout-view.ts`: per-game placements, update reconciliation, collision/path validation, and bindings to exported furniture roots.
+- `src/room-editor.ts`, `src/room-editor-view.ts`: isolated edit history, three local save slots, file import/export, and overhead camera/picking overlays.
+- `src/furniture-catalog.ts`, `src/furniture-previews.ts`: grouped inventory copies and cached thumbnails rendered from the room meshes.
 - `src/cat-behavior.ts`, `src/cat-animation.ts`: furniture reservations, approach/use/exit routes, floor detours, and interaction poses.
 - `src/messes.ts`: cached geometry for distinct liquid, hair, waste, bowl, and toy targets.
 - `src/need-icons.ts`: wordless care pictograms that match the floor objects.

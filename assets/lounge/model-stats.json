@@ -1,6 +1,8 @@
 {
-  "meshes": 82,
+  "meshes": 167,
   "triangles": 277596,
-  "materials": 82,
-  "glbBytes": 16217220
+  "materials": 80,
+  "batches": 167,
+  "movableItems": 18,
+  "glbBytes": 16138736
 }

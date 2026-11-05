@@ -2,6 +2,7 @@ import { clearFloor, clearFloorSegment, nearbyFloorTarget, nextFloorWaypoint } f
 import { ATTACK_DAMAGE, ATTACK_INTERVAL, ATTACK_WARNING, CLEANING_TOOLS, EFFICIENCY, PALETTE, ROOM, STAGES, STRETCH_DURATION, TOOLS, TOOL_BY_ID, VACUUM, toolMatches } from './config';
 import type { CareEvent, CatDefinition, CatState, EventKind, Phase, ToolId } from './types';
 import { FURNITURE } from './furniture';
+import { RoomLayoutRuntime, defaultRoomLayout, findSafeFloorPositions, type RoomLayout } from './room-layout';
 import { beginVisit, tickVisit } from './cat-behavior';
 import { FreeRoam } from './free-roam';
 import { BONUS_GAMES, BonusRound } from './bonus';
@@ -30,7 +31,9 @@ export class Game {
   freeInteraction: 'pet' | 'wand' | 'camera' = 'pet';
   freePatUntil = 0;
   readonly freeRoam = new FreeRoam();
-  get inFreePlay() { return this.phase === 'free-play' || this.phase === 'paused' && this.resumePhase === 'free-play'; }
+  readonly roomLayout = new RoomLayoutRuntime();
+  private get layoutRuntime() { return this.inFreePlay ? this.roomLayout : undefined; }
+  get inFreePlay() { return this.phase === 'free-play' || this.phase === 'room-editor' || this.phase === 'room-notice' || this.phase === 'paused' && this.resumePhase === 'free-play'; }
   private get catFloorArea(): FloorArea { return this.inFreePlay ? 'whole-room' : 'main-room'; }
   pauseReason = 'A little breather';
   hp = 100;
@@ -102,6 +105,42 @@ export class Game {
     this.revision++; return true;
   }
 
+  private layoutPositions(layout: RoomLayout) {
+    const candidate = new RoomLayoutRuntime(layout);
+    return findSafeFloorPositions(candidate.navigation,
+      this.cats.filter(cat => cat.elevation === 0).map(cat => cat.position), this.cats.length);
+  }
+  /** Check before persisting; this does not change the simulation or its caches. */
+  canApplyRoomLayout(layout: RoomLayout) { return this.layoutPositions(layout).length === this.cats.length; }
+
+  /** Commit layout and safe cat placement together; callers validate/reconcile first. */
+  applyRoomLayout(layout: RoomLayout) {
+    const positions = this.layoutPositions(layout);
+    if (positions.length !== this.cats.length) return false;
+    // Reserve reusable points for their original residents before assigning any
+    // displaced/perched cats, so an earlier invalid cat cannot steal a safe spot.
+    const assigned = new Map<number, typeof positions[number]>(), used = new Set<typeof positions[number]>();
+    for (const cat of this.cats) {
+      const existing = cat.elevation === 0 && positions.find(point => !used.has(point)
+        && Math.hypot(point.x - cat.position.x, point.z - cat.position.z) < 1e-6);
+      if (existing) { assigned.set(cat.id, existing); used.add(existing); }
+    }
+    for (const cat of this.cats) if (!assigned.has(cat.id)) {
+      const point = positions.find(point => !used.has(point))!; assigned.set(cat.id, point); used.add(point);
+    }
+    this.roomLayout.apply(layout);
+    this.cats.forEach((cat, i) => {
+      cat.position = assigned.get(cat.id)!; cat.destination = { ...cat.position };
+      cat.visit = undefined; cat.lastFurniture = undefined; cat.elevation = 0;
+      cat.activity = 'idle'; cat.pose = 0; cat.wheelRunSpeed = 0;
+      cat.stretchStartedAt = undefined; cat.nextStretchAt = this.clock + 12 + i * 3;
+      cat.decisionAt = this.clock + 5 + i * 2;
+    });
+    this.wheelAngle = 0; this.wheelSpeed = 0;
+    this.freeRoam.reset(this.cats, this.clock); this.revision++;
+    return true;
+  }
+
   chooseFreeCat(id: number) {
     if (this.phase !== 'free-play' || !this.cats.some(cat => cat.id === id)) return;
     this.selectedFreeCatId = id; this.revision++;
@@ -124,6 +163,7 @@ export class Game {
   }
 
   reset(tutorial = false) {
+    this.roomLayout.apply(defaultRoomLayout());
     this.hp = 100; this.stage = 0; this.clock = 0; this.stageElapsed = 0;
     this.wheelAngle = 0; this.wheelSpeed = 0;
     this.completed = 0; this.stagesSurvived = 0; this.events = []; this.candidates = [];
@@ -141,6 +181,7 @@ export class Game {
   }
 
   startStage() {
+    this.roomLayout.apply(defaultRoomLayout());
     this.phase = 'playing'; this.stageElapsed = 0; this.events = []; this.feedback = '';
     this.wheelAngle = 0; this.wheelSpeed = 0;
     this.upcomingAdoption = this.stage < STAGES.length - 1 && this.cats.length < STAGES.length
@@ -246,14 +287,14 @@ export class Game {
   private moveCats(dt: number) {
     const area = this.catFloorArea;
     this.wheelSpeed = 0;
-    if (this.inFreePlay) this.freeRoam.update(this.cats, this.clock, dt, this.movementRandom);
+    if (this.inFreePlay) this.freeRoam.update(this.cats, this.clock, dt, this.movementRandom, this.layoutRuntime?.navigation);
     for (const cat of this.cats) {
       if (this.inFreePlay && this.freeRoam.busy(cat.id)) continue;
       const need = this.events.find(e => e.catId === cat.id);
       if (cat.visit) {
         cat.stretchStartedAt = undefined;
         const wheel = cat.visit.id === 'wheel';
-        const distance = tickVisit(cat, this.clock, dt, this.cats, this.inFreePlay ? { rest: 8, durationScale: 3 } : undefined, area);
+        const distance = tickVisit(cat, this.clock, dt, this.cats, this.inFreePlay ? { rest: 8, durationScale: 3 } : undefined, area, this.layoutRuntime);
         if (wheel) { this.wheelAngle -= distance / WHEEL.innerRadius; this.wheelSpeed = cat.wheelRunSpeed ?? 0; }
         continue;
       }
@@ -280,7 +321,7 @@ export class Game {
         && (!this.inFreePlay || this.clock >= cat.decisionAt)
         && this.clock >= (cat.nextStretchAt ?? Infinity) && cat.nextNeedAt > this.clock + STRETCH_DURATION) {
         const reach = { x: cat.position.x + Math.sin(cat.yaw) * 0.7, z: cat.position.z + Math.cos(cat.yaw) * 0.7 };
-        const clear = clearFloor(reach, area) && clearFloorSegment(cat.position, reach, area) && reach.x > ROOM.minX && reach.x < ROOM.maxX && reach.z > ROOM.minZ && reach.z < ROOM.maxZ
+        const clear = clearFloor(reach, area, this.layoutRuntime?.navigation) && clearFloorSegment(cat.position, reach, area, this.layoutRuntime?.navigation) && reach.x > ROOM.minX && reach.x < ROOM.maxX && reach.z > ROOM.minZ && reach.z < ROOM.maxZ
           && this.cats.every(other => other === cat || other.elevation > 0.3 || Math.hypot(other.position.x - reach.x, other.position.z - reach.z) > 0.65);
         if (clear) {
           cat.activity = 'stretching'; cat.stretchStartedAt = this.clock; cat.pose = 0;
@@ -293,19 +334,19 @@ export class Game {
       }
       if (cat.activity !== 'walking' && this.clock >= cat.decisionAt) {
         if (!need && cat.nextNeedAt > this.clock + 2 && this.movementRandom.next() < (this.inFreePlay ? 0.45 : 0.8)) {
-          const spots = FURNITURE.filter(spot => spot.id !== cat.lastFurniture && !this.cats.some(other => other.visit?.id === spot.id)
+          const spots = (this.layoutRuntime?.spots ?? FURNITURE).filter(spot => spot.id !== cat.lastFurniture && !this.cats.some(other => other.visit?.id === spot.id)
             && spot.route.every(point => roomFloorContains(point, 0.22, area)));
           if (spots.length && this.visitFurniture(cat.id, this.movementRandom.choose(spots).id)) continue;
         }
         // Every cat can choose any part of the same room; there are no assigned lanes.
         for (let attempt = 0; attempt < 12; attempt++) {
           cat.destination = { x: this.movementRandom.between(ROOM.minX, ROOM.maxX), z: this.movementRandom.between(ROOM.minZ, ROOM.maxZ) };
-          if (clearFloor(cat.destination, area) && this.cats.every(other => other === cat || Math.hypot(other.position.x - cat.destination.x, other.position.z - cat.destination.z) > 0.85)) break;
+          if (clearFloor(cat.destination, area, this.layoutRuntime?.navigation) && this.cats.every(other => other === cat || Math.hypot(other.position.x - cat.destination.x, other.position.z - cat.destination.z) > 0.85)) break;
         }
         cat.activity = 'walking';
       }
       if (cat.activity !== 'walking') continue;
-      const waypoint = nextFloorWaypoint(cat, cat.destination, area);
+      const waypoint = nextFloorWaypoint(cat, cat.destination, area, this.layoutRuntime?.navigation);
       if (!waypoint) { cat.activity = 'idle'; cat.decisionAt = this.clock + 0.3; continue; }
       const dx = waypoint.x - cat.position.x, dz = waypoint.z - cat.position.z;
       const distance = Math.hypot(dx, dz), desired = Math.atan2(dx, dz);
@@ -315,7 +356,7 @@ export class Game {
       const travel = Math.min(distance, dt * ROOM.walkSpeed * Math.max(0, Math.cos(turn)));
       if (distance > 0.001) {
         const next = { x: cat.position.x + dx / distance * travel, z: cat.position.z + dz / distance * travel };
-        const blocked = !clearFloorSegment(cat.position, next, area) || this.cats.some(other => other !== cat && other.elevation < 0.3 && Math.hypot(other.position.x - next.x, other.position.z - next.z) < 0.60);
+        const blocked = !clearFloorSegment(cat.position, next, area, this.layoutRuntime?.navigation) || this.cats.some(other => other !== cat && other.elevation < 0.3 && Math.hypot(other.position.x - next.x, other.position.z - next.z) < 0.60);
         if (blocked) { cat.activity = 'idle'; cat.decisionAt = this.clock + 0.3 + (cat.id % 3) * 0.1; }
         else { cat.position = next; cat.stride += travel * 10; }
       }
@@ -334,7 +375,7 @@ export class Game {
     else if (cat.visit?.id === 'wheel') this.say(`${cat.name} already has the wheel.`);
     else if (this.cats.some(c => c.visit?.id === 'wheel')) this.say('The wheel is busy. Try when it is free.');
     else if (cat.visit) this.say(`${cat.name} is busy. Try after they step down.`);
-    else if (beginVisit(cat, 'wheel', this.cats, this.catFloorArea)) {
+    else if (beginVisit(cat, 'wheel', this.cats, this.catFloorArea, this.layoutRuntime)) {
       // A direct invitation takes priority over optional meal/social routines.
       this.freeRoam.cancel(cat.id, this.cats, this.clock);
       this.say(`${cat.name} is heading to the wheel!`); accepted = true;
@@ -345,7 +386,7 @@ export class Game {
   visitFurniture(catId: number, id: string) {
     const cat = this.cats.find(c => c.id === catId);
     if ((!this.active && this.phase !== 'free-play') || !cat || this.inFreePlay && this.freeRoam.busy(catId) || this.events.some(e => e.catId === catId)) return false;
-    return beginVisit(cat, id, this.cats, this.catFloorArea);
+    return beginVisit(cat, id, this.cats, this.catFloorArea, this.layoutRuntime);
   }
 
   work(eventId: number, amount: number): boolean {

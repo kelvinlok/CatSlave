@@ -1,5 +1,5 @@
-:root { color-scheme: light; background: #f8f0df; }
+:root { color-scheme: light; background: #203e36; }
 * { box-sizing: border-box; }
 html, body { width: 100%; height: 100%; margin: 0; overflow: hidden; overscroll-behavior: none; }
-body { position: fixed; inset: 0; }
+body { position: fixed; inset: 0; background: radial-gradient(ellipse at 50% 35%, #365a48 0, #203e36 65%); }
 canvas#game { position: absolute; width: 100%; height: 100dvh; display: block; touch-action: none; outline: none; -webkit-tap-highlight-color: transparent; user-select: none; }

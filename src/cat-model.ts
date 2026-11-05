@@ -4,6 +4,7 @@ import { clone as cloneRig } from 'three/addons/utils/SkeletonUtils.js';
 import type { CatDefinition } from './types';
 import { applyBlenderCatAsset, hasBlenderCatAsset } from './blender-cat-asset';
 import { blenderRigControls, updateBlenderCatRig } from './blender-cat-rig';
+import { attachChristmasCostume } from './cat-costumes';
 
 export interface CatModel {
   root: THREE.Group; body: THREE.Group; head: THREE.Group; tail: THREE.Group; anger: THREE.Group;
@@ -461,6 +462,7 @@ export function createCat(cat: Appearance): CatModel {
   if (!templates.has(key)) {
     const template = buildCat(cat);
     if (imported && hasBlenderCatAsset(cat.appearance)) applyBlenderCatAsset(cat.appearance, template);
+    attachChristmasCostume(template, cat.appearance);
     templates.set(key, template);
   }
   const root = cloneRig(templates.get(key)!) as THREE.Group;

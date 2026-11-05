@@ -50,7 +50,13 @@ it('gives fallback Momo a wider ruff and plume silhouette with dark feet and onl
   model.root.updateMatrixWorld(true); generic.root.updateMatrixWorld(true);
   expect(model.root.userData.modelSource).toBeUndefined();
   const size = (object: THREE.Object3D) => new THREE.Box3().setFromObject(object).getSize(new THREE.Vector3());
-  expect(size(model.body).x).toBeGreaterThan(size(generic.body).x * 1.20);
+  // Compare coat/ruff anatomy, independent of each cat's seasonal outfit.
+  const bodySize = (body: THREE.Object3D) => {
+    const bounds = new THREE.Box3();
+    body.children.filter(child => !child.userData.isCatCostume).forEach(child => bounds.union(new THREE.Box3().setFromObject(child)));
+    return bounds.getSize(new THREE.Vector3());
+  };
+  expect(bodySize(model.body).x).toBeGreaterThan(bodySize(generic.body).x * 1.20);
   expect(size(model.body.getObjectByName('momoRuff')!).x).toBeGreaterThan(0.80);
   const tail = model.root.getObjectByName('tailSkin') as THREE.Mesh;
   const otherTail = generic.root.getObjectByName('tailSkin') as THREE.Mesh;

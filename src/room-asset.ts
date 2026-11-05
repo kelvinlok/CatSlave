@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { readModelResponse } from './model-download';
 import layout from '../assets/lounge/layout.json';
 import { ROOM_ENTRANCE } from './room-boundaries';
+import { createChristmasRoom } from './christmas-room';
 
 let source: THREE.Group | undefined;
 let pending: Promise<THREE.Group | undefined> | undefined;
@@ -36,6 +37,7 @@ function loadRoom() {
 /** Keep care playable while the authored room loads, including offline failure. */
 export function createRoom() {
   const root = new THREE.Group(); root.name = 'video-lounge'; root.userData.loaded = false;
+  root.add(createChristmasRoom());
   const shell = new THREE.Group(); shell.name = 'room-loading-shell'; root.add(shell);
   const floor = new THREE.MeshStandardMaterial({ color: '#bd956b', roughness: 0.8 });
   const wall = new THREE.MeshStandardMaterial({ color: '#e5e0d4', roughness: 0.95 });

@@ -8,8 +8,13 @@ import type { CareEvent, Point, ToolId } from './types';
 import { gameLayout, type GameLayout } from './layout';
 import { BONUS_DURATION, PAT_PATIENCE } from './bonus';
 import { PAWDICURE_DURATION } from './pawdicure';
+import { roomLayoutWarnings, type RoomEditor } from './room-editor';
+import { FURNITURE_DEFINITIONS, type RoomLayout } from './room-layout';
+import { furnitureGroups, furnitureGrid, type FurnitureFilter } from './furniture-catalog';
+import type { LayoutPreviewRequest } from './room-layout-previews';
+import { CHRISTMAS_UI, christmasFrame, christmasGarland, christmasHolly, christmasSnowflake } from './christmas-ui';
 
-const C = { ink: '#493e38', muted: '#756658', paper: '#fff9eb', cream: '#f7efdf', line: '#e1d5bf', coral: '#a9583d', green: '#526b4c', paleGreen: '#e6eadb', red: '#ad4239' };
+const C = CHRISTMAS_UI;
 export interface Hit { id: string; x: number; y: number; w: number; h: number; eventId?: number; tool?: ToolId; arch?: PlayArea; regions?: { x: number; y: number; rx: number; ry: number }[]; label?: string; disabled?: boolean; }
 export type HudModal = 'help' | 'restart' | 'home';
 
@@ -41,6 +46,16 @@ function heart(ctx: CanvasRenderingContext2D, x: number, y: number, size: number
   ctx.save(); ctx.translate(x, y); ctx.scale(size / 24, size / 24); ctx.beginPath();
   ctx.moveTo(0, 10); ctx.bezierCurveTo(-21, -3, -8, -15, 0, -6); ctx.bezierCurveTo(8, -15, 21, -3, 0, 10);
   ctx.fillStyle = color; ctx.fill(); ctx.restore();
+}
+function furnitureStateIcon(ctx: CanvasRenderingContext2D, x: number, y: number, placed: boolean, color: string) {
+  if (placed) {
+    line(ctx, [[x - 11, y - 1], [x, y - 10], [x + 11, y - 1]], color, 2);
+    line(ctx, [[x - 8, y], [x - 8, y + 9], [x + 8, y + 9], [x + 8, y]], color, 2);
+    line(ctx, [[x - 4, y + 3], [x - 1, y + 6], [x + 5, y]], color, 2);
+  } else {
+    line(ctx, [[x - 10, y - 4], [x, y], [x + 10, y - 4], [x + 10, y + 7], [x, y + 11], [x - 10, y + 7], [x - 10, y - 4], [x, y - 8], [x + 10, y - 4]], color, 1.7);
+    line(ctx, [[x, y], [x, y + 11]], color, 1.7);
+  }
 }
 function toolIcon(ctx: CanvasRenderingContext2D, id: ToolId, x: number, y: number, size: number) {
   ctx.save(); ctx.translate(x, y); ctx.scale(size / 40, size / 40);
@@ -135,6 +150,7 @@ export class Hud {
   layout: GameLayout = gameLayout(390, 844);
   rotateRequired = false;
   gyroStatus = 'off';
+  freeCameraMode: 'look' | 'move' = 'look';
   soundLabel = 'Sound: on';
   top = 12;
   bottom = 12;
@@ -159,6 +175,24 @@ export class Hud {
   hoveredId?: string;
   pressedId?: string;
   focusedId?: string;
+  roomEditor?: RoomEditor;
+  roomPanel: 'none' | 'items' | 'unplaced' | 'slots' | 'save' | 'confirm' | 'storage' = 'none';
+  roomToast?: { label: string; until: number };
+  roomSlotLayouts: RoomLayout[] = [];
+  roomLayoutImages = new Map<string, HTMLCanvasElement>();
+  roomLayoutRequests: LayoutPreviewRequest[] = [];
+  showRoomToast(label: string) { this.roomToast = { label, until: performance.now() + 5000 }; this.invalidate(); }
+  roomFreeView = false;
+  roomSelection?: Point;
+  roomPage = 0;
+  roomFilter: FurnitureFilter = 'all';
+  roomThumbnails = new Map<string, HTMLCanvasElement>();
+  roomThumbnailIds: string[] = [];
+  roomSlot = 0;
+  roomPendingSlot = 0;
+  roomNotice?: RoomLayout;
+  roomResumeBlocked = false;
+  roomMessage = '';
 
   get controls() { return this.hits.filter(hit => hit.eventId === undefined && !hit.disabled).sort((a, b) => a.y - b.y || a.x - b.x); }
   focusNext(backward = false) {
@@ -228,8 +262,12 @@ export class Hud {
     this.hitMeshes.slice(this.hits.length).forEach(mesh => { mesh.visible = false; });
   }
   private button(id: string, label: string, x: number, y: number, w: number, h = 52, primary = false) {
-    round(this.ctx, x, y + 3, w, h, 15, primary ? '#a45f45' : '#d9cdb9');
+    round(this.ctx, x, y + 3, w, h, 15, primary ? '#762635' : '#d8c9aa');
     round(this.ctx, x, y, w, h, 15, primary ? C.coral : C.paper, primary ? undefined : C.line);
+    if (primary) {
+      line(this.ctx, [[x + 17, y + 4], [x + w - 17, y + 4]], '#cf7580', 1);
+      line(this.ctx, [[x + 17, y + h - 4], [x + w - 17, y + h - 4]], '#842b3b', 1);
+    }
     text(this.ctx, label, x + w / 2, y + h / 2, 15, primary ? '#fffaf0' : C.ink, 'center', 'bold', w - 20);
     this.addHit({ id, label, x, y, w, h });
   }
@@ -246,14 +284,14 @@ export class Hud {
   private backdrop() {
     const ctx = this.ctx;
     const top = ctx.createLinearGradient(0, 0, 0, this.height * 0.55);
-    top.addColorStop(0, 'rgba(248,240,224,0.98)'); top.addColorStop(0.57, 'rgba(248,240,224,0.90)'); top.addColorStop(1, 'rgba(248,240,224,0)');
+    top.addColorStop(0, 'rgba(246,241,231,0.98)'); top.addColorStop(0.57, 'rgba(246,241,231,0.90)'); top.addColorStop(1, 'rgba(246,241,231,0)');
     ctx.fillStyle = top; ctx.fillRect(0, 0, this.width, this.height * 0.55);
     const bottom = ctx.createLinearGradient(0, this.height * 0.6, 0, this.height);
-    bottom.addColorStop(0, 'rgba(248,240,224,0)'); bottom.addColorStop(0.54, 'rgba(248,240,224,0.93)'); bottom.addColorStop(1, 'rgba(248,240,224,1)');
+    bottom.addColorStop(0, 'rgba(246,241,231,0)'); bottom.addColorStop(0.54, 'rgba(246,241,231,0.93)'); bottom.addColorStop(1, 'rgba(246,241,231,1)');
     ctx.fillStyle = bottom; ctx.fillRect(0, this.height * 0.6, this.width, this.height * 0.4);
   }
   private brand() {
-    paw(this.ctx, this.left + 29, this.top + 15, 23);
+    christmasHolly(this.ctx, this.left + 29, this.top + 22, .65);
     text(this.ctx, gameTitle(), this.left + 48, this.top + 16, 11, C.ink, 'left', 'bold');
   }
 
@@ -272,7 +310,12 @@ export class Hud {
     this.backdrop(); this.brand();
     const center = this.center, panel = this.panelWidth, x = center - panel / 2;
     const titleY = this.top + (this.compact ? 96 : Math.min(155, h * 0.18));
+    christmasGarland(ctx, x + 8, this.top + (this.compact ? 41 : 49), panel - 16);
     text(ctx, gameTitle(), center, titleY, Math.min(72, panel * 0.2), C.ink, 'center', 'serif', panel);
+    text(ctx, 'Christmas at the cat lounge', center, titleY + 49, 15, C.coral, 'center', 'bold', panel - 32);
+    if (!this.compact) text(ctx, 'Cozy paws, festive mischief.', center, titleY + 73, 12, C.muted, 'center', 'sans', panel - 32);
+    christmasSnowflake(ctx, x + 8, titleY + 48, 6);
+    christmasSnowflake(ctx, x + panel - 8, titleY + 48, 6);
     const gap = 10, cellWidth = (panel - gap) / 2, rowHeight = 48;
     const bottomY = h - this.bottom - (rowHeight * 3 + gap * 2 + 4);
     const rightX = x + cellWidth + gap;
@@ -356,6 +399,11 @@ export class Hud {
   }
 
   worldViewport(game: Game): GameLayout['room'] {
+    if (game.phase === 'room-editor') {
+      const y = this.top + 148;
+      return { x: this.left + 6, y, w: this.width - this.left - this.right - 12,
+        h: Math.max(90, this.height - this.bottom - 90 - y) };
+    }
     if (game.phase === 'cat-dex' && this.dexCat !== undefined) {
       return { x: this.center - this.panelWidth / 2, y: this.top + 110, w: this.panelWidth,
         h: Math.max(120, Math.min(280, this.height - this.top - this.bottom - 370)) };
@@ -369,7 +417,7 @@ export class Hud {
     if (game.inFreePlay) {
       const y = this.top + 110;
       return { x: this.left + 6, y, w: this.width - this.left - this.right - 12,
-        h: Math.max(90, this.height - this.bottom - 224 - y) };
+        h: Math.max(90, this.height - this.bottom - (game.freeInteraction === 'camera' ? 164 : 104) - y) };
     }
     if (game.phase === 'victory') {
       const y = this.top + 96;
@@ -548,8 +596,11 @@ export class Hud {
     const { header, pause } = layout;
     round(ctx, header.x, header.y, header.w, header.h, 12, C.paper, C.line);
     text(ctx, 'FREE PLAY', header.x + 14, header.y + 17, 14, C.green, 'left', 'bold');
-    text(ctx, 'No mess · always-fed cats', header.x + 14, header.y + 35, 11, C.muted);
+    text(ctx, 'No mess · always-fed cats', header.x + 14, header.y + 35, 11, C.muted, 'left', 'sans', Math.max(110, header.w - 150));
     this.button('pause', 'Ⅱ', pause.x, pause.y, pause.w, pause.h);
+    const arrangeWidth = Math.min(126, header.w * .46);
+    this.button('room:open', 'Arrange room', header.x + header.w - arrangeWidth, header.y, arrangeWidth, 44);
+    if (!world.roomEditable) this.hits[this.hits.length - 1].disabled = true;
     const catWidth = width / Math.max(1, game.cats.length);
     game.cats.forEach((cat, i) => {
       const cx = x + i * catWidth, selected = cat.id === game.selectedFreeCatId;
@@ -577,21 +628,255 @@ export class Hud {
       }
     }
     ctx.restore();
-    const y = this.height - this.bottom - 212;
+    const camera = game.freeInteraction === 'camera';
+    const y = this.height - this.bottom - (camera ? 152 : 92);
     const modeWidth = width / 3;
     ([['pet', 'Butt pats'], ['wand', 'Wand'], ['camera', 'Camera']] as const).forEach(([id, label], i) =>
       this.button(`free-mode:${id}`, label, x + i * modeWidth + 2, y, modeWidth - 4, 44, game.freeInteraction === id));
-    const directionWidth = width / 6;
-    ([['left', '←'], ['right', '→'], ['up', '↑'], ['down', '↓'], ['forward', 'Near'], ['back', 'Far']] as const).forEach(([id, label], i) =>
-      this.button(`free-move:${id}`, label, x + i * directionWidth + 2, y + 52, directionWidth - 4, 44));
-    const viewWidth = width / 3;
-    ([['out', '− Zoom'], ['in', '+ Zoom'], ['reset', 'Reset view']] as const).forEach(([id, label], i) =>
-      this.button(`view:${id}`, label, x + i * viewWidth + 2, y + 104, viewWidth - 4, 44));
+    if (camera) {
+      ([['look', 'Look'], ['move', 'Move']] as const).forEach(([id, label], i) =>
+        this.button(`free-camera:${id}`, label, x + i * modeWidth + 2, y + 52, modeWidth - 4, 44, this.freeCameraMode === id));
+      this.button('view:reset', 'Reset view', x + 2 * modeWidth + 2, y + 52, modeWidth - 4, 44);
+    }
     const instruction = game.freeInteraction === 'pet' ? 'Tap a butt to pat · tap the exercise wheel to invite.'
-      : game.freeInteraction === 'wand' ? 'Wave near any cat to catch its attention.' : 'Drag to look · right-drag to pan';
-    text(ctx, instruction, center, y + 165, 12, C.ink, 'center', 'sans', width);
-    text(ctx, 'Wheel: zoom · WASD / Q E: move · arrows above: move', center, y + 187, 11, C.muted, 'center', 'sans', width);
-    if (game.feedbackUntil > game.clock) text(ctx, game.feedback, center, y + 207, 11, C.green, 'center', 'sans', width);
+      : game.freeInteraction === 'wand' ? 'Wave near any cat to catch its attention.'
+      : this.freeCameraMode === 'look' ? 'Drag to look around' : 'Drag sideways to strafe · up to walk forward';
+    text(ctx, instruction, center, y + (camera ? 112 : 61), 12, C.ink, 'center', 'sans', width);
+    if (camera) text(ctx, 'Two fingers: pan / pinch zoom · wheel: zoom', center, y + 130, 11, C.muted, 'center', 'sans', width);
+    if (game.feedbackUntil > game.clock) text(ctx, game.feedback, center, y + (camera ? 146 : 81), 11, C.green, 'center', 'sans', width);
+  }
+
+  private roomLabel(id: string) { return FURNITURE_DEFINITIONS.find(item => item.id === id)?.label ?? id; }
+
+  private roomText(value: string, x: number, y: number, width: number, color = C.muted, size = 12, maxLines = 2) {
+    const ctx = this.ctx;
+    ctx.font = `${size}px Arial, 'Microsoft JhengHei', sans-serif`;
+    const lines: string[] = []; let current = '';
+    for (const word of translate(value).match(/\S+\s*/g) ?? []) {
+      if (current && ctx.measureText(current + word.trimEnd()).width > width) { lines.push(current.trimEnd()); current = ''; }
+      for (const char of word) {
+        if (ctx.measureText(current + char).width > width && current) { lines.push(current.trimEnd()); current = ''; }
+        if (current || char.trim()) current += char;
+      }
+    }
+    if (current) lines.push(current);
+    lines.slice(0, maxLines).forEach((lineValue, i) => text(ctx,
+      lineValue + (i === maxLines - 1 && lines.length > maxLines ? '…' : ''), x, y + i * (size + 5), size, color));
+  }
+
+  private roomScreen(notice = false, editable = true) {
+    const editor = this.roomEditor, ctx = this.ctx, w = this.panelWidth, x = this.center - w / 2;
+    const label = notice ? 'Room updated' : 'ARRANGE ROOM';
+    round(ctx, x, this.top, w, 92, 14, C.paper, C.line);
+    text(ctx, label, x + 12, this.top + 19, 17, C.green, 'left', 'bold');
+    this.button('language', languageLabel(), x + w - 94, this.top + 2, 90, 44);
+    if (!notice && editor) {
+      const cell = (w - 16) / 3;
+      [['cancel', 'Cancel'], ['slots', 'Layouts'], ['save', 'Save']].forEach(([id, value], i) =>
+        this.button(`room:${id}`, value, x + i * (cell + 8), this.top + 48, cell, 44, id === 'save'));
+      if (this.roomPanel === 'none') {
+        const toolsWidth = Math.min(w, 320), tx = this.center - toolsWidth / 2, tw = (toolsWidth - 16) / 5;
+        [['undo', '↶', 'Undo'], ['redo', '↷', 'Redo'], ['snap', '▦', 'Grid'], ['fit', '⌗', 'Fit'], ['reset', '⟲', 'Reset']].forEach(([id, icon, label], i) => {
+          const bx = tx + i * (tw + 4), by = this.top + 100;
+          const disabled = id === 'undo' && !editor.canUndo || id === 'redo' && !editor.canRedo;
+          const active = id === 'snap' && editor.snap;
+          ctx.save(); if (disabled) ctx.globalAlpha = .4;
+          round(ctx, bx, by, tw, 44, 9, active ? C.green : C.paper, C.line);
+          if (id === 'fit') {
+            for (const dx of [-1, 1]) for (const dy of [-1, 1]) line(ctx, [[bx + tw / 2 + dx * 4, by + 15 + dy * 8], [bx + tw / 2 + dx * 8, by + 15 + dy * 8], [bx + tw / 2 + dx * 8, by + 15 + dy * 4]], C.ink, 1.5);
+          } else text(ctx, icon, bx + tw / 2, by + 14, 19, active ? C.paper : C.ink, 'center');
+          text(ctx, label, bx + tw / 2, by + 33, 11, active ? C.paper : C.ink, 'center', 'bold', tw - 4); ctx.restore();
+          this.addHit({ id: `room:${id}`, label: translate(id === 'snap' ? editor.snap ? 'Grid: on' : 'Grid: off' : id === 'fit' ? 'Fit room' : id === 'reset' ? 'Reset room' : label), x: bx, y: by, w: tw, h: 44, disabled });
+        });
+        const v = this.worldViewport({ phase: 'room-editor' } as Game), y = v.y + v.h + 12;
+        const selected = editor.selectedId ? this.roomLabel(editor.selectedId) : 'Select furniture to move';
+        text(ctx, selected, this.center, y, 14, C.ink, 'center', 'bold', w);
+        this.roomText(editor.previewError || editor.error || this.roomMessage || (this.roomFreeView ? 'Drag furniture · drag floor to orbit' : 'Drag furniture · drag floor to pan'), x, y + 20, w,
+          editor.previewError || editor.error ? C.red : C.muted, 11, 1);
+        const row = (items: [string, string][], top: number) => {
+          const cw = (w - (items.length - 1) * 6) / items.length;
+          items.forEach(([id, title], i) => {
+            this.button(`room:${id}`, title, x + i * (cw + 6), top, cw, 44,
+              id === 'snap' && editor.snap);
+            if (id === 'undo' && !editor.canUndo || id === 'redo' && !editor.canRedo
+              || id === 'store' && (!editor.selectedId || !editor.draft.placed[editor.selectedId])
+              || ['rotate', 'left', 'right', 'up', 'down'].includes(id) && !editor.selectedId) this.hits[this.hits.length - 1].disabled = true;
+          });
+        };
+        row([['items', 'Furniture'], ['view', this.roomFreeView ? 'Top view' : 'Free view']], y + 35);
+        if (editor.draft.unplaced.length) {
+          const bx = x + (w - 6) / 2 - 8;
+          ellipse(ctx, bx, y + 38, 11, 11, C.coral);
+          text(ctx, String(editor.draft.unplaced.length), bx, y + 38, 11, C.paper, 'center', 'bold');
+        }
+        if (this.roomSelection && editor.selectedId) {
+          const p = this.roomSelection;
+          this.button('room:rotate', '↻', p.x, p.y, 44, 44);
+          this.hits[this.hits.length - 1].label = translate('Rotate');
+          if (editor.draft.placed[editor.selectedId]) {
+            this.button('room:store', '×', p.x + 50, p.y, 44, 44, true);
+            this.hits[this.hits.length - 1].label = translate('Store in inventory');
+          }
+        }
+        if (this.roomToast) {
+          const ty = v.y + v.h - 64;
+          round(ctx, x, ty, w, 56, 12, C.green);
+          text(ctx, this.roomToast.label, this.center, ty + 18, 14, C.paper, 'center', 'bold', w - 24);
+          text(ctx, 'Moved to inventory', this.center, ty + 39, 12, C.paper, 'center', 'sans', w - 24);
+        }
+        return;
+      }
+    }
+    // Modal actions replace world hit regions so nothing can move behind a panel.
+    this.hits = [];
+    ctx.fillStyle = 'rgba(43,38,33,.58)'; ctx.fillRect(0, 0, this.width, this.height);
+    const py = this.top + 8, ph = this.height - this.top - this.bottom - 16;
+    round(ctx, x, py, w, ph, 18, C.paper, C.line);
+    const ix = x + 16, iw = w - 32;
+    const panel = this.roomPanel;
+    const title = notice ? (this.roomNotice && roomLayoutWarnings(this.roomNotice).length ? 'Some furniture was not placed' : 'Saved layout could not be opened') : panel === 'unplaced' ? 'Furniture'
+      : panel === 'items' ? 'Furniture' : panel === 'confirm' ? 'Replace this layout?'
+      : panel === 'storage' ? 'Layout could not be saved' : panel === 'save' ? 'Save to a slot' : 'Your layouts';
+    text(ctx, title, this.center, py + 32, 21, C.ink, 'center', 'serif', iw);
+    if (!notice && editor && (panel === 'items' || panel === 'unplaced')) {
+      this.furnitureGallery(ix, py, iw, ph); return;
+    }
+    if (!notice && editor && (panel === 'save' || panel === 'slots')) { this.layoutGallery(ix, py, iw, ph, panel === 'save'); return; }
+    if (notice || panel === 'items' || panel === 'unplaced') {
+      const unplaced = notice ? (this.roomNotice ? roomLayoutWarnings(this.roomNotice) : []) : editor?.draft.unplaced ?? [];
+      const rows = panel === 'items' && !notice ? FURNITURE_DEFINITIONS.map(def => ({ id: def.id,
+        reason: editor?.draft.placed[def.id] ? '' : 'Not in the room' })) : unplaced;
+      const count = Math.max(1, Math.floor((ph - 245) / 66));
+      const pages = Math.max(1, Math.ceil(rows.length / count)); this.roomPage = Math.min(this.roomPage, pages - 1);
+      this.roomText(notice ? (unplaced.length ? 'Your valid furniture stayed in place. Recover these items in Arrange room.' : 'Original save kept. Showing the default room.')
+        : panel === 'unplaced' ? 'Choose an item, then place it on clear floor.' : 'Choose an item to move.', ix, py + 66, iw);
+      if (this.roomMessage && notice) this.roomText(this.roomMessage, ix, py + 101, iw, C.red, 11, 1);
+      if (!rows.length) text(ctx, 'All furniture is placed.', this.center, py + 155, 15, C.green, 'center');
+      rows.slice(this.roomPage * count, (this.roomPage + 1) * count).forEach((entry, i) => {
+        const ry = py + 121 + i * 66;
+        round(ctx, ix, ry, iw, 60, 10, C.cream, C.line);
+        text(ctx, this.roomLabel(entry.id), ix + 10, ry + 16, 14, C.ink, 'left', 'bold', iw - 20);
+        this.roomText(entry.reason || 'Placed', ix + 10, ry + 36, iw - 20, C.muted, 11, 1);
+        const available = FURNITURE_DEFINITIONS.some(def => def.id === entry.id);
+        if (!notice) this.addHit({ id: `room:item:${entry.id}`, label: this.roomLabel(entry.id), x: ix, y: ry, w: iw, h: 60, disabled: !available });
+      });
+      const navY = py + ph - 110;
+      this.button('room:prev', '←', ix, navY, 54, 44);
+      text(ctx, `${this.roomPage + 1} / ${pages}`, this.center, navY + 22, 13, C.muted, 'center');
+      this.button('room:next', '→', ix + iw - 54, navY, 54, 44);
+      if (notice) {
+        this.button('room:notice-edit', 'Arrange room', ix, py + ph - 56, (iw - 8) / 2, 44, true);
+        if (!editable) this.hits[this.hits.length - 1].disabled = true;
+        this.button('room:notice-continue', 'Continue', ix + (iw + 8) / 2, py + ph - 56, (iw - 8) / 2, 44);
+        if (this.roomResumeBlocked) this.hits[this.hits.length - 1].disabled = true;
+      } else this.button('room:close-panel', 'Back', ix, py + ph - 56, iw, 44);
+      return;
+    }
+    if (panel === 'confirm') {
+      this.roomText(`Replace Slot ${this.roomPendingSlot + 1}?`, ix, py + 90, iw, C.ink, 16);
+      this.roomText('The other slots will stay unchanged.', ix, py + 135, iw);
+      this.button('room:confirm-save', 'Save layout', ix, py + ph - 112, iw, 44, true);
+    } else if (panel === 'storage') {
+      this.roomText('Your changes are still here. Export a backup or use this layout for this session.', ix, py + 80, iw, C.ink, 15, 4);
+      [['retry', 'Retry'], ['export', 'Export JSON'], ['session', 'Use for this session']].forEach(([id, value], i) =>
+        this.button(`room:${id}`, value, ix, py + 180 + i * 54, iw, 44, i === 0));
+    } else {
+      this.roomText(panel === 'save' ? 'Choose where to save. Another slot makes a copy.' : 'Load a layout into your draft. Save to apply it.', ix, py + 73, iw);
+      for (let slot = 0; slot < 3; slot++) this.button(`room:${panel === 'save' ? 'save-slot' : 'load-slot'}:${slot}`,
+        `Slot ${slot + 1}${slot === this.roomSlot ? ' · active' : ''}`, ix, py + 120 + slot * 54, iw, 44, slot === this.roomSlot);
+      if (panel === 'slots') {
+        const yy = py + 292;
+        this.button('room:import', 'Import JSON', ix, yy, (iw - 8) / 2, 44);
+        this.button('room:export', 'Export JSON', ix + (iw + 8) / 2, yy, (iw - 8) / 2, 44);
+        this.roomText(this.roomMessage || 'Saved on this browser. Export to back up or share.', ix, yy + 69, iw, C.muted, 12, 3);
+      }
+    }
+    this.button('room:close-panel', 'Back', ix, py + ph - 56, iw, 44);
+  }
+
+  private layoutGallery(x: number, y: number, width: number, height: number, saving: boolean) {
+    const ctx = this.ctx, draft = this.roomEditor!.draft, gap = 10, cw = (width - gap) / 2;
+    const ch = Math.min(240, (height - (saving ? 176 : 228) - gap) / 2);
+    this.roomLayoutRequests = [{ id: 'draft', layout: draft }, ...this.roomSlotLayouts.map((layout, i) => ({ id: `slot:${i}`, layout }))];
+    this.roomText(saving ? 'Choose where to save. Another slot makes a copy.' : 'Load a layout into your draft. Save to apply it.', x, y + 65, width, C.muted, 12, 2);
+    this.roomLayoutRequests.forEach((entry, index) => {
+      const cx = x + index % 2 * (cw + gap), cy = y + 94 + Math.floor(index / 2) * (ch + gap), slot = index - 1;
+      const active = slot === this.roomSlot, image = this.roomLayoutImages.get(entry.id);
+      round(ctx, cx, cy, cw, ch, 12, index === 0 ? C.paleGreen : C.cream, active ? C.green : C.line);
+      text(ctx, index === 0 ? 'Current draft' : `Slot ${slot + 1}`, cx + cw / 2, cy + 18, 14, C.ink, 'center', 'bold', cw - 16);
+      const ih = Math.min(ch - 78, (cw - 12) / 1.5), iw = ih * 1.5;
+      if (image) ctx.drawImage(image, cx + (cw - iw) / 2, cy + 32 + (ch - 78 - ih) / 2, iw, ih);
+      else text(ctx, '…', cx + cw / 2, cy + ch / 2, 20, C.muted, 'center');
+      if (active) { round(ctx, cx + cw - 26, cy + 32, 20, 20, 10, C.green); text(ctx, '✓', cx + cw - 16, cy + 42, 12, C.paper, 'center'); }
+      const footer = cy + ch - 22;
+      furnitureStateIcon(ctx, cx + cw * .22, footer, true, C.green);
+      text(ctx, String(Object.keys(entry.layout.placed).length), cx + cw * .22 + 22, footer, 12, C.ink, 'center');
+      furnitureStateIcon(ctx, cx + cw * .67, footer, false, C.coral);
+      text(ctx, String(entry.layout.unplaced.length), cx + cw * .67 + 22, footer, 12, C.ink, 'center');
+      if (index > 0) this.addHit({ id: `room:${saving ? 'save-slot' : 'load-slot'}:${slot}`, label: translate(`Slot ${slot + 1}${active ? ' · active' : ''}`), x: cx, y: cy, w: cw, h: ch });
+    });
+    if (!saving) {
+      this.button('room:import', 'Import JSON', x, y + height - 108, (width - 8) / 2, 44);
+      this.button('room:export', 'Export JSON', x + (width + 8) / 2, y + height - 108, (width - 8) / 2, 44);
+    }
+    this.button('room:close-panel', 'Back', x, y + height - 56, width, 44);
+  }
+
+  private furnitureGallery(x: number, y: number, width: number, height: number) {
+    const ctx = this.ctx, editor = this.roomEditor!, layout = editor.draft;
+    const tabWidth = (width - 12) / 3;
+    (['all', 'room', 'inventory'] as const).forEach((filter, i) => {
+      const tx = x + i * (tabWidth + 6), active = this.roomFilter === filter;
+      round(ctx, tx, y + 54, tabWidth, 44, 10, active ? C.green : C.cream, active ? C.green : C.line);
+      const color = active ? C.paper : C.ink;
+      if (filter === 'all') text(ctx, 'All', tx + tabWidth / 2, y + 76, 14, color, 'center', 'bold');
+      else {
+        furnitureStateIcon(ctx, tx + tabWidth / 2 - 16, y + 75, filter === 'room', color);
+        text(ctx, String(filter === 'room' ? Object.keys(layout.placed).length : layout.unplaced.length), tx + tabWidth / 2 + 15, y + 76, 15, color, 'center', 'bold');
+      }
+      this.addHit({ id: `room:filter:${filter}`, label: translate(filter === 'all' ? 'All furniture' : filter === 'room' ? 'In the room' : 'Furniture inventory'), x: tx, y: y + 54, w: tabWidth, h: 44 });
+    });
+    const grid = furnitureGrid(width, height - 222), groups = furnitureGroups(layout, this.roomFilter);
+    const pages = Math.max(1, Math.ceil(groups.length / grid.count)); this.roomPage = Math.min(this.roomPage, pages - 1);
+    const visible = groups.slice(this.roomPage * grid.count, (this.roomPage + 1) * grid.count);
+    this.roomThumbnailIds = visible.filter(group => group.available).map(group => group.ids[0]);
+    visible.forEach((group, index) => {
+      const cx = x + index % grid.columns * (grid.cardWidth + grid.gap), cy = y + 110 + Math.floor(index / grid.columns) * (grid.cardHeight + grid.gap);
+      const cw = grid.cardWidth, ch = grid.cardHeight, thumbnail = this.roomThumbnails.get(group.ids[0]);
+      round(ctx, cx, cy, cw, ch, 12, C.cream, C.line);
+      text(ctx, group.label, cx + cw / 2, cy + 18, 13, C.ink, 'center', 'bold', cw - 14);
+      const imageHeight = ch - 136, imageWidth = Math.min(cw - 12, imageHeight * 1.5);
+      if (thumbnail) ctx.drawImage(thumbnail, cx + (cw - imageWidth) / 2, cy + 31, imageWidth, imageHeight);
+      else {
+        furnitureStateIcon(ctx, cx + cw / 2, cy + 35 + imageHeight / 2, false, C.muted);
+        if (!group.available) line(ctx, [[cx + cw / 2 - 13, cy + 22 + imageHeight / 2], [cx + cw / 2 + 13, cy + 48 + imageHeight / 2]], C.red, 2);
+      }
+      if (group.ids.length > 1) {
+        round(ctx, cx + cw - 42, cy + 35, 34, 24, 8, C.paper, C.line);
+        text(ctx, `×${group.ids.length}`, cx + cw - 25, cy + 47, 12, C.ink, 'center', 'bold');
+      }
+      this.addHit({ id: `room:group:${group.id}`, label: translate(group.label), x: cx, y: cy, w: cw, h: ch - 102, disabled: !group.available });
+      group.ids.forEach((id, copy) => {
+        const placed = !!layout.placed[id], columns = Math.min(2, group.ids.length), bw = (cw - 20 - (columns - 1) * 6) / columns;
+        const bx = cx + 10 + copy % columns * (bw + 6), by = cy + ch - 98 + Math.floor(copy / columns) * 49;
+        const selected = editor.selectedId === id, color = placed ? C.green : C.coral;
+        round(ctx, bx, by, bw, 44, 9, placed ? C.paleGreen : C.paper, selected ? C.coral : placed ? '#b2c1a5' : C.line);
+        furnitureStateIcon(ctx, bx + bw / 2 - (group.ids.length > 1 ? 9 : 0), by + 21, placed, group.available ? color : C.muted);
+        if (group.ids.length > 1) text(ctx, String(copy + 1), bx + bw / 2 + 16, by + 22, 12, color, 'center', 'bold');
+        if (!group.available) line(ctx, [[bx + bw / 2 - 14, by + 9], [bx + bw / 2 + 14, by + 35]], C.red, 2);
+        this.addHit({ id: `room:item:${id}`, label: `${this.roomLabel(id)} · ${translate(placed ? 'In the room' : 'Furniture inventory')}`, x: bx, y: by, w: bw, h: 44, disabled: !group.available });
+      });
+      if (!group.available) this.roomText('Furniture is no longer available', cx + 10, cy + ch - 38, cw - 20, C.muted, 11, 2);
+    });
+    if (!groups.length) {
+      furnitureStateIcon(ctx, this.center, y + 180, false, C.muted);
+      text(ctx, 'Nothing here yet', this.center, y + 218, 15, C.muted, 'center');
+    }
+    const navY = y + height - 104;
+    this.button('room:prev', '←', x, navY, 54, 44); this.hits[this.hits.length - 1].disabled = this.roomPage === 0;
+    text(ctx, `${this.roomPage + 1} / ${pages}`, this.center, navY + 22, 13, C.muted, 'center');
+    this.button('room:next', '→', x + width - 54, navY, 54, 44); this.hits[this.hits.length - 1].disabled = this.roomPage === pages - 1;
+    this.button('room:close-panel', 'Back', x, y + height - 52, width, 44);
   }
 
   private gameplay(game: Game, world: World) {
@@ -871,11 +1156,13 @@ export class Hud {
     const width = Math.min(this.panelWidth, 390), height = Math.min(h - this.top - this.bottom - 12, this.modal === 'help' ? 424 : 400);
     const x = center - width / 2, y = this.top + (h - this.top - this.bottom - height) / 2;
     round(ctx, x, y, width, height, 22, C.paper, C.line);
+    christmasHolly(ctx, x + 18, y + 22, .55);
+    christmasHolly(ctx, x + width - 18, y + 22, .55);
     const bx = x + 18, bw = width - 36;
     if (this.modal === 'help') {
       text(ctx, 'Controls', center, y + 30, 24, C.ink, 'center', 'serif', width - 24);
       if (game.inFreePlay) {
-        const instructions = ['Choose an adopted cat above the room.', 'Pet: tap or stroke the cat’s butt.', 'Wand: drag in the room to play.', 'Camera: drag to look, right-drag to pan.', 'Wheel or + / − to zoom. WASD / Q E to move.', 'Use the six direction buttons on touchscreens.'];
+        const instructions = ['Choose an adopted cat above the room.', 'Pet: tap or stroke the cat’s butt.', 'Wand: drag in the room to play.', 'Camera: choose Look or Move, then drag.', 'Two fingers: pan / pinch zoom · wheel: zoom', 'WASD / Q E: move · + / −: zoom'];
         instructions.forEach((value, i) => text(ctx, value, center, y + 76 + i * 37, 12, C.ink, 'center', 'sans', width - 32));
       } else if (game.inBonus && game.bonus?.id === 'pawdicure') {
         paw(ctx, center, y + 95, 50, C.coral);
@@ -1000,6 +1287,7 @@ export class Hud {
   }
 
   draw(game: Game, world: World, dt: number, force = false) {
+    if (this.roomToast && performance.now() >= this.roomToast.until) { this.roomToast = undefined; this.dirty = true; }
     this.selectedTool = game.selected;
     this.elapsed += dt;
     this.animationTime += dt;
@@ -1010,7 +1298,7 @@ export class Hud {
     if (previousDamageFlash > 0 && this.damageFlash === 0) this.dirty = true;
     // These screens have static canvas artwork; their animated cats live in
     // the separate 3D scene. Keep animation/effect screens on the usual cadence.
-    const staticScreen = ['title', 'cat-dex', 'adoption', 'game-over'].includes(game.phase);
+    const staticScreen = ['title', 'cat-dex', 'adoption', 'game-over', 'room-editor', 'room-notice'].includes(game.phase);
     if (!force && !this.dirty && this.lastPhase === game.phase
       && (this.elapsed < 1 / 30 || staticScreen && !this.damageFlash && !previousDamageFlash)) return;
     if (this.lastPhase !== game.phase) { this.modal = undefined; this.clearInteraction(); }
@@ -1018,6 +1306,8 @@ export class Hud {
     const ctx = this.ctx;
     ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0); ctx.clearRect(0, 0, this.width, this.height); this.hits = [];
     if (this.rotateRequired) this.rotationScreen();
+    else if (game.phase === 'room-editor') this.roomScreen();
+    else if (game.phase === 'room-notice') this.roomScreen(true, world.roomEditable);
     else if (game.phase === 'title') this.title(game);
     else if (game.phase === 'cat-dex') this.catDex(game);
     else if (game.phase === 'adoption') this.adoption(game);
@@ -1042,6 +1332,7 @@ export class Hud {
       else this.gameplay(game, world);
       if (game.phase === 'paused') { this.hits = []; this.pause(game); }
     }
+    christmasFrame(ctx, this.width, this.height);
     if (!this.rotateRequired && this.pointer && game.active && this.pointerTool) {
       const contact = world.carePointer;
       const care = game.events.find(e => e.id === contact?.eventId);

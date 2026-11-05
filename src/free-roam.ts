@@ -1,4 +1,4 @@
-import { clearFloor, clearFloorSegment, nextFloorWaypoint } from './room-navigation';
+import { clearFloor, clearFloorSegment, nextFloorWaypoint, floorRoute, type NavigationContext } from './room-navigation';
 import { ROOM } from './config';
 import type { CatState, FloorPoint } from './types';
 import layout from '../assets/lounge/layout.json';
@@ -31,7 +31,7 @@ export class FreeRoam {
     if (cat) { cat.activity = 'idle'; cat.destination = { ...cat.position }; cat.decisionAt = clock + 8; }
     if (task.partner !== undefined && this.routines.get(task.partner)?.partner === id) this.cancel(task.partner, cats, clock);
   }
-  update(cats: CatState[], clock: number, dt: number, random: RandomSource) {
+  update(cats: CatState[], clock: number, dt: number, random: RandomSource, navigation?: NavigationContext) {
     const available = (cat: CatState, invitation = false) => !cat.visit && !this.busy(cat.id) && cat.elevation === 0
       && (cat.activity === 'idle' || cat.activity === 'sniffing') && clock >= cat.decisionAt - (invitation ? 3 : 0);
     for (const [i, cat] of cats.entries()) {
@@ -47,6 +47,9 @@ export class FreeRoam {
         if (!friend) continue;
         const dx = friend.position.x - cat.position.x, dz = friend.position.z - cat.position.z, length = Math.hypot(dx, dz) || 1;
         const center = { x: (cat.position.x + friend.position.x) / 2, z: (cat.position.z + friend.position.z) / 2 };
+        const targets = [-1, 1].map(side => ({ x: center.x + side * dx / length * .48, z: center.z + side * dz / length * .48 }));
+        if (!targets.every((target, i) => clearFloor(target, 'whole-room', navigation)
+          && floorRoute(i === 0 ? cat.position : friend.position, target, 'whole-room', navigation).length)) continue;
         for (const [participant, partner, side] of [[cat, friend, -1], [friend, cat, 1]] as const) {
           this.routines.set(participant.id, { kind: 'social', partner: partner.id,
             target: { x: center.x + side * dx / length * 0.48, z: center.z + side * dz / length * 0.48 }, expires: clock + 25 });
@@ -62,7 +65,7 @@ export class FreeRoam {
       const dx = task.target.x - cat.position.x, dz = task.target.z - cat.position.z;
       if (Math.hypot(dx, dz) > 0.035) {
         cat.activity = 'walking'; cat.destination = { ...task.target };
-        this.walk(cat, cats, dt);
+        this.walk(cat, cats, dt, navigation);
         continue;
       }
       cat.activity = 'idle';
@@ -83,8 +86,8 @@ export class FreeRoam {
     const turn = Math.atan2(Math.sin(yaw - cat.yaw), Math.cos(yaw - cat.yaw));
     cat.yaw += turn * Math.min(1, dt * 5); return turn;
   }
-  private walk(cat: CatState, cats: CatState[], dt: number) {
-    const waypoint = nextFloorWaypoint(cat, cat.destination);
+  private walk(cat: CatState, cats: CatState[], dt: number, navigation?: NavigationContext) {
+    const waypoint = nextFloorWaypoint(cat, cat.destination, 'whole-room', navigation);
     if (!waypoint) { cat.activity = 'idle'; return; }
     const dx = waypoint.x - cat.position.x, dz = waypoint.z - cat.position.z;
     const distance = Math.hypot(dx, dz), angle = Math.atan2(dx, dz);
@@ -92,7 +95,7 @@ export class FreeRoam {
     for (const offset of [0, 0.8, -0.8, 1.4, -1.4]) {
       const yaw = angle + offset, travel = Math.min(distance, dt * ROOM.walkSpeed * 0.85);
       const next = { x: cat.position.x + Math.sin(yaw) * travel, z: cat.position.z + Math.cos(yaw) * travel };
-      if (!clearFloor(next) || !clearFloorSegment(cat.position, next)) continue;
+      if (!clearFloor(next, 'whole-room', navigation) || !clearFloorSegment(cat.position, next, 'whole-room', navigation)) continue;
       if (cats.some(other => other !== cat && other.elevation < 0.3 && Math.hypot(other.position.x - next.x, other.position.z - next.z) < 0.62)) continue;
       const turn = this.face(cat, yaw, dt);
       if (Math.abs(turn) < 0.7) { cat.position = next; cat.stride += travel * 10; }

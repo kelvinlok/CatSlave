@@ -68,4 +68,5 @@ export interface FurnitureVisit {
   from: Waypoint;
   until: number;
   leaveRequested: boolean;
+  blockedFor?: number;
 }

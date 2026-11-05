@@ -440,6 +440,10 @@ exec((ROOT/'scripts/lounge-depth-wheel.py').read_text(encoding='utf-8'))
 # Correct the feeding shelf onto the broad wall facing the room.
 exec((ROOT/'scripts/lounge-feeding-shelf.py').read_text(encoding='utf-8'))
 
+# Add stable movable ownership after all reference-layout corrections.
+exec((ROOT/'scripts/lounge-furniture-export.py').read_text(encoding='utf-8'))
+furniture_roots = prepare_furniture(scene, root, OUT)
+
 # Save editable source before batching runtime meshes.
 bpy.context.view_layer.update()
 def camera(name,pos,target,lens=25):
@@ -474,30 +478,11 @@ for area_ui in bpy.context.screen.areas:
         area_ui.spaces.active.region_3d.view_perspective='CAMERA'
 bpy.ops.wm.save_as_mainfile(filepath=str(OUT/'lounge.blend'))
 
-# Material batches dramatically reduce draw calls; editable source stays unmerged.
-deps=bpy.context.evaluated_depsgraph_get();batches={}
-for ob in list(scene.objects):
-    if ob.type!='MESH':continue
-    evaluated=ob.evaluated_get(deps);me=bpy.data.meshes.new_from_object(evaluated,depsgraph=deps)
-    copy=bpy.data.objects.new(ob.name+' export',me);scene.collection.objects.link(copy);copy.matrix_world=ob.matrix_world.copy()
-    material_name=ob.data.materials[0].name if ob.data.materials else 'None'
-    is_rotor=ob.parent and ob.parent.get('catWheelRotor',False)
-    key=('wheel:' if is_rotor else '')+material_name;batches.setdefault(key,[]).append(copy)
-export_objs=[]
-for key,objects in batches.items():
-    bpy.ops.object.select_all(action='DESELECT')
-    for ob in objects:ob.select_set(True)
-    bpy.context.view_layer.objects.active=objects[0];bpy.ops.object.join()
-    merged=bpy.context.object;merged.name='Lounge | '+key
-    transform=merged.matrix_world.copy()
-    merged.parent=drum if key.startswith('wheel:') else root
-    merged.matrix_world=transform;export_objs.append(merged)
-bpy.ops.object.select_all(action='DESELECT');root.select_set(True)
-drum.select_set(True)
-for ob in export_objs:ob.select_set(True)
-bpy.ops.export_scene.gltf(filepath=str(ROOT/'public/models/lounge.glb'),export_format='GLB',use_selection=True,export_apply=True,export_yup=True,export_cameras=False,export_lights=False,export_extras=True)
-triangles=sum(sum(len(p.vertices)-2 for p in ob.data.polygons) for ob in export_objs)
-(OUT/'model-stats.json').write_text(json.dumps({'meshes':len(export_objs),'triangles':triangles,'materials':len(batches),'glbBytes':(ROOT/'public/models/lounge.glb').stat().st_size},indent=2))
+# Batch inside furniture items; fixed architecture still shares material batches.
+export_objs, export_stats = export_furniture_room(scene, root, furniture_roots, ROOT/'public/models/lounge.glb')
+triangles = export_stats['triangles']
+batches = range(export_stats['batches'])
+(OUT/'model-stats.json').write_text(json.dumps(export_stats, indent=2)+'\n')
 # Remove transient export copies before render to prevent doubled surfaces.
 for ob in export_objs:bpy.data.objects.remove(ob,do_unlink=True)
 if args.export_only:

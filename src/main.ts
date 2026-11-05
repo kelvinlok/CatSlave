@@ -13,6 +13,12 @@ import { portraitViewport } from './layout';
 import { GyroLook } from './gyro';
 import { GameAudio, RoomSounds } from './sound';
 import { isBlenderCat, preloadBlenderCatAsset, restoreBlenderCatTextures } from './blender-cat-asset';
+import { RoomEditor, RoomLayoutStore, ROOM_LAYOUT_MAX_BYTES } from './room-editor';
+import { RoomEditorView } from './room-editor-view';
+import { FURNITURE_DEFINITIONS, validateRoomLayout, type FurniturePose } from './room-layout';
+import { furnitureGroups, type FurnitureFilter } from './furniture-catalog';
+import { FurniturePreviews } from './furniture-previews';
+import { RoomLayoutPreviews } from './room-layout-previews';
 
 syncDocumentLanguage();
 const canvas = document.querySelector<HTMLCanvasElement>('#game')!;
@@ -25,8 +31,8 @@ try {
   const replacement = canvas.cloneNode() as HTMLCanvasElement; canvas.replaceWith(replacement);
   replacement.width = innerWidth; replacement.height = innerHeight;
   const context = replacement.getContext('2d')!;
-  context.fillStyle = '#f8f0df'; context.fillRect(0, 0, innerWidth, innerHeight);
-  context.fillStyle = '#493e38'; context.font = '28px Georgia'; context.textAlign = 'center';
+  context.fillStyle = '#f6f1e7'; context.fillRect(0, 0, innerWidth, innerHeight);
+  context.fillStyle = '#203e36'; context.font = '28px Georgia'; context.textAlign = 'center';
   context.fillText(translate('This room needs WebGL 2.'), innerWidth / 2, innerHeight / 2 - 20);
   context.font = '14px Arial'; context.fillText(translate('Try a browser with hardware acceleration enabled.'), innerWidth / 2, innerHeight / 2 + 20);
   throw new Error('WebGL 2 is unavailable.');
@@ -36,7 +42,7 @@ renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.toneMappingExposure = 1.12;
 renderer.autoClear = false;
 renderer.info.autoReset = false;
-renderer.setClearColor('#f8f0df');
+renderer.setClearColor('#f6f1e7');
 renderer.clear();
 const game = new Game(import.meta.env.MODE === 'test' ? 42 : undefined);
 try { game.restoreFreePlay(JSON.parse(localStorage.getItem('catslave-free-play') ?? 'null')); } catch { /* Storage may be unavailable. */ }
@@ -47,6 +53,10 @@ let savedFreeRoster = JSON.stringify(game.freePlayRoster);
 if (import.meta.env.MODE === 'test' && new URLSearchParams(location.search).get('minigame') === 'pawdicure') game.startPawdicurePractice();
 const world = new World();
 const hud = new Hud();
+const furniturePreviews = new FurniturePreviews();
+hud.roomThumbnails = furniturePreviews.images;
+const layoutPreviews = new RoomLayoutPreviews();
+hud.roomLayoutImages = layoutPreviews.images;
 const gesture = new Gesture();
 const audio = new GameAudio();
 audio.bindTouchUnlock(canvas);
@@ -69,8 +79,193 @@ function finishEntrance() {
 }
 
 let freeDrag: { point: Point; pan: boolean; mode: 'camera' | 'pet' | 'wand' } | undefined;
+const freeCameraTouches = new Map<number, Point>();
 let dexDrag: Point | undefined;
 const movementKeys = new Set<string>();
+const roomStore = new RoomLayoutStore();
+let editorView: RoomEditorView | undefined;
+const editorPointers = new Map<number, Point>();
+let editorDrag: { offset: Point; pose: FurniturePose } | undefined;
+let editorPointerMode: 'move' | 'pan' | 'orbit' | undefined;
+const furnitureHeights = new Map<string, number>();
+let lastRoomEditable = false;
+
+function refreshEditor() {
+  const editor = hud.roomEditor;
+  hud.roomSelection = undefined;
+  world.editorLayout = editor?.displayLayout;
+  if (editor && editorView) {
+    editorView.resize(hud.worldViewport(game));
+    const id = editor.selectedId, pose = editor.previewPose ?? (id ? editor.draft.placed[id] : undefined);
+    editorView.highlight(id, pose, !editor.previewError);
+    editorView.setGridVisible(editor.snap);
+    hud.roomFreeView = editorView.freeView;
+    if (id && pose && !editorPointers.size) {
+      if (!furnitureHeights.has(id)) {
+        const root = world.roomRoot.getObjectByName(`furniture:${id}`);
+        if (root) furnitureHeights.set(id, new THREE.Box3().setFromObject(root).getSize(new THREE.Vector3()).y);
+      }
+      hud.roomSelection = editorView.selectionAnchor(id, pose, furnitureHeights.get(id) ?? 1);
+    }
+  }
+  hud.invalidate();
+}
+function cancelEditorPointers() {
+  if (editorDrag) hud.roomEditor?.cancelPreview();
+  editorDrag = undefined; editorPointerMode = undefined;
+  const captured = [...editorPointers.keys()]; editorPointers.clear();
+  for (const id of captured) if (canvas.hasPointerCapture(id)) canvas.releasePointerCapture(id);
+  if (hud.roomEditor) refreshEditor();
+}
+function enterRoomEditor() {
+  if (!world.roomEditable || !['free-play', 'room-notice'].includes(game.phase)) return;
+  if (game.phase === 'room-notice' && hud.roomNotice) roomStore.acknowledge(roomStore.activeSlot, hud.roomNotice);
+  cancelGesture();
+  hud.roomEditor = new RoomEditor(hud.roomResumeBlocked && hud.roomNotice ? hud.roomNotice : game.roomLayout.layout);
+  hud.roomPanel = 'none'; hud.roomPage = 0; hud.roomSlot = roomStore.activeSlot;
+  hud.roomMessage = ''; hud.roomToast = undefined; if (!hud.roomResumeBlocked) hud.roomNotice = undefined;
+  game.phase = 'room-editor'; previousPhase = game.phase; game.revision++;
+  if (!editorView) { editorView = new RoomEditorView(); world.scene.add(editorView.overlay); }
+  editorView.freeView = false; editorView.overlay.visible = true; editorView.resize(hud.worldViewport(game)); editorView.fit();
+  refreshEditor();
+}
+function leaveRoomEditor(apply: boolean) {
+  const editor = hud.roomEditor;
+  if (!editor) return;
+  if (apply && !game.applyRoomLayout(editor.draft)) { editor.error = 'There is not enough clear floor for the cats.'; refreshEditor(); return; }
+  cancelEditorPointers();
+  hud.roomEditor = undefined; hud.roomPanel = 'none'; hud.roomToast = undefined; world.editorLayout = undefined;
+  if (editorView) editorView.overlay.visible = false;
+  if (apply) hud.roomResumeBlocked = false;
+  game.phase = hud.roomResumeBlocked ? 'room-notice' : 'free-play'; previousPhase = game.phase; game.revision++;
+  if (hud.roomResumeBlocked) hud.roomMessage = 'There is not enough clear floor for the cats.';
+  lastTime = performance.now(); resetFrameClock = true; gyro.recenter(world.camera.quaternion);
+  hud.invalidate();
+}
+function loadFreeRoom() {
+  const layout = roomStore.load();
+  hud.roomResumeBlocked = !game.applyRoomLayout(layout);
+  hud.roomSlot = roomStore.activeSlot;
+  if (roomStore.noticeNeeded(roomStore.activeSlot, layout) || roomStore.error || hud.roomResumeBlocked) {
+    hud.roomNotice = layout; hud.roomMessage = hud.roomResumeBlocked ? 'There is not enough clear floor for the cats.' : roomStore.error ?? ''; hud.roomPage = 0;
+    game.phase = 'room-notice'; game.revision++;
+  }
+}
+function saveRoom(slot: number, session = false) {
+  const editor = hud.roomEditor;
+  if (!editor) return;
+  editor.cancelPreview();
+  const reason = validateRoomLayout(editor.draft);
+  if (reason) { editor.error = reason; hud.roomPanel = 'none'; refreshEditor(); return; }
+  if (!game.canApplyRoomLayout(editor.draft)) {
+    editor.error = 'There is not enough clear floor for the cats.'; hud.roomPanel = 'none'; refreshEditor(); return;
+  }
+  hud.roomPendingSlot = slot;
+  try {
+    if (session) roomStore.useForSession(slot, editor.draft); else roomStore.save(slot, editor.draft);
+    roomStore.acknowledge(slot, editor.draft); hud.roomSlot = slot; leaveRoomEditor(true);
+  } catch (error) {
+    hud.roomMessage = error instanceof Error ? error.message : 'Layout could not be saved';
+    hud.roomPanel = 'storage'; hud.invalidate();
+  }
+}
+function exportRoom() {
+  if (!hud.roomEditor) return;
+  try {
+    const blob = new Blob([hud.roomEditor.export()], { type: 'application/json' });
+    const url = URL.createObjectURL(blob), anchor = document.createElement('a');
+    anchor.href = url; anchor.download = `catslave-room-${roomStore.activeSlot + 1}.json`; anchor.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    hud.roomMessage = 'Layout exported.';
+  } catch (error) { hud.roomMessage = error instanceof Error ? error.message : 'Export failed.'; }
+  hud.invalidate();
+}
+function importRoom() {
+  const editor = hud.roomEditor;
+  if (!editor) return;
+  // The game HUD stays on canvas; only file selection uses a native browser control.
+  const input = document.createElement('input'); input.type = 'file'; input.accept = '.json,application/json';
+  input.onchange = async () => {
+    const file = input.files?.[0]; if (!file || hud.roomEditor !== editor) return;
+    try {
+      if (file.size > ROOM_LAYOUT_MAX_BYTES) throw new Error('Layout files must be smaller than 100 KB.');
+      const contents = await file.text(); if (hud.roomEditor !== editor) return;
+      editor.import(contents);
+      if (editor.error) throw new Error(editor.error);
+      hud.roomPanel = editor.draft.unplaced.length ? 'unplaced' : 'none'; hud.roomFilter = 'inventory'; hud.roomPage = 0;
+      hud.roomMessage = 'Layout imported into your draft. Save to apply.';
+    } catch (error) { hud.roomMessage = error instanceof Error ? error.message : 'Import failed.'; }
+    refreshEditor();
+  };
+  input.click();
+}
+function roomAction(id: string) {
+  if (editorPointers.size) cancelEditorPointers();
+  if (game.phase === 'room-notice' && (id === 'room:prev' || id === 'room:next')) {
+    hud.roomPage = Math.max(0, hud.roomPage + (id === 'room:next' ? 1 : -1)); hud.invalidate(); return;
+  }
+  if (id === 'room:open' || id === 'room:notice-edit') { enterRoomEditor(); return; }
+  if (id === 'room:notice-continue') {
+    if (hud.roomResumeBlocked) return;
+    if (hud.roomNotice) roomStore.acknowledge(roomStore.activeSlot, hud.roomNotice);
+    hud.roomNotice = undefined; roomStore.error = undefined; game.phase = 'free-play'; game.revision++; lastTime = performance.now(); return;
+  }
+  const editor = hud.roomEditor; if (!editor || !editorView) return;
+  const command = id.slice(5);
+  if (command === 'cancel') { leaveRoomEditor(false); return; }
+  if (['items', 'unplaced', 'slots', 'save'].includes(command)) {
+    hud.roomPanel = command as typeof hud.roomPanel; hud.roomPage = 0;
+    hud.roomFilter = command === 'unplaced' ? 'inventory' : 'all';
+    if (command === 'slots' || command === 'save') {
+      hud.roomSlotLayouts = roomStore.slots.map((_, i) => roomStore.load(i));
+      layoutPreviews.prepare([{ id: 'draft', layout: editor.draft }, ...hud.roomSlotLayouts.map((layout, i) => ({ id: `slot:${i}`, layout }))]);
+    }
+  }
+  else if (command.startsWith('filter:')) { hud.roomFilter = command.slice(7) as FurnitureFilter; hud.roomPage = 0; }
+  else if (command === 'close-panel') { hud.roomPanel = 'none'; }
+  else if (command === 'prev') hud.roomPage = Math.max(0, hud.roomPage - 1);
+  else if (command === 'next') hud.roomPage++;
+  else if (command.startsWith('item:') || command.startsWith('group:')) {
+    const group = command.startsWith('group:') ? furnitureGroups(editor.draft).find(group => group.id === command.slice(6)) : undefined;
+    const itemId = group ? (hud.roomFilter === 'room' ? group.ids.find(id => editor.draft.placed[id])
+      : group.ids.find(id => !editor.draft.placed[id])) ?? group.ids[0] : command.slice(5);
+    editor.select(itemId); hud.roomPanel = 'none'; hud.roomMessage = '';
+    if (!editor.draft.placed[itemId]) {
+      const pose = editor.previewPose ?? FURNITURE_DEFINITIONS.find(def => def.id === itemId)!.defaultPose;
+      editor.preview({ ...pose, x: editorView.target.x, z: editorView.target.z });
+    }
+  }
+  else if (command === 'undo') editor.undo();
+  else if (command === 'redo') editor.redo();
+  else if (command === 'reset') editor.reset();
+  else if (command === 'rotate') editor.rotate();
+  else if (command === 'store') {
+    const label = FURNITURE_DEFINITIONS.find(def => def.id === editor.selectedId)?.label;
+    if (editor.storeSelected() && label) { hud.showRoomToast(label); hud.roomMessage = ''; }
+  }
+  else if (command === 'snap') editor.snap = !editor.snap;
+  else if (['left', 'right', 'up', 'down'].includes(command)) {
+    const direction = { left: [-1, 0], right: [1, 0], up: [0, -1], down: [0, 1] }[command]!;
+    editor.nudge(direction[0], direction[1]);
+  }
+  else if (command === 'view') { editorView.toggleView(); hud.roomMessage = ''; }
+  else if (command === 'fit') editorView.fit();
+  else if (command === 'in' || command === 'out') editorView.zoomBy(command === 'in' ? 1.2 : 1 / 1.2);
+  else if (command.startsWith('load-slot:')) {
+    editor.load(roomStore.load(Number(command.slice(10)))); hud.roomPanel = editor.draft.unplaced.length ? 'unplaced' : 'none'; hud.roomFilter = 'inventory';
+    hud.roomMessage = 'Layout loaded into your draft. Save to apply.'; hud.roomPage = 0;
+  }
+  else if (command.startsWith('save-slot:')) {
+    const slot = Number(command.slice(10)); hud.roomPendingSlot = slot;
+    if (slot !== roomStore.activeSlot) hud.roomPanel = 'confirm'; else saveRoom(slot);
+  }
+  else if (command === 'confirm-save' || command === 'retry') saveRoom(hud.roomPendingSlot);
+  else if (command === 'session') saveRoom(hud.roomPendingSlot, true);
+  else if (command === 'export') exportRoom();
+  else if (command === 'import') importRoom();
+  if (['undo', 'redo', 'reset'].includes(command) || command.startsWith('load-slot:')) { hud.roomToast = undefined; hud.roomMessage = ''; }
+  refreshEditor();
+}
 function updateWorld(dt: number, time: number, effectsDt = dt) {
   const profile = game.phase === 'cat-dex' && hud.dexCat !== undefined ? PALETTE[hud.dexCat] : undefined;
   if (profile && game.adoptedCats.includes(profile.name) && isBlenderCat(profile.appearance)) {
@@ -84,8 +279,12 @@ function updateWorld(dt: number, time: number, effectsDt = dt) {
     for (const cat of game.upcomingAdoption) if (isBlenderCat(cat.appearance)) void preloadBlenderCatAsset(cat.appearance);
   }
   world.update(game, dt, time, effectsDt);
+  if (world.roomEditable !== lastRoomEditable) { lastRoomEditable = world.roomEditable; hud.invalidate(); }
 }
 function cancelGesture() {
+  cancelEditorPointers();
+  const touches = [...freeCameraTouches.keys()]; freeCameraTouches.clear();
+  for (const id of touches) if (canvas.hasPointerCapture(id)) canvas.releasePointerCapture(id);
   dexDrag = undefined;
   freeDrag = undefined; world.setFreePointer(undefined); movementKeys.clear();
   gesture.cancel(); hud.pointer = undefined; hud.pointerTool = undefined;
@@ -120,6 +319,7 @@ function resize() {
   renderer.setPixelRatio(Math.min(devicePixelRatio || 1, 1.5)); renderer.setSize(width, height, false);
   const safe = safeInsets(); hud.resize(width, height, safe.top, safe.bottom, safe.left, safe.right);
   world.resize(width, height, hud.worldViewport(game));
+  if (hud.roomEditor) refreshEditor();
   updateWorld(0, performance.now() / 1000); hud.draw(game, world, 0, true);
   if (!contextLost) renderFrame();
 }
@@ -129,13 +329,20 @@ function syncWorldViewport() {
   if (next.x !== current.x || next.y !== current.y || next.w !== current.w || next.h !== current.h) world.resize(width, height, next);
 }
 function renderFrame() {
+  const furnitureGallery = game.phase === 'room-editor' && ['items', 'unplaced'].includes(hud.roomPanel);
+  const layoutGallery = game.phase === 'room-editor' && ['save', 'slots'].includes(hud.roomPanel);
+  const gallery = furnitureGallery || layoutGallery;
+  if (furnitureGallery && furniturePreviews.renderNext(renderer, world.roomRoot, hud.roomThumbnailIds)
+    || layoutGallery && layoutPreviews.renderNext(renderer, world.roomRoot, hud.roomLayoutRequests)) {
+    hud.invalidate(); hud.draw(game, world, 0, true);
+  }
   renderer.info.reset(); renderer.setScissorTest(false); renderer.setViewport(0, 0, width, height); renderer.clear();
   const v = world.viewport;
   renderer.setViewport(v.x, height - v.y - v.h, v.w, v.h);
   renderer.setScissor(v.x, height - v.y - v.h, v.w, v.h); renderer.setScissorTest(true);
-  if (!hud.rotateRequired) {
+  if (!hud.rotateRequired && !gallery) {
     if (game.phase === 'cat-dex' && hud.dexCat !== undefined) renderer.render(world.dexScene, world.dexCamera);
-    else renderer.render(world.scene, world.camera);
+    else renderer.render(world.scene, game.phase === 'room-editor' && editorView ? editorView.camera : world.camera);
   }
   renderer.setScissorTest(false); renderer.setViewport(0, 0, width, height);
   renderer.clearDepth(); if (!hud.rotateRequired) renderer.render(world.attackScene, world.attackCamera);
@@ -156,6 +363,9 @@ function action(id: string) {
     return;
   }
   if (id === 'sound') { audio.cycleVolume(); hud.soundLabel = audio.label; hud.invalidate(); return; }
+  if (id.startsWith('room:')) {
+    roomAction(id); syncWorldViewport(); updateWorld(0, performance.now() / 1000, 0); hud.draw(game, world, 0, true); return;
+  }
   if (['learn', 'start', 'restart', 'home', 'confirm-restart', 'confirm-home'].includes(id)) { audio.stop(); roomSounds.reset(); }
   if (game.phase === 'paused' && ['help', 'restart', 'home'].includes(id)) {
     hud.modal = id as 'help' | 'restart' | 'home'; hud.clearInteraction();
@@ -165,7 +375,7 @@ function action(id: string) {
     hud.modal = undefined; hud.clearInteraction(); hud.draw(game, world, 0, true); return;
   }
   if (['learn', 'start', 'restart', 'home', 'confirm-restart', 'confirm-home'].includes(id)) { world.resetView(); gyro.recenter(world.camera.quaternion); }
-  if (id === 'confirm-restart') { if (game.practiceBonus) game.startPawdicurePractice(); else if (game.resumePhase === 'free-play') { game.phase = 'title'; game.startFreePlay(); } else game.reset(game.resumePhase === 'tutorial'); }
+  if (id === 'confirm-restart') { if (game.practiceBonus) game.startPawdicurePractice(); else if (game.resumePhase === 'free-play') { game.phase = 'title'; game.startFreePlay(); loadFreeRoom(); } else game.reset(game.resumePhase === 'tutorial'); }
   else if (id === 'learn') { game.reset(true); }
   else if (id === 'start' || id === 'restart') { game.reset(); }
   else if (id === 'home' || id === 'confirm-home') { game.reset(); game.phase = 'title'; }
@@ -173,7 +383,7 @@ function action(id: string) {
   else if (id === 'dex-back') { if (hud.dexCat !== undefined) hud.dexCat = undefined; else game.phase = 'title'; }
   else if (id === 'dex-reset') world.resetDexRotation();
   else if (id.startsWith('dex-cat:')) hud.dexCat = Number(id.slice(8));
-  else if (id === 'free-play') { if (game.startFreePlay()) world.resetView(); }
+  else if (id === 'free-play') { if (game.startFreePlay()) { loadFreeRoom(); world.resetView(); } }
   else if (id === 'pawdicure-practice') { game.startPawdicurePractice(); world.resetView(); }
   else if (id.startsWith('paw-cat:')) { game.bonus?.paw?.selectCat(Number(id.slice(8))); game.revision++; }
   else if (id === 'paw-clip') {
@@ -184,10 +394,8 @@ function action(id: string) {
   }
   else if (id.startsWith('free-cat:')) { game.chooseFreeCat(Number(id.slice(9))); const cat = game.cats.find(c => c.id === game.selectedFreeCatId); if (cat) world.focusOn(new THREE.Vector3(cat.position.x, cat.elevation + 0.5, cat.position.z)); }
   else if (id.startsWith('free-mode:') && game.phase === 'free-play') { game.freeInteraction = id.slice(10) as 'pet' | 'wand' | 'camera'; game.revision++; }
-  else if (id.startsWith('free-move:') && game.phase === 'free-play') {
-    const moves: Record<string, [number, number, number]> = { left: [-0.5,0,0], right: [0.5,0,0], up: [0,0.5,0], down: [0,-0.5,0], forward: [0,0,-0.5], back: [0,0,0.5] };
-    const move = moves[id.slice(10)]; if (move) world.translateView(...move);
-  }
+  else if (id === 'free-camera:look') hud.freeCameraMode = 'look';
+  else if (id === 'free-camera:move') hud.freeCameraMode = 'move';
   else if (id === 'pause') game.pause();
   else if (id === 'resume' && !contextLost && !document.hidden) { game.resume(); lastTime = performance.now(); }
   else if (id === 'tutorial-next') { game.advanceTutorial(); }
@@ -254,7 +462,52 @@ function inDexPreview(p: Point) {
   return game.phase === 'cat-dex' && hud.dexCat !== undefined
     && p.x >= v.x && p.x <= v.x + v.w && p.y >= v.y && p.y <= v.y + v.h;
 }
+function dragFreeCamera(dx: number, dy: number, pan = false) {
+  if (pan) world.translateView(-dx * .012, dy * .012, 0);
+  else if (hud.freeCameraMode === 'move') world.translateView(dx * .012, 0, dy * .018);
+  else world.lookView(dx, dy);
+  hud.invalidate();
+}
 canvas.addEventListener('pointerdown', event => {
+  if (game.phase === 'room-editor' && hud.roomPanel === 'none' && pointerId === undefined && !contextLost && !hud.rotateRequired && editorView) {
+    const p = point(event), v = world.viewport;
+    if (!hud.hit(p.x, p.y) && p.x >= v.x && p.x <= v.x + v.w && p.y >= v.y && p.y <= v.y + v.h) {
+      event.preventDefault(); canvas.focus({ preventScroll: true }); hud.focusedId = undefined;
+      if (editorPointers.size >= 2) return;
+      editorPointers.set(event.pointerId, p); canvas.setPointerCapture(event.pointerId);
+      const editor = hud.roomEditor!;
+      if (editorPointers.size === 2) {
+        editor.cancelPreview(); editorDrag = undefined; editorPointerMode = 'pan'; refreshEditor(); return;
+      }
+      const recovering = editor.selectedId && !editor.draft.placed[editor.selectedId];
+      const hitId = recovering ? editor.selectedId : editorView.pick(world.roomRoot, p);
+      const floorPoint = editorView.floorPoint(p);
+      if (hitId && floorPoint && event.button !== 2) {
+        editor.select(hitId);
+        const pose = editor.previewPose ?? editor.draft.placed[hitId];
+        if (pose) {
+          editorDrag = { pose: { ...pose }, offset: recovering ? { x: 0, y: 0 } : { x: pose.x - floorPoint.x, y: pose.z - floorPoint.z } };
+          editorPointerMode = 'move';
+          if (recovering) editor.preview({ ...pose, x: floorPoint.x, z: floorPoint.z });
+        }
+      } else { editorPointerMode = editorView.freeView && event.button !== 2 && !event.shiftKey ? 'orbit' : 'pan'; }
+      refreshEditor(); return;
+    }
+  }
+  // Camera touches have their own capture set so a second finger can pan/zoom.
+  if (event.pointerType === 'touch' && game.phase === 'free-play' && game.freeInteraction === 'camera'
+    && !hud.rotateRequired && !contextLost && pointerId === undefined) {
+    const p = point(event), v = world.viewport;
+    if (p.x >= v.x && p.x <= v.x + v.w && p.y >= v.y && p.y <= v.y + v.h && !hud.hit(p.x, p.y)) {
+      event.preventDefault();
+      if (freeCameraTouches.size < 2) {
+        canvas.focus({ preventScroll: true }); audio.unlock(); hud.focusedId = undefined;
+        freeCameraTouches.set(event.pointerId, p); canvas.setPointerCapture(event.pointerId);
+      }
+      return;
+    }
+  }
+  if (freeCameraTouches.size) return;
   if (hud.rotateRequired || pointerId !== undefined || !event.isPrimary || (event.pointerType === 'mouse' && event.button !== 0 && !(game.phase === 'free-play' && event.button === 2)) || contextLost) return;
   event.preventDefault(); canvas.focus({ preventScroll: true });
   audio.unlock();
@@ -298,20 +551,48 @@ canvas.addEventListener('pointerdown', event => {
   hud.invalidate();
 });
 canvas.addEventListener('pointermove', event => {
+  if (editorPointers.has(event.pointerId) && editorView && hud.roomEditor) {
+    const p = point(event), previous = editorPointers.get(event.pointerId)!;
+    const before = [...editorPointers.values()]; editorPointers.set(event.pointerId, p);
+    const after = [...editorPointers.values()];
+    if (after.length === 2) {
+      editorView.panPixels((after[0].x + after[1].x - before[0].x - before[1].x) / 2,
+        (after[0].y + after[1].y - before[0].y - before[1].y) / 2);
+      const distance = Math.hypot(before[0].x - before[1].x, before[0].y - before[1].y);
+      if (distance > 1) editorView.zoomBy(Math.hypot(after[0].x - after[1].x, after[0].y - after[1].y) / distance);
+    } else if (editorDrag && editorPointerMode === 'move') {
+      const floorPoint = editorView.floorPoint(p);
+      if (floorPoint) hud.roomEditor.preview({ ...editorDrag.pose, x: floorPoint.x + editorDrag.offset.x, z: floorPoint.z + editorDrag.offset.y });
+    } else if (editorPointerMode === 'orbit') editorView.orbitPixels(p.x - previous.x, p.y - previous.y);
+    else editorView.panPixels(p.x - previous.x, p.y - previous.y);
+    refreshEditor(); return;
+  }
   const p = point(event), hover = hud.hit(p.x, p.y);
+  const touch = freeCameraTouches.get(event.pointerId);
+  if (touch) {
+    event.preventDefault();
+    const other = [...freeCameraTouches].find(([id]) => id !== event.pointerId)?.[1];
+    if (other) {
+      const before = Math.hypot(touch.x - other.x, touch.y - other.y);
+      const after = Math.hypot(p.x - other.x, p.y - other.y);
+      dragFreeCamera((p.x - touch.x) / 2, (p.y - touch.y) / 2, true);
+      if (before > 8 && after > 8) world.zoomView(world.camera.zoom * (after / before - 1));
+    } else dragFreeCamera(p.x - touch.x, p.y - touch.y);
+    freeCameraTouches.set(event.pointerId, p); return;
+  }
   if (event.pointerType === 'mouse') {
     const hoveredId = hover?.eventId === undefined && !hover?.disabled ? hover?.id : undefined;
     if (hud.hoveredId !== hoveredId) { hud.hoveredId = hoveredId; hud.invalidate(); }
     const wheelHover = !hover && game.phase === 'free-play' && game.freeInteraction === 'pet' && world.wheelHit(p);
-    canvas.style.cursor = dexDrag ? 'grabbing' : hover?.disabled ? 'not-allowed' : hover || wheelHover ? 'pointer' : game.active || inDexPreview(p) ? 'grab' : 'default';
+    const cameraHover = game.phase === 'free-play' && game.freeInteraction === 'camera';
+    canvas.style.cursor = dexDrag || freeDrag?.mode === 'camera' ? 'grabbing' : hover?.disabled ? 'not-allowed' : hover || wheelHover ? 'pointer' : game.active || inDexPreview(p) || cameraHover ? 'grab' : 'default';
   }
   if (event.pointerId !== pointerId) return;
   if (dexDrag) { world.rotateDex(dexDrag, p); dexDrag = p; return; }
   if (freeDrag && game.phase === 'free-play') {
     const dx = p.x - freeDrag.point.x, dy = p.y - freeDrag.point.y;
     if (freeDrag.mode === 'camera') {
-      if (freeDrag.pan) world.translateView(-dx * 0.012, dy * 0.012, 0);
-      else world.lookView(dx, dy);
+      dragFreeCamera(dx, dy, freeDrag.pan);
     } else if (freeDrag.mode === 'wand') { waveWand(p); }
     else if (game.selectedFreeCatId !== undefined && world.freePetHit(game.selectedFreeCatId, p) && game.clock >= game.freePatUntil) {
       game.interactFreeCat('pet'); world.freePat(game.selectedFreeCatId); audio.play('pat'); audio.play('purr');
@@ -326,6 +607,17 @@ canvas.addEventListener('pointermove', event => {
   if (route?.kind === 'care') hud.pointer = p;
 });
 canvas.addEventListener('pointerup', event => {
+  if (editorPointers.delete(event.pointerId)) {
+    if (editorDrag && hud.roomEditor) hud.roomEditor.commitPreview();
+    editorDrag = undefined;
+    if (!editorPointers.size) editorPointerMode = undefined;
+    if (canvas.hasPointerCapture(event.pointerId)) canvas.releasePointerCapture(event.pointerId);
+    refreshEditor(); return;
+  }
+  if (freeCameraTouches.delete(event.pointerId)) {
+    if (canvas.hasPointerCapture(event.pointerId)) canvas.releasePointerCapture(event.pointerId);
+    return;
+  }
   if (event.pointerId !== pointerId) return;
   if (dexDrag) { cancelGesture(); canvas.style.cursor = 'grab'; return; }
   const p = point(event), route = gesture.route, hit = hud.hit(p.x, p.y);
@@ -333,17 +625,38 @@ canvas.addEventListener('pointerup', event => {
   const result = gesture.end(p, hit?.id, inTarget);
   cancelGesture(); applyGesture(result);
 });
-canvas.addEventListener('pointercancel', event => { if (event.pointerId === pointerId) cancelGesture(); });
-canvas.addEventListener('lostpointercapture', event => { if (event.pointerId === pointerId) cancelGesture(); });
+canvas.addEventListener('pointercancel', event => { if (event.pointerId === pointerId || freeCameraTouches.has(event.pointerId) || editorPointers.has(event.pointerId)) cancelGesture(); });
+canvas.addEventListener('lostpointercapture', event => { if (event.pointerId === pointerId || freeCameraTouches.has(event.pointerId) || editorPointers.has(event.pointerId)) cancelGesture(); });
 canvas.addEventListener('pointerleave', () => { hud.hoveredId = undefined; hud.invalidate(); });
 canvas.addEventListener('contextmenu', event => event.preventDefault());
 canvas.addEventListener('wheel', event => {
+  if (game.phase === 'room-editor' && editorView && hud.roomPanel === 'none') {
+    event.preventDefault(); editorView.zoomBy(Math.exp(-event.deltaY * .002)); hud.invalidate(); return;
+  }
   if (game.phase !== 'free-play') return;
   event.preventDefault(); world.zoomView(-event.deltaY * 0.002); hud.invalidate();
 }, { passive: false });
 window.addEventListener('keyup', event => movementKeys.delete(event.key.toLowerCase()));
 window.addEventListener('keydown', event => {
   if (hud.rotateRequired || contextLost || document.hidden) return;
+  if (game.phase === 'room-editor') {
+    const key = event.key.toLowerCase();
+    if ((event.ctrlKey || event.metaKey) && ['z', 'y'].includes(key)) {
+      event.preventDefault(); roomAction(key === 'y' || event.shiftKey ? 'room:redo' : 'room:undo'); return;
+    }
+    if (event.key === 'Escape') {
+      event.preventDefault(); cancelGesture();
+      roomAction(hud.roomPanel === 'none' ? 'room:cancel' : 'room:close-panel'); return;
+    }
+    const commands: Record<string, string> = { r: 'rotate', ArrowLeft: 'left', ArrowRight: 'right', ArrowUp: 'up', ArrowDown: 'down', '+': 'in', '=': 'in', '-': 'out' };
+    const command = commands[event.key] ?? commands[key];
+    if (command && hud.roomPanel === 'none' && !hud.focusedId && !event.ctrlKey && !event.metaKey) {
+      event.preventDefault(); roomAction(`room:${command}`); return;
+    }
+  }
+  if (game.phase === 'free-play' && !event.ctrlKey && !event.metaKey && !event.altKey && ['+', '=', '-', '_'].includes(event.key)) {
+    event.preventDefault(); world.zoomView(['+', '='].includes(event.key) ? .2 : -.2); hud.invalidate(); return;
+  }
   if (game.phase === 'free-play' && !event.ctrlKey && !event.metaKey && !event.altKey && ['w','a','s','d','q','e'].includes(event.key.toLowerCase())) {
     event.preventDefault(); movementKeys.add(event.key.toLowerCase()); return;
   }
@@ -482,7 +795,7 @@ if (import.meta.env.MODE === 'test') {
     game.continueBonus();
   };
   Object.assign(window, { __CATSLAVE_TEST__: {
-    game, world, hud, audio,
+    game, world, hud, audio, roomStore, get editorView() { return editorView; },
     finishBonus,
     setManualClock(value: boolean) { manualClock = value; },
     refresh(effectsDt = 0) { syncWorldViewport(); updateWorld(0, performance.now() / 1000, effectsDt); hud.draw(game, world, 0, true); },

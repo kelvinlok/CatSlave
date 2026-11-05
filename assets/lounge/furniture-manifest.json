@@ -1,0 +1,311 @@
+{
+  "revision": 261168480549782,
+  "items": [
+    {
+      "id": "sofa",
+      "label": "Olive sofa",
+      "x": 2.65,
+      "z": 6.4,
+      "footprints": [
+        {
+          "minX": -2.66,
+          "maxX": 1.01,
+          "minZ": -0.68,
+          "maxZ": 0.915
+        }
+      ],
+      "obstacleIds": [
+        "green-sofa"
+      ]
+    },
+    {
+      "id": "loveseat",
+      "label": "Cream loveseat",
+      "x": 4.15,
+      "z": 4.2,
+      "footprints": [
+        {
+          "minX": -0.55,
+          "maxX": 0.75,
+          "minZ": -1.4,
+          "maxZ": 1.4
+        }
+      ],
+      "obstacleIds": [
+        "cream-loveseat"
+      ]
+    },
+    {
+      "id": "chair-1",
+      "label": "Floor chair 1",
+      "x": -5.74,
+      "z": -4.75,
+      "footprints": [
+        {
+          "minX": -0.56,
+          "maxX": 0.59,
+          "minZ": -0.6,
+          "maxZ": 0.6
+        }
+      ],
+      "obstacleIds": [
+        "floor-chair-a"
+      ]
+    },
+    {
+      "id": "chair-2",
+      "label": "Floor chair 2",
+      "x": -5.74,
+      "z": -2.3,
+      "footprints": [
+        {
+          "minX": -0.56,
+          "maxX": 0.59,
+          "minZ": -0.6,
+          "maxZ": 0.6
+        }
+      ],
+      "obstacleIds": [
+        "floor-chair-b"
+      ]
+    },
+    {
+      "id": "chair-3",
+      "label": "Floor chair 3",
+      "x": -3.4,
+      "z": -7.05,
+      "footprints": [
+        {
+          "minX": -0.58,
+          "maxX": 0.58,
+          "minZ": -0.57,
+          "maxZ": 0.6
+        }
+      ],
+      "obstacleIds": [
+        "mural-chair-left"
+      ]
+    },
+    {
+      "id": "chair-4",
+      "label": "Floor chair 4",
+      "x": -1.85,
+      "z": -7.05,
+      "footprints": [
+        {
+          "minX": -0.6,
+          "maxX": 0.6,
+          "minZ": -0.6,
+          "maxZ": 0.65
+        }
+      ],
+      "obstacleIds": [
+        "mural-chair-right"
+      ]
+    },
+    {
+      "id": "table-1",
+      "label": "Mural table",
+      "x": -4.85,
+      "z": -6,
+      "footprints": [
+        {
+          "minX": -0.55,
+          "maxX": 0.55,
+          "minZ": -0.55,
+          "maxZ": 0.55
+        }
+      ],
+      "obstacleIds": [
+        "table-a-leg-0",
+        "table-a-leg-1",
+        "table-a-leg-2"
+      ]
+    },
+    {
+      "id": "table-2",
+      "label": "Side table",
+      "x": -4.65,
+      "z": -3.45,
+      "footprints": [
+        {
+          "minX": -0.55,
+          "maxX": 0.55,
+          "minZ": -0.55,
+          "maxZ": 0.55
+        }
+      ],
+      "obstacleIds": [
+        "table-b-leg-0",
+        "table-b-leg-1",
+        "table-b-leg-2"
+      ]
+    },
+    {
+      "id": "table-3",
+      "label": "Sofa table",
+      "x": 1.25,
+      "z": 5.23,
+      "footprints": [
+        {
+          "minX": -0.55,
+          "maxX": 0.55,
+          "minZ": -0.48,
+          "maxZ": 0.48
+        }
+      ],
+      "obstacleIds": [
+        "table-c-leg-0",
+        "table-c-leg-1",
+        "table-c-leg-2"
+      ]
+    },
+    {
+      "id": "bed-1",
+      "label": "Pink flower bed",
+      "x": 0.45,
+      "z": -5.5,
+      "footprints": [
+        {
+          "minX": -0.8,
+          "maxX": 0.8,
+          "minZ": -0.78,
+          "maxZ": 0.78
+        }
+      ],
+      "obstacleIds": []
+    },
+    {
+      "id": "bed-2",
+      "label": "White flower bed",
+      "x": -6.7,
+      "z": -0.05,
+      "footprints": [
+        {
+          "minX": -0.6,
+          "maxX": 0.6,
+          "minZ": -0.33,
+          "maxZ": 0.6
+        }
+      ],
+      "obstacleIds": []
+    },
+    {
+      "id": "bed-3",
+      "label": "Orange flower bed",
+      "x": 3.1,
+      "z": 2.25,
+      "footprints": [
+        {
+          "minX": -0.6,
+          "maxX": 0.6,
+          "minZ": -0.52,
+          "maxZ": 0.52
+        }
+      ],
+      "obstacleIds": []
+    },
+    {
+      "id": "pod",
+      "label": "Bentwood pod",
+      "x": 0,
+      "z": -7.05,
+      "footprints": [
+        {
+          "minX": -0.68,
+          "maxX": 0.68,
+          "minZ": -0.5,
+          "maxZ": 0.5
+        }
+      ],
+      "obstacleIds": [
+        "mustard-pod"
+      ]
+    },
+    {
+      "id": "tree",
+      "label": "Entrance cat tree",
+      "x": -6.85,
+      "z": 1.7,
+      "footprints": [
+        {
+          "minX": -0.85,
+          "maxX": 0.7,
+          "minZ": -0.8,
+          "maxZ": 0.95
+        }
+      ],
+      "obstacleIds": [
+        "entry-tree"
+      ]
+    },
+    {
+      "id": "window-tree",
+      "label": "Window cat tree",
+      "x": 4.05,
+      "z": 6.3,
+      "footprints": [
+        {
+          "minX": -0.37,
+          "maxX": 0.47,
+          "minZ": -0.5,
+          "maxZ": 0.5
+        }
+      ],
+      "obstacleIds": [
+        "sunroom-tree"
+      ]
+    },
+    {
+      "id": "recliner-1",
+      "label": "Window recliner 1",
+      "x": 5.9,
+      "z": 3.25,
+      "footprints": [
+        {
+          "minX": -0.75,
+          "maxX": 1.53,
+          "minZ": -0.69,
+          "maxZ": 0.69
+        }
+      ],
+      "obstacleIds": [
+        "recliners"
+      ]
+    },
+    {
+      "id": "recliner-2",
+      "label": "Window recliner 2",
+      "x": 5.9,
+      "z": 4.8,
+      "footprints": [
+        {
+          "minX": -0.75,
+          "maxX": 1.53,
+          "minZ": -0.69,
+          "maxZ": 0.69
+        }
+      ],
+      "obstacleIds": [
+        "recliners"
+      ]
+    },
+    {
+      "id": "wheel",
+      "label": "Exercise wheel",
+      "x": -1.65,
+      "z": 6.5,
+      "footprints": [
+        {
+          "minX": -1.43,
+          "maxX": 1.43,
+          "minZ": -0.52,
+          "maxZ": 0.55
+        }
+      ],
+      "obstacleIds": [
+        "cat-wheel"
+      ]
+    }
+  ]
+}

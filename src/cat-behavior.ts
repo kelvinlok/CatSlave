@@ -2,16 +2,17 @@ import { clearFloor, clearFloorSegment, floorRoute } from './room-navigation';
 import { FURNITURE, type Waypoint } from './furniture';
 import type { CatState } from './types';
 import { ROOM } from './config';
+import type { RoomLayoutRuntime } from './room-layout';
 import { JUMP_DURATION, jumpFlightProgress } from './cat-jump';
 import { advanceWheelRun, WHEEL_STOP_TIME } from './cat-wheel';
 import { roomFloorContains, type FloorArea } from './room-boundaries';
 
-export function beginVisit(cat: CatState, id: string, cats: CatState[], area: FloorArea = 'whole-room') {
-  const spot = FURNITURE.find(s => s.id === id);
+export function beginVisit(cat: CatState, id: string, cats: CatState[], area: FloorArea = 'whole-room', runtime?: RoomLayoutRuntime) {
+  const spot = (runtime?.spots ?? FURNITURE).find(s => s.id === id);
   if (!spot || cat.visit || cats.some(c => c.visit?.id === id)) return false;
   if (!spot.route.every(point => roomFloorContains(point, 0.22, area))) return false;
   const first = spot.route[0];
-  const approach = floorRoute(cat.position, first, area);
+  const approach = floorRoute(cat.position, first, area, runtime?.navigation);
   if (!approach.length) return false;
   const route: Waypoint[] = [
     ...approach.map(p => ({ ...p, height: 0 })),
@@ -23,8 +24,8 @@ export function beginVisit(cat: CatState, id: string, cats: CatState[], area: Fl
   return true;
 }
 
-export function tickVisit(cat: CatState, clock: number, dt: number, cats: readonly CatState[], pacing = { rest: 1.2, durationScale: 1 }, area: FloorArea = 'whole-room') {
-  const visit = cat.visit!, spot = FURNITURE.find(s => s.id === visit.id)!;
+export function tickVisit(cat: CatState, clock: number, dt: number, cats: readonly CatState[], pacing = { rest: 1.2, durationScale: 1 }, area: FloorArea = 'whole-room', runtime?: RoomLayoutRuntime) {
+  const visit = cat.visit!, spot = (runtime?.spots ?? FURNITURE).find(s => s.id === visit.id)!;
   let wheelDistance = 0;
   const turnToward = (yaw: number) => {
     const delta = Math.atan2(Math.sin(yaw - cat.yaw), Math.cos(yaw - cat.yaw));
@@ -71,19 +72,27 @@ export function tickVisit(cat: CatState, clock: number, dt: number, cats: readon
     Math.hypot(other.position.x - next.x, other.position.z - next.z) < Math.hypot(other.position.x - cat.position.x, other.position.z - cat.position.z));
   if (blocker) {
     cat.activity = 'idle';
+    visit.blockedFor = (visit.blockedFor ?? 0) + dt;
+    // Custom layouts can funnel several cats through one aisle. Release a
+    // floor-level reservation rather than letting two approach routes deadlock.
+    if (visit.blockedFor >= 3 && cat.elevation === 0) {
+      cat.visit = undefined; cat.lastFurniture = spot.id; cat.pose = 0;
+      cat.decisionAt = clock + pacing.rest; return wheelDistance;
+    }
     // Detour only on the open floor; doorways and landing points remain exact.
     if (cat.position.z >= ROOM.minZ && target.z >= ROOM.minZ && distance > 0.7) {
       const candidates = [-1, 1].map(side => ({
         x: blocker.position.x + side * dz / distance * 0.85,
         z: blocker.position.z - side * dx / distance * 0.85, height: 0,
       }));
-      const detour = candidates.find(point => clearFloor(point, area) && clearFloorSegment(cat.position, point, area) && clearFloorSegment(point, target, area)
+      const detour = candidates.find(point => clearFloor(point, area, runtime?.navigation) && clearFloorSegment(cat.position, point, area, runtime?.navigation) && clearFloorSegment(point, target, area, runtime?.navigation)
         && point.x >= ROOM.minX && point.x <= ROOM.maxX && point.z >= ROOM.minZ && point.z <= ROOM.maxZ &&
         cats.every(other => other === cat || other.elevation > 0.3 || Math.hypot(point.x - other.position.x, point.z - other.position.z) > 0.7));
       if (detour) { visit.route.splice(visit.index, 0, detour); visit.from = { ...cat.position, height: 0 }; visit.progress = 0; }
     }
     return wheelDistance;
   }
+  visit.blockedFor = 0;
   visit.progress = p;
   cat.position.x = next.x; cat.position.z = next.z;
   // Exact grounded heights matter: the renderer distinguishes a raised surface

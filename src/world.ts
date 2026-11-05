@@ -9,6 +9,8 @@ import { createCat, disposeCat, refreshCatModel, type CatModel } from './cat-mod
 import { createMess, updateMess, disposeMess } from './messes';
 import { createRoom, updateRoomWheel, isWheelMesh } from './room-asset';
 import { WHEEL } from './cat-wheel';
+import { applyRoomLayoutVisuals, roomFurniture, roomObjectVisible } from './room-layout-view';
+import { FURNITURE_DEFINITIONS, type RoomLayout } from './room-layout';
 import { RoomLighting } from './room-lighting';
 import { animateCat } from './cat-animation';
 import { gameLayout, type Rect } from './layout';
@@ -64,12 +66,26 @@ export class World {
   private dexCenter = new THREE.Vector3();
   private dexPivot = new THREE.Group();
   private wheelPickables?: THREE.Object3D[];
+  editorLayout?: RoomLayout;
+  get roomRoot() { return this.room; }
+  get roomEditable() {
+    const bindings = roomFurniture(this.room);
+    return !!bindings && FURNITURE_DEFINITIONS.every(def => bindings.has(def.id));
+  }
 
   resetDexRotation() { this.dexPivot.quaternion.identity(); }
 
   wheelHit(point: Point) {
     const v = this.viewport;
     if (!this.room.userData.loaded || point.x < v.x || point.x > v.x + v.w || point.y < v.y || point.y > v.y + v.h) return false;
+    const wheel = roomFurniture(this.room)?.get('wheel');
+    if (wheel && !wheel.visible) return false;
+    if (wheel) {
+      wheelTapTarget.position.copy(wheel.position); wheelTapTarget.position.y = WHEEL.centerY;
+      wheelTapTarget.rotation.set(Math.PI / 2, 0, 0);
+      wheelTapTarget.quaternion.premultiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), wheel.rotation.y));
+      wheelTapTarget.updateMatrixWorld(true);
+    }
     this.camera.updateMatrixWorld();
     this.raycaster.setFromCamera(new THREE.Vector2((point.x - v.x) / v.w * 2 - 1, 1 - (point.y - v.y) / v.h * 2), this.camera);
     // Most pointer moves miss the wheel. Only test the detailed room for
@@ -82,7 +98,7 @@ export class World {
     const target = this.raycaster.intersectObject(wheelTapTarget)[0];
     if (!target && !this.raycaster.intersectObjects(this.wheelPickables, false).length) return false;
     this.room.updateMatrixWorld(true);
-    const hit = this.raycaster.intersectObject(this.room, true)[0];
+    const hit = this.raycaster.intersectObject(this.room, true).find(hit => roomObjectVisible(hit.object));
     if (hit && isWheelMesh(hit.object)) return true;
     // Keep walls and furniture in front of the wheel from becoming click-through.
     return !!target && (!hit || target.distance < hit.distance);
@@ -146,14 +162,15 @@ export class World {
 
   constructor() {
     this.dexScene.add(this.dexPivot);
-    this.dexScene.background = new THREE.Color('#f7efdf');
+    this.dexScene.background = new THREE.Color('#f6f1e7');
     this.dexScene.add(new THREE.HemisphereLight('#fff2e7', '#604540', 3));
     const dexLight = new THREE.DirectionalLight('#ffffff', 3);
     dexLight.position.set(-2, 3, 4); this.dexScene.add(dexLight);
     this.scene.add(this.groomingPaw.root, this.groomingBackdrop);
     this.groomingPaw.root.visible = false; this.groomingBackdrop.visible = false;
-    block(this.groomingBackdrop, '#e4d5bf', [0, 1.5, -1.4], [15, 12, .12]);
-    ball(this.groomingBackdrop, '#bac6b0', [0, -.35, 1], [2.3, .24, 1.8]);
+    block(this.groomingBackdrop, '#e3ece3', [0, 1.5, -1.4], [15, 12, .12]);
+    ball(this.groomingBackdrop, '#a53243', [0, -.35, 1], [2.3, .24, 1.8]);
+    ball(this.groomingBackdrop, '#cfb785', [0, -.4, 1], [2.34, .21, 1.84]);
     this.attackScene.add(new THREE.HemisphereLight('#fff2e7', '#604540', 3));
     const attackLight = new THREE.DirectionalLight('#ffffff', 3); attackLight.position.set(-2, 3, 4); this.attackScene.add(attackLight);
     this.camera.position.copy(ROOM_EYE); this.camera.rotation.set(-MAIN_VIEW.pitch, -MAIN_VIEW.yaw, 0, 'YXZ');
@@ -164,7 +181,7 @@ export class World {
     rod(this.freeWand, '#8b6650', new THREE.Vector3(0.14, 0.5, 0), new THREE.Vector3(0.75, 1.05, 0), 0.018);
     rod(this.freeWand, '#e5d8be', new THREE.Vector3(0.14, 0.5, 0), new THREE.Vector3(0, 0.06, 0), 0.008);
     for (let i = 0; i < 3; i++) {
-      const feather = ball(this.freeWand, ['#b2b7d9', '#e7b095', '#95bdad'][i], [(i - 1) * 0.065, 0, 0], [0.045, 0.15, 0.025]);
+      const feather = ball(this.freeWand, ['#a53243', '#d6a74e', '#357453'][i], [(i - 1) * 0.065, 0, 0], [0.045, 0.15, 0.025]);
       feather.rotation.z = (i - 1) * -0.45;
     }
     this.freeWand.visible = false; this.scene.add(this.freeWand);
@@ -378,6 +395,7 @@ export class World {
   }
 
   update(game: Game, dt: number, time: number, effectsDt = dt) {
+    applyRoomLayoutVisuals(this.room, this.editorLayout ?? game.roomLayout.layout, game.phase === 'room-editor');
     if (this.enteringRoom) {
       if (!game.active && !(game.phase === 'paused' && ['playing', 'tutorial'].includes(game.resumePhase))) this.finishEntrance();
       else {
@@ -471,7 +489,7 @@ export class World {
       refreshCatModel(model, cat);
       base.set(cat.position.x, cat.elevation > 0 ? cat.elevation + 0.012 : this.floorHeight(cat.position.x, cat.position.z), cat.position.z);
       model.root.position.copy(base); model.root.rotation.y = cat.yaw;
-      model.root.visible = !isPreview && (!paw || cat.id === (paw.selectedCatId ?? game.cats[0]?.id));
+      model.root.visible = game.phase !== 'room-editor' && !isPreview && (!paw || cat.id === (paw.selectedCatId ?? game.cats[0]?.id));
       const event = game.events.find(e => e.catId === cat.id);
       const angry = !!event && game.urgency(event) === 'angry';
       const happy = cat.happyUntil > game.clock;

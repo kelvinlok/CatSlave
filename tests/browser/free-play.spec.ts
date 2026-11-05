@@ -75,7 +75,10 @@ test('free play unlock, controls, interaction and saved roster', async ({ page }
   await page.mouse.move(v.x + v.w / 2, v.y + v.h / 2); await page.mouse.down();
   await page.mouse.move(v.x + v.w / 2 + 80, v.y + v.h / 2 + 40); await page.mouse.up();
   expect(await page.evaluate(() => window.__CATSLAVE_TEST__.world.camera.quaternion.toArray())).not.toEqual(before);
-  await tap('free-move:forward'); await tap('view:in'); await tap('view:reset');
+  await tap('free-camera:move');
+  await page.mouse.move(v.x + v.w / 2, v.y + v.h / 2); await page.mouse.down();
+  await page.mouse.move(v.x + v.w / 2, v.y + v.h / 2 - 40); await page.mouse.up();
+  await page.keyboard.press('+'); await tap('view:reset');
   await page.evaluate(() => { const t = window.__CATSLAVE_TEST__; t.game.tick(90); t.refresh(); });
   expect(await page.evaluate(() => window.__CATSLAVE_TEST__.game.events.length)).toBe(0);
   expect(await page.evaluate(() => window.__CATSLAVE_TEST__.world.scene.children.filter(c => c.name.startsWith('free-food-')).length)).toBe(5);
@@ -89,7 +92,7 @@ test('free play unlock, controls, interaction and saved roster', async ({ page }
   await page.keyboard.up('w');
   expect(await page.evaluate(() => window.__CATSLAVE_TEST__.world.camera.position.z)).toBeLessThan(4.8);
   const zoom = await page.evaluate(() => window.__CATSLAVE_TEST__.world.camera.zoom);
-  if (info.project.name === 'mobile-webkit') await tap('view:in');
+  if (info.project.name === 'mobile-webkit') await page.keyboard.press('+');
   else await page.mouse.wheel(0, -120);
   await expect.poll(() => page.evaluate(() => window.__CATSLAVE_TEST__.world.camera.zoom)).toBeGreaterThan(zoom);
   await page.reload(); await expect.poll(() => page.evaluate(() => !!window.__CATSLAVE_TEST__)).toBe(true);
@@ -115,7 +118,11 @@ test('relaxed room meals, social play and camera floor boundary', async ({ page 
   await page.keyboard.up('q');
   const y = await page.evaluate(() => window.__CATSLAVE_TEST__.world.camera.position.y);
   expect(y).toBeGreaterThan(.28);
-  await tap('free-move:down');
+  const view = await page.evaluate(() => window.__CATSLAVE_TEST__.world.viewport);
+  await page.keyboard.down('Shift');
+  await page.mouse.move(view.x + view.w / 2, view.y + view.h / 2); await page.mouse.down();
+  await page.mouse.move(view.x + view.w / 2, view.y + view.h / 2 - 40); await page.mouse.up();
+  await page.keyboard.up('Shift');
   expect(await page.evaluate(() => window.__CATSLAVE_TEST__.world.camera.position.y)).toBeGreaterThan(.28);
   await tap('view:reset');
   const meal = await page.evaluate(() => {

@@ -20,6 +20,10 @@ describe('Blender Choco integration', () => {
   it('normalizes authored eye transforms, preserves animation joints, and only replaces Choco', () => {
     const original = createCat(PALETTE[0]);
     const source = original.root.clone(true);
+    // The Blender source contains anatomy; seasonal outfits are attached later.
+    const costumes: THREE.Object3D[] = [];
+    source.traverse(object => { if (object.userData.isCatCostume) costumes.push(object); });
+    costumes.forEach(object => object.removeFromParent());
     // Blender authors actual-sized eye geometry below an unscaled empty.
     const sourceEye = source.getObjectByName('eye0') as THREE.Mesh;
     const eye = new THREE.Group(); eye.name = 'eye0'; eye.position.copy(sourceEye.position);
@@ -35,7 +39,7 @@ describe('Blender Choco integration', () => {
     expect(importedIris.geometry.boundingBox!.max.x).toBeCloseTo(1);
     expect(importedIris.geometry.boundingBox!.max.y).toBeCloseTo(1);
     expect(a.eyes[0].geometry.getAttribute('position').count).toBe(0);
-    expect(a.body.children.every(child => child.name.startsWith('choco_'))).toBe(true);
+    expect(a.body.children.filter(child => !child.userData.isCatCostume).every(child => child.name.startsWith('choco_'))).toBe(true);
     expect(a.lowerLegs[0].parent).toBe(a.legs[0]);
     expect(a.paws[0].parent).toBe(a.lowerLegs[0]);
     const count: string[] = []; a.root.traverse(object => { if (object.name === 'leg0') count.push(object.name); });
