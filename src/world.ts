@@ -640,17 +640,20 @@ export class World {
         this.dexPivot.updateWorldMatrix(true, true);
         animateCat(this.dexModel, { ...game.cats[0], ...PALETTE[index], id: index + 1,
           activity: wardrobe ? 'idle' : 'grooming', stride: 0, pose: 0 }, time);
-        const bounds = new THREE.Box3();
-        this.dexModel.root.traverseVisible(object => {
-          if (object instanceof THREE.Mesh && object.geometry.getAttribute('position')?.count) {
-            bounds.union(new THREE.Box3().setFromObject(object, true));
-          }
-        });
-        bounds.getCenter(this.dexCenter);
-        bounds.getSize(this.dexSize);
         // Reserve room for the tallest antlers and curled shoes; changing one
         // item must not zoom or recenter the cat while comparing outfits.
-        if (wardrobe) { this.dexCenter.set(0, .92, 0); this.dexSize.set(1.65, 2.05, 2.25); }
+        if (wardrobe) {
+          this.dexCenter.set(0, .92, 0); this.dexSize.set(1.65, 2.05, 2.25);
+        } else {
+          const bounds = new THREE.Box3();
+          this.dexModel.root.traverseVisible(object => {
+            if (object instanceof THREE.Mesh && object.geometry.getAttribute('position')?.count) {
+              bounds.union(new THREE.Box3().setFromObject(object, true));
+            }
+          });
+          bounds.getCenter(this.dexCenter);
+          bounds.getSize(this.dexSize);
+        }
         this.dexPivot.position.copy(this.dexCenter);
         this.dexModel.root.position.copy(this.dexCenter).negate();
         if (rotation) this.dexPivot.quaternion.copy(rotation);

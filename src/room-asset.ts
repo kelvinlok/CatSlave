@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { readModelResponse } from './model-download';
+import { prepareAssetShaders } from './asset-shader-preparation';
 import layout from '../assets/lounge/layout.json';
 import { ROOM_ENTRANCE } from './room-boundaries';
 import { createChristmasRoom } from './christmas-room';
@@ -24,7 +25,9 @@ function loadRoom() {
           .setCrossOrigin(parser.options.crossOrigin).setRequestHeader(parser.options.requestHeader);
         return { name: 'CATSLAVE_RESTORABLE_ROOM_TEXTURES' };
       });
-      source = (await loader.parseAsync(buffer, '')).scene;
+      const asset = (await loader.parseAsync(buffer, `${import.meta.env.BASE_URL}models/`)).scene;
+      await prepareAssetShaders(asset, 'room');
+      source = asset;
       return source;
     } catch (error) {
       console.warn('The lounge model could not load; using the simple room shell.', error);

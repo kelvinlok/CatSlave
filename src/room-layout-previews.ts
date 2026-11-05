@@ -8,14 +8,21 @@ export interface LayoutPreviewRequest { id: string; layout: RoomLayout; }
 export class RoomLayoutPreviews {
   readonly images = new Map<string, HTMLCanvasElement>();
   private signatures = new Map<string, string>();
+  private desired = new Map<string, string>();
+  private pending = false;
+  private completed = false;
   prepare(requests: LayoutPreviewRequest[]) {
+    this.desired = new Map(requests.map(request => [request.id, JSON.stringify(request.layout)]));
     for (const request of requests) if (this.signatures.get(request.id) !== JSON.stringify(request.layout)) this.images.delete(request.id);
   }
   renderNext(renderer: THREE.WebGLRenderer, root: THREE.Group, requests: LayoutPreviewRequest[]) {
-    if (!root.userData.loaded) return false;
+    const completed = this.completed; this.completed = false;
+    if (!root.userData.loaded) return completed;
     this.prepare(requests);
+    if (this.pending) return completed;
     const request = requests.find(request => this.signatures.get(request.id) !== JSON.stringify(request.layout));
-    if (!request) return false;
+    if (!request) return completed;
+    const signature = JSON.stringify(request.layout);
     const scene = new THREE.Scene(), model = root.clone(true);
     model.traverse(object => {
       const id = object.userData.furnitureId as string | undefined;
@@ -36,7 +43,12 @@ export class RoomLayoutPreviews {
       span = Math.max(span, Math.abs(p.y), Math.abs(p.x) / 1.5);
     }
     span *= 1.04; camera.left = -span * 1.5; camera.right = span * 1.5; camera.top = span; camera.bottom = -span; camera.updateProjectionMatrix();
-    this.images.set(request.id, renderPreview(renderer, scene, camera));
-    this.signatures.set(request.id, JSON.stringify(request.layout)); scene.clear(); return true;
+    this.pending = true;
+    void renderPreview(renderer, scene, camera).then(image => {
+      if (this.desired.get(request.id) !== signature) return;
+      this.images.set(request.id, image); this.signatures.set(request.id, signature); this.completed = true;
+    }).catch(error => console.warn('Room layout preview failed', error))
+      .finally(() => { scene.clear(); this.pending = false; });
+    return completed;
   }
 }

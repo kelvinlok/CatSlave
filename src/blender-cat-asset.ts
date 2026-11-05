@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { readModelResponse } from './model-download';
+import { prepareAssetShaders } from './asset-shader-preparation';
 import { attachNativeBlenderRig, hasNativeBlenderRig, validateNativeBlenderRig } from './blender-cat-rig';
 
 const slots = ['body', 'head', ...Array.from({ length: 4 }, (_, i) => [`leg${i}`, `lowerLeg${i}`, `paw${i}`]).flat(),
@@ -15,6 +16,11 @@ const label = (kind: BlenderCat) => labels[kind];
 
 /** Each authored cat has its own shared source, just like the procedural templates. */
 export function registerBlenderCatAsset(kind: BlenderCat, scene: THREE.Group) {
+  configureBlenderCatAsset(kind, scene);
+  sources.set(kind, scene);
+}
+
+function configureBlenderCatAsset(kind: BlenderCat, scene: THREE.Group) {
   if (hasNativeBlenderRig(scene)) validateNativeBlenderRig(scene);
   else for (const name of slots) {
     if (!scene.getObjectByName(name)) throw new Error(`${label(kind)} asset is missing animation part ${name}`);
@@ -31,7 +37,6 @@ export function registerBlenderCatAsset(kind: BlenderCat, scene: THREE.Group) {
       material.forceSinglePass = true;
     }
   });
-  sources.set(kind, scene);
 }
 
 /** Load on demand without blocking play. Share successes/failures for this session. */
@@ -63,8 +68,10 @@ export function preloadBlenderCatAsset(kind: BlenderCat): Promise<boolean> {
         const { MeshoptDecoder } = await import('three/addons/libs/meshopt_decoder.module.js');
         loader.setMeshoptDecoder(MeshoptDecoder);
       }
-      const asset = await loader.parseAsync(buffer, '');
-      registerBlenderCatAsset(kind, asset.scene);
+      const asset = await loader.parseAsync(buffer, `${import.meta.env.BASE_URL}models/`);
+      configureBlenderCatAsset(kind, asset.scene);
+      await prepareAssetShaders(asset.scene, 'cat');
+      sources.set(kind, asset.scene);
       return true;
     } catch (error) {
       // A missing/cached asset must never prevent the cat-care game from starting.

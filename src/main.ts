@@ -21,6 +21,7 @@ import { FurniturePreviews } from './furniture-previews';
 import { RoomLayoutPreviews } from './room-layout-previews';
 import { costumeItems, isCostumeSlot, isCostumeItemId } from './wardrobe';
 import { wardrobeMaxOffset } from './wardrobe-ui';
+import { setAssetShaderPreparation, ShaderPreparation } from './asset-shader-preparation';
 
 syncDocumentLanguage();
 const canvas = document.querySelector<HTMLCanvasElement>('#game')!;
@@ -56,6 +57,21 @@ let savedFreeRoster = JSON.stringify(game.freePlayRoster);
 if (import.meta.env.MODE === 'test' && new URLSearchParams(location.search).get('minigame') === 'pawdicure') game.startPawdicurePractice();
 const world = new World();
 const hud = new Hud();
+// The glass pod draws the world into a linear transmission buffer before the
+// screen pass. Both program variants must be ready before a model is revealed.
+const shaderTarget = new THREE.WebGLRenderTarget(1, 1, { type: THREE.HalfFloatType });
+const shaderPreparation = new ShaderPreparation(renderer, (root, target) => {
+  const previous = renderer.getRenderTarget();
+  try {
+    renderer.setRenderTarget(shaderTarget);
+    return renderer.compileAsync(root, target.camera, target.scene);
+  } finally { renderer.setRenderTarget(previous); }
+});
+const roomShaderTarget = { scene: world.scene, camera: world.camera, transmission: true };
+const catShaderTargets = [roomShaderTarget,
+  { scene: world.dexScene, camera: world.dexCamera },
+  { scene: world.attackScene, camera: world.attackCamera }];
+setAssetShaderPreparation((root, kind) => shaderPreparation.prepare(root, kind === 'room' ? [roomShaderTarget] : catShaderTargets));
 const furniturePreviews = new FurniturePreviews();
 hud.roomThumbnails = furniturePreviews.images;
 const layoutPreviews = new RoomLayoutPreviews();
@@ -68,6 +84,7 @@ hud.soundLabel = audio.label;
 const gyro = new GyroLook(() => { hud.gyroStatus = gyro.status; hud.invalidate(); }, () => world.camera.quaternion);
 let pointerId: number | undefined;
 let contextLost = false;
+let initialShadersReady = false;
 let previousPhase = game.phase;
 let previousRevision = game.revision;
 let lastTime = performance.now();
@@ -337,6 +354,13 @@ function syncWorldViewport() {
     world.resize(width, height, next, presentation);
 }
 function renderFrame() {
+  if (!initialShadersReady) {
+    // Keep the title/menu interactive while the initial room and garment
+    // programs compile. Subsequent asset upgrades keep their existing visuals.
+    renderer.setScissorTest(false); renderer.setViewport(0, 0, width, height);
+    renderer.clear(); renderer.render(hud.scene, hud.camera);
+    return;
+  }
   const furnitureGallery = game.phase === 'room-editor' && ['items', 'unplaced'].includes(hud.roomPanel);
   const layoutGallery = game.phase === 'room-editor' && ['save', 'slots'].includes(hud.roomPanel);
   const gallery = furnitureGallery || layoutGallery;
@@ -779,9 +803,20 @@ document.addEventListener('visibilitychange', () => {
 });
 window.addEventListener('blur', () => { audio.setBlocked(true); cancelGesture(); game.pause('The room waited while you were away.'); hud.invalidate(); });
 canvas.addEventListener('webglcontextlost', event => {
+  shaderPreparation.suspend();
   event.preventDefault(); contextLost = true; audio.setBlocked(true); cancelGesture(); game.pause('Graphics paused. Resume when the room returns.');
 });
-canvas.addEventListener('webglcontextrestored', () => { contextLost = false; restoreGraphics(); resize(); });
+canvas.addEventListener('webglcontextrestored', async () => {
+  shaderPreparation.resume();
+  restoreGraphics();
+  try {
+    for (const target of [...catShaderTargets, { scene: hud.scene, camera: hud.camera }]) {
+      await shaderPreparation.prepare(target.scene, [target]);
+    }
+  } catch (error) { console.warn('Restored shaders will compile on first use.', error); }
+  if (renderer.getContext().isContextLost()) return;
+  contextLost = false; resize();
+});
 window.addEventListener('pageshow', event => { if (event.persisted) restoreGraphics(); });
 let resizePending = false;
 function scheduleResize() {
@@ -798,7 +833,7 @@ function frame(now: number) {
   const realDt = Math.max(0, (now - lastTime) / 1000); lastTime = now;
   // Long stalls never silently consume a cat's patience. Free play has no
   // deadlines, so loading / shader stalls should only use the clamped dt below.
-  const timedPlay = game.running && game.phase !== 'free-play' && !enteringRoom && !resetFrameClock
+  const timedPlay = initialShadersReady && game.running && game.phase !== 'free-play' && !enteringRoom && !resetFrameClock
     && !(game.phase === 'bonus' && ['intro', 'result'].includes(game.bonus?.status ?? ''));
   if (realDt > 1 && timedPlay && !manualClock) { cancelGesture(); game.pause('A little interruption. Ready to continue?'); }
   const dt = Math.min(realDt, 0.1);
@@ -810,7 +845,7 @@ function frame(now: number) {
       if (held.work) applyGesture(held);
     }
     if (game.phase === 'free-play' && freeDrag?.mode === 'wand') waveWand(freeDrag.point);
-    if (!manualClock && !hud.rotateRequired && !world.enteringRoom) game.tick(dt);
+    if (initialShadersReady && !manualClock && !hud.rotateRequired && !world.enteringRoom) game.tick(dt);
     audio.setBlocked(!game.running || document.hidden || hud.rotateRequired);
     roomSounds.update(game, audio);
     if (game.phase === 'free-play') {
@@ -853,6 +888,14 @@ function frame(now: number) {
   requestAnimationFrame(frame);
 }
 resize(); lastTime = performance.now(); requestAnimationFrame(frame);
+requestAnimationFrame(() => {
+  void (async () => {
+    try {
+      for (const target of catShaderTargets) await shaderPreparation.prepare(target.scene, [target]);
+    } catch (error) { console.warn('Initial shaders will compile on first use.', error); }
+    initialShadersReady = true; lastTime = performance.now();
+  })();
+});
 
 // Only a dedicated `vite --mode test` server exposes deterministic browser fixtures.
 // The production bundle eliminates this branch.

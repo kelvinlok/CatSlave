@@ -4,9 +4,13 @@ import { roomFurniture } from './room-layout-view';
 /** Small cached pictures of the actual meshes; no additional models or WebGL context. */
 export class FurniturePreviews {
   readonly images = new Map<string, HTMLCanvasElement>();
+  private pending = false;
+  private completed = false;
   renderNext(renderer: THREE.WebGLRenderer, room: THREE.Group, ids: string[]) {
+    const completed = this.completed; this.completed = false;
+    if (this.pending) return completed;
     const roots = roomFurniture(room), id = ids.find(id => !this.images.has(id) && roots?.has(id));
-    if (!id || !roots) return false;
+    if (!id || !roots) return completed;
     const scene = new THREE.Scene(), model = roots.get(id)!.clone(true);
     model.visible = true; model.position.set(0, 0, 0); model.quaternion.identity();
     // These clones share immutable geometry, materials and textures with the room.
@@ -24,28 +28,46 @@ export class FurniturePreviews {
     }
     const span = Math.max(halfHeight, halfWidth / 1.5, .1) * 1.08;
     camera.left = -span * 1.5; camera.right = span * 1.5; camera.top = span; camera.bottom = -span; camera.updateProjectionMatrix();
-    this.images.set(id, renderPreview(renderer, scene, camera)); scene.clear();
-    return true;
+    this.pending = true;
+    void renderPreview(renderer, scene, camera).then(image => {
+      this.images.set(id, image); this.completed = true;
+    }).catch(error => console.warn('Furniture preview failed', error))
+      .finally(() => { scene.clear(); this.pending = false; });
+    return completed;
   }
 }
 
-export function renderPreview(renderer: THREE.WebGLRenderer, scene: THREE.Scene, camera: THREE.Camera, width = 288, height = 192) {
+export async function renderPreview(renderer: THREE.WebGLRenderer, scene: THREE.Scene, camera: THREE.Camera, width = 288, height = 192) {
     const target = new THREE.WebGLRenderTarget(width, height);
     target.texture.colorSpace = THREE.SRGBColorSpace;
-    const previous = renderer.getRenderTarget(), viewport = renderer.getViewport(new THREE.Vector4());
-    const scissor = renderer.getScissor(new THREE.Vector4()), scissorTest = renderer.getScissorTest();
-    const color = renderer.getClearColor(new THREE.Color()), alpha = renderer.getClearAlpha();
     try {
-      // setRenderTarget uses physical target pixels; setViewport would apply the screen DPR again.
-      renderer.setRenderTarget(target); renderer.setScissorTest(false);
-      renderer.setClearColor('#000000', 0); renderer.clear(); renderer.render(scene, camera);
-      const pixels = new Uint8Array(width * height * 4); renderer.readRenderTargetPixels(target, 0, 0, width, height, pixels);
+      // Match the offscreen color/tone-mapping variant, then restore before waiting.
+      const previousTarget = renderer.getRenderTarget();
+      let compiled: Promise<unknown>;
+      try { renderer.setRenderTarget(target); compiled = renderer.compileAsync(scene, camera); }
+      finally { renderer.setRenderTarget(previousTarget); }
+      await compiled;
+      const previous = renderer.getRenderTarget(), viewport = renderer.getViewport(new THREE.Vector4());
+      const scissor = renderer.getScissor(new THREE.Vector4()), scissorTest = renderer.getScissorTest();
+      const color = renderer.getClearColor(new THREE.Color()), alpha = renderer.getClearAlpha();
+      const pixels = new Uint8Array(width * height * 4);
+      let read: Promise<unknown>;
+      try {
+        // setRenderTarget uses physical target pixels; setViewport would apply the screen DPR again.
+        renderer.setRenderTarget(target); renderer.setScissorTest(false);
+        renderer.setClearColor('#000000', 0); renderer.clear(); renderer.render(scene, camera);
+        read = renderer.readRenderTargetPixelsAsync(target, 0, 0, width, height, pixels);
+      } finally {
+        // Restore shared renderer state before yielding to the next game frame.
+        renderer.setRenderTarget(previous); renderer.setViewport(viewport); renderer.setScissor(scissor); renderer.setScissorTest(scissorTest);
+        renderer.setClearColor(color, alpha);
+      }
+      await read;
       const canvas = document.createElement('canvas'); canvas.width = width; canvas.height = height;
       const context = canvas.getContext('2d')!, data = context.createImageData(width, height);
       for (let y = 0; y < height; y++) data.data.set(pixels.subarray((height - y - 1) * width * 4, (height - y) * width * 4), y * width * 4);
       context.putImageData(data, 0, 0); return canvas;
     } finally {
-      renderer.setRenderTarget(previous); renderer.setViewport(viewport); renderer.setScissor(scissor); renderer.setScissorTest(scissorTest);
-      renderer.setClearColor(color, alpha); target.dispose();
+      target.dispose();
     }
 }

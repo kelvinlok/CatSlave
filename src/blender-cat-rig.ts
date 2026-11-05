@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { clone as cloneRig } from 'three/addons/utils/SkeletonUtils.js';
+import { SkinBounds } from './skin-bounds';
 
 export const blenderRigControls = ['body', 'head',
   ...Array.from({ length: 4 }, (_, i) => [`leg${i}`, `lowerLeg${i}`, `paw${i}`]).flat(),
@@ -15,6 +16,7 @@ interface Driver {
 interface RigBinding {
   visual: THREE.Object3D;
   skins: THREE.SkinnedMesh[];
+  bounds: SkinBounds[];
   drivers: Map<THREE.Object3D, Driver>;
   visibility: { visual: THREE.Object3D; controller: THREE.Object3D }[];
   desired: THREE.Matrix4;
@@ -74,7 +76,7 @@ export function attachNativeBlenderRig(root: THREE.Group, source: THREE.Group, k
     if (!object.name.startsWith('DEF_')) object.name = `${kind}_${object.name}`;
     if (object instanceof THREE.Mesh) {
       object.castShadow = true; object.receiveShadow = true;
-      // GPU-deformed fur and skin can exceed their rest bounds in reaches/jumps.
+      // Remain uncullable until the pose-aware bounds have been initialized.
       object.frustumCulled = false;
     }
   });
@@ -114,7 +116,7 @@ function bindingFor(root: THREE.Object3D): RigBinding {
   const cached = bindings.get(root);
   if (cached) return cached;
   const visual = root.getObjectByName(nativeRootName)!;
-  const binding: RigBinding = { visual, skins: [], drivers: new Map(), visibility: [], desired: new THREE.Matrix4(), inverse: new THREE.Matrix4(),
+  const binding: RigBinding = { visual, skins: [], bounds: [], drivers: new Map(), visibility: [], desired: new THREE.Matrix4(), inverse: new THREE.Matrix4(),
     candidate: new THREE.Matrix4(), positionA: new THREE.Vector3(), positionB: new THREE.Vector3(),
     rotationA: new THREE.Quaternion(), rotationB: new THREE.Quaternion(), scaleA: new THREE.Vector3(), scaleB: new THREE.Vector3() };
   const skeletons = new Map<string, THREE.Skeleton>();
@@ -131,6 +133,7 @@ function bindingFor(root: THREE.Object3D): RigBinding {
         object.skeleton = shared;
         skeleton.dispose();
       } else skeletons.set(key, skeleton);
+      binding.bounds.push(new SkinBounds(object));
     }
     if (object instanceof THREE.Bone && typeof object.userData.gameController === 'string') {
       const driver: Driver = { bone: object, controller: root.getObjectByName(object.userData.gameController)!,
@@ -187,4 +190,5 @@ export function updateBlenderCatRig(root: THREE.Group) {
   // The visual hierarchy is already current. Refresh Three.js's attached /
   // detached skin inverses without walking the controls and all bones again.
   for (const skin of binding.skins) skin.updateMatrixWorld(false);
+  for (const bounds of binding.bounds) bounds.update();
 }

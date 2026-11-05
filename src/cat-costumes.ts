@@ -5,6 +5,7 @@ import type { CatOutfit, CostumeItemId, CostumeSlot } from './wardrobe';
 import { buildFootwearFlex, updateCatCostumeMotion } from './cat-costume-motion';
 import { buildClothDrape, clothDrapeMaterial, updateCatClothMotion } from './cat-cloth-motion';
 import clothGeometry from './generated/costume-geometry.json';
+import { indexCostumeGeometry } from './index-costume-geometry';
 
 export type ChristmasCostume = 'santa' | 'elf' | 'reindeer' | 'winter' | 'holly' | 'gift';
 const outfits: Record<string, { style: ChristmasCostume; name: string; color?: string }> = {
@@ -107,6 +108,7 @@ class CostumePart {
     for (const layer of Object.keys(this.pieces) as Layer[]) {
       const pieces = this.pieces[layer]; if (!pieces.length) continue;
       const geometry = mergeGeometries(pieces)!; pieces.forEach(piece => piece.dispose());
+      indexCostumeGeometry(geometry);
       if (this.root.name === 'christmas-footwear') buildFootwearFlex(geometry);
       if (this.root.name === 'christmas-neckwear') buildClothDrape(geometry);
       costumeBounds(geometry);
