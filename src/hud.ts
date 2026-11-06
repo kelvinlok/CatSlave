@@ -201,7 +201,10 @@ export class Hud {
     const controls = this.controls;
     if (!controls.length) return;
     const index = controls.findIndex(hit => hit.id === this.focusedId);
-    this.focusedId = controls[(index < 0 ? (backward ? controls.length - 1 : 0) : (index + (backward ? -1 : 1) + controls.length) % controls.length)].id;
+    // Keep Play as the initial keyboard target; the decoration setting remains
+    // reachable by cycling (or Shift+Tab from Play).
+    const first = this.lastPhase === 'title' ? Math.max(0, controls.findIndex(hit => hit.id === 'start')) : 0;
+    this.focusedId = controls[(index < 0 ? (backward ? controls.length - 1 : first) : (index + (backward ? -1 : 1) + controls.length) % controls.length)].id;
     this.invalidate();
   }
   clearInteraction() { this.hoveredId = undefined; this.pressedId = undefined; this.focusedId = undefined; this.invalidate(); }
@@ -316,7 +319,13 @@ export class Hud {
     christmasGarland(ctx, x + 8, this.top + (this.compact ? 41 : 49), panel - 16);
     text(ctx, gameTitle(), center, titleY, Math.min(72, panel * 0.2), C.ink, 'center', 'serif', panel);
     text(ctx, 'Christmas at the cat lounge', center, titleY + 49, 15, C.coral, 'center', 'bold', panel - 32);
-    if (!this.compact) text(ctx, 'Cozy paws, festive mischief.', center, titleY + 73, 12, C.muted, 'center', 'sans', panel - 32);
+    const switchY = titleY + (this.compact ? 66 : 80);
+    round(ctx, x, switchY, panel, 44, 12, C.paper, C.line);
+    text(ctx, 'Festive decorations', x + 12, switchY + 22, 13, C.ink, 'left', 'bold', panel - 106);
+    text(ctx, game.festiveDecorations ? 'On' : 'Off', x + panel - 76, switchY + 22, 12, C.muted, 'right');
+    round(ctx, x + panel - 64, switchY + 10, 50, 24, 12, game.festiveDecorations ? C.green : '#a8aaa1');
+    ellipse(ctx, x + panel - (game.festiveDecorations ? 26 : 52), switchY + 22, 9, 9, C.paper);
+    this.addHit({ id: 'festive-decorations', label: translate('Festive decorations') + ': ' + translate(game.festiveDecorations ? 'On' : 'Off'), x, y: switchY, w: panel, h: 44 });
     christmasSnowflake(ctx, x + 8, titleY + 48, 6);
     christmasSnowflake(ctx, x + panel - 8, titleY + 48, 6);
     const gap = this.compact && game.freePlayUnlocked ? 8 : 10;

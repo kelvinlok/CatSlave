@@ -411,6 +411,8 @@ export class World {
   }
 
   update(game: Game, dt: number, time: number, effectsDt = dt) {
+    const decorations = this.room.children.find(child => child.userData.christmas);
+    if (decorations) decorations.visible = game.festiveDecorations;
     applyRoomLayoutVisuals(this.room, this.editorLayout ?? game.roomLayout.layout, game.phase === 'room-editor');
     if (this.enteringRoom) {
       if (!game.active && !(game.phase === 'paused' && ['playing', 'tutorial'].includes(game.resumePhase))) this.finishEntrance();

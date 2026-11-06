@@ -51,6 +51,7 @@ const game = new Game(import.meta.env.MODE === 'test' ? 42 : undefined);
 try { game.restoreFreePlay(JSON.parse(localStorage.getItem('catslave-free-play') ?? 'null')); } catch { /* Storage may be unavailable. */ }
 try { game.restoreAdoptedCats(JSON.parse(localStorage.getItem('catslave-cat-dex') ?? 'null')); } catch { /* Keep session progress when storage is unavailable. */ }
 try { const saved = localStorage.getItem('catslave-wardrobe'); if (saved) game.wardrobe.restore(saved); } catch { /* Dressing still works for this session. */ }
+try { game.festiveDecorations = localStorage.getItem('catslave-festive-decorations') !== 'off'; } catch { /* Keep the default when storage is unavailable. */ }
 let savedAdoptedCats = '';
 let savedFreeRoster = JSON.stringify(game.freePlayRoster);
 // Standalone entry is a test fixture; players encounter Pawdicure in bonus rounds.
@@ -423,6 +424,12 @@ function action(id: string) {
     return;
   }
   if (id === 'sound') { audio.cycleVolume(); hud.soundLabel = audio.label; hud.invalidate(); return; }
+  if (id === 'festive-decorations') {
+    game.festiveDecorations = !game.festiveDecorations;
+    layoutPreviews.invalidate();
+    try { localStorage.setItem('catslave-festive-decorations', game.festiveDecorations ? 'on' : 'off'); } catch { /* Keep the preference for this session. */ }
+    game.revision++; updateWorld(0, performance.now() / 1000, 0); hud.draw(game, world, 0, true); return;
+  }
   if (id.startsWith('wardrobe:')) {
     wardrobeAction(id);
     if (keyboardFocus && hud.controls.some(hit => hit.id === keyboardFocus)) { hud.focusedId = keyboardFocus; hud.invalidate(); }

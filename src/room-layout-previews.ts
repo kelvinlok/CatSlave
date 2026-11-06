@@ -11,6 +11,10 @@ export class RoomLayoutPreviews {
   private desired = new Map<string, string>();
   private pending = false;
   private completed = false;
+  private generation = 0;
+  invalidate() {
+    this.generation++; this.images.clear(); this.signatures.clear(); this.desired.clear();
+  }
   prepare(requests: LayoutPreviewRequest[]) {
     this.desired = new Map(requests.map(request => [request.id, JSON.stringify(request.layout)]));
     for (const request of requests) if (this.signatures.get(request.id) !== JSON.stringify(request.layout)) this.images.delete(request.id);
@@ -23,6 +27,7 @@ export class RoomLayoutPreviews {
     const request = requests.find(request => this.signatures.get(request.id) !== JSON.stringify(request.layout));
     if (!request) return completed;
     const signature = JSON.stringify(request.layout);
+    const generation = this.generation;
     const scene = new THREE.Scene(), model = root.clone(true);
     model.traverse(object => {
       const id = object.userData.furnitureId as string | undefined;
@@ -45,7 +50,7 @@ export class RoomLayoutPreviews {
     span *= 1.04; camera.left = -span * 1.5; camera.right = span * 1.5; camera.top = span; camera.bottom = -span; camera.updateProjectionMatrix();
     this.pending = true;
     void renderPreview(renderer, scene, camera).then(image => {
-      if (this.desired.get(request.id) !== signature) return;
+      if (generation !== this.generation || this.desired.get(request.id) !== signature) return;
       this.images.set(request.id, image); this.signatures.set(request.id, signature); this.completed = true;
     }).catch(error => console.warn('Room layout preview failed', error))
       .finally(() => { scene.clear(); this.pending = false; });

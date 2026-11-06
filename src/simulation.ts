@@ -18,6 +18,7 @@ export class Random {
 }
 
 export class Game {
+  festiveDecorations = true;
   phase: Phase = 'title';
   resumePhase: 'playing' | 'tutorial' | 'bonus' | 'free-play' = 'playing';
   adoptedCats: string[] = [PALETTE[0].name];

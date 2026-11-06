@@ -12,6 +12,8 @@ Each cat wears a Christmas outfit chosen for its appearance, including Santa, el
 
 ### Closet
 
+The main menu's **Festive decorations** switch shows or hides the room's Christmas trees, garlands, wreaths, stockings, gifts and window snowflakes. The setting is remembered on this browser. It is independent of the closet and each cat's saved outfit; turning decorations off does not remove clothing or lock any pieces.
+
 Open **Closet** from the main menu or free play, or **Dress up** on an adopted cat's profile. The selected cat appears in the center; drag it sideways to turn. Use the cat arrows to choose another adopted cat, then switch between **Headwear**, **Neck & body**, and **Shoes**. Swipe or scroll the clothing strip, or use its arrow buttons, and tap any piece to see it immediately. All seasonal pieces can be mixed across cats; **None** removes just that category.
 
 Each cat starts with its original outfit. Choices save automatically on this browser and follow the cat in the room, profiles, and game previews. **Reset outfit** restores only the selected cat's defaults. **Done** or Escape returns to the previous screen; the room stays paused while dressing. If browser storage is unavailable, the closet keeps the choices for the current session and shows a notice.

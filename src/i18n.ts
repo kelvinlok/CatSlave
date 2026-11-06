@@ -14,6 +14,7 @@ export function languageLabel() { return language === 'yue-Hant' ? 'English' : '
 // Translate at the presentation boundary so existing game state and saved cats
 // remain language-independent, and a paused game can switch immediately.
 const cantonese: Record<string, string> = {
+  'Festive decorations': '節日房間佈置', 'On': '開', 'Off': '關',
   'Closet': '衣櫃', 'Dress up': '換衫', 'Done': '完成', 'None': '唔着',
   'Headwear': '頭飾', 'Neck & body': '頸飾同衫', 'Shoes': '鞋仔',
   'Previous cat': '上一隻貓', 'Next cat': '下一隻貓', 'Previous clothes': '前面嘅衫', 'More clothes': '更多衫仔',
