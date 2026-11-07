@@ -18,10 +18,12 @@ function fixture() {
 }
 
 describe('room layout render binding', () => {
-  it('preserves authored Y-up positions while normalizing exported Blender parents', () => {
-    const { room, cushion } = fixture(), before = cushion.getWorldPosition(new THREE.Vector3());
+  it('applies the preset relative to authored Y-up pivots while normalizing Blender parents', () => {
+    const { room, cushion } = fixture();
     const layout = defaultRoomLayout(); applyRoomLayoutVisuals(room, layout);
-    expect(cushion.getWorldPosition(new THREE.Vector3()).distanceTo(before)).toBeLessThan(1e-6);
+    const presetPosition = cushion.getWorldPosition(new THREE.Vector3());
+    expect(presetPosition.x).toBeCloseTo(layout.placed.sofa.x + .5);
+    expect(presetPosition.y).toBeCloseTo(.8); expect(presetPosition.z).toBeCloseTo(layout.placed.sofa.z);
     layout.placed.sofa = { x: 1, z: 2, turn: 1 }; applyRoomLayoutVisuals(room, layout);
     const after = cushion.getWorldPosition(new THREE.Vector3());
     expect(after.x).toBeCloseTo(1); expect(after.y).toBeCloseTo(.8); expect(after.z).toBeCloseTo(1.5);

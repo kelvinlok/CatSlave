@@ -1,0 +1,26 @@
+{
+  "roomRevision": 261168480549783,
+  "placed": {
+    "bed-1": { "x": -2, "z": 1.75, "turn": 0 },
+    "bed-2": { "x": -4, "z": -0.5, "turn": 0 },
+    "bed-3": { "x": -1, "z": -3, "turn": 3 },
+    "chair-1": { "x": -3.25, "z": -5.5, "turn": 2 },
+    "chair-2": { "x": -3, "z": -7.25, "turn": 2 },
+    "christmas-tree": { "x": 0.5, "z": -1.25, "turn": 0 },
+    "loveseat": { "x": 4, "z": 3.75, "turn": 0 },
+    "pod": { "x": 0, "z": -7.05, "turn": 0 },
+    "recliner-1": { "x": 5.9, "z": 3.25, "turn": 0 },
+    "recliner-2": { "x": 5.9, "z": 4.8, "turn": 0 },
+    "sofa": { "x": 2.5, "z": 7, "turn": 0 },
+    "table-1": { "x": -4.5, "z": -6.75, "turn": 0 },
+    "table-3": { "x": 1.25, "z": 5.23, "turn": 0 },
+    "tree": { "x": -6.75, "z": 0.75, "turn": 0 },
+    "wheel": { "x": -1.75, "z": 7.25, "turn": 0 },
+    "window-tree": { "x": 4.25, "z": 6, "turn": 0 }
+  },
+  "unplaced": [
+    { "id": "chair-3", "pose": { "x": -3.25, "z": -7, "turn": 0 }, "reason": "Stored in inventory", "stored": true },
+    { "id": "chair-4", "pose": { "x": -2.75, "z": -5, "turn": 3 }, "reason": "Stored in inventory", "stored": true },
+    { "id": "table-2", "pose": { "x": -4.25, "z": -4.25, "turn": 0 }, "reason": "Stored in inventory", "stored": true }
+  ]
+}

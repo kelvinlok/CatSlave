@@ -440,6 +440,9 @@ exec((ROOT/'scripts/lounge-depth-wheel.py').read_text(encoding='utf-8'))
 # Correct the feeding shelf onto the broad wall facing the room.
 exec((ROOT/'scripts/lounge-feeding-shelf.py').read_text(encoding='utf-8'))
 
+# Only the mural-end narrow cubby slice becomes eight open cat bedrooms.
+exec((ROOT/'scripts/lounge-cat-rooms.py').read_text(encoding='utf-8'))
+
 # Add stable movable ownership after all reference-layout corrections.
 exec((ROOT/'scripts/lounge-furniture-export.py').read_text(encoding='utf-8'))
 furniture_roots = prepare_furniture(scene, root, OUT)

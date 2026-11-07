@@ -1,6 +1,7 @@
 import manifest from '../assets/lounge/furniture-manifest.json';
 import room from '../assets/lounge/layout.json';
-import { FURNITURE, type FurnitureSpot } from './furniture';
+import defaultPreset from '../assets/lounge/default-layout.json';
+import { FURNITURE, CHRISTMAS_TREE, type FurnitureSpot } from './furniture';
 import type { FloorPoint } from './types';
 import { ROOM_ENTRANCE, roomFloorContains, roomFloorSegment } from './room-boundaries';
 import { clearFloor, createNavigationContext, createFloorReachability, segmentAvoidsBox, type FloorBox, type NavigationContext } from './room-navigation';
@@ -12,13 +13,16 @@ export interface FurnitureDefinition {
   id: string; label: string; defaultPose: FurniturePose;
   footprints: readonly FloorBox[]; obstacleIds: readonly string[];
 }
-export const ROOM_REVISION = manifest.revision;
-export const FURNITURE_DEFINITIONS: readonly FurnitureDefinition[] = manifest.items.map(item => ({
-  id: item.id, label: item.label, defaultPose: { x: item.x, z: item.z, turn: 0 },
+export const ROOM_REVISION = manifest.revision + 1;
+export const FURNITURE_DEFINITIONS: readonly FurnitureDefinition[] = [...manifest.items.map(item => ({
+  id: item.id, label: item.label, defaultPose: { x: item.x, z: item.z, turn: 0 as const },
   footprints: item.footprints, obstacleIds: item.obstacleIds,
-}));
-export const SPOT_OWNERS: Readonly<Record<string, string>> = { tree: 'tree', post: 'tree', bench: 'sofa', bed: 'bed-1', wheel: 'wheel' };
+})), { id: 'christmas-tree', label: 'Christmas tree', defaultPose: { ...CHRISTMAS_TREE, turn: 0 as const },
+  footprints: [{ minX: -.65, maxX: .65, minZ: -.65, maxZ: .65 }], obstacleIds: [] }];
+export const SPOT_OWNERS: Readonly<Record<string, string>> = { tree: 'tree', post: 'tree', bench: 'sofa', bed: 'bed-1', wheel: 'wheel', 'christmas-tree': 'christmas-tree' };
 export interface LayoutEnvironment {
+  /** Starting arrangement, separate from the authored model's pivot poses. */
+  defaultPreset?: Omit<RoomLayout, 'roomRevision'>;
   revision: number;
   definitions: readonly FurnitureDefinition[];
   fixedObstacles: readonly FloorBox[];
@@ -32,6 +36,7 @@ export interface LayoutEnvironment {
 }
 const movableObstacleIds = new Set(FURNITURE_DEFINITIONS.flatMap(def => [...def.obstacleIds]));
 export const DEFAULT_LAYOUT_ENVIRONMENT: LayoutEnvironment = {
+  defaultPreset: defaultPreset as RoomLayout,
   revision: ROOM_REVISION, definitions: FURNITURE_DEFINITIONS,
   fixedObstacles: room.obstacles.filter(box => !movableObstacleIds.has(box.id)), structuralWalls: room.structuralWalls,
   contains: roomFloorContains, segment: roomFloorSegment, bounds: room.bounds, residents: 5, spots: FURNITURE,
@@ -46,6 +51,7 @@ export function cloneRoomLayout(value: RoomLayout): RoomLayout {
     unplaced: value.unplaced.map(item => ({ ...item, ...(item.pose ? { pose: { ...item.pose } } : {}) })) };
 }
 export function defaultRoomLayout(environment = DEFAULT_LAYOUT_ENVIRONMENT): RoomLayout {
+  if (environment.defaultPreset) return cloneRoomLayout({ ...environment.defaultPreset, roomRevision: environment.revision });
   return { roomRevision: environment.revision, placed: Object.fromEntries(environment.definitions.map(def => [def.id, { ...def.defaultPose }])), unplaced: [] };
 }
 export function isFurniturePose(pose: unknown): pose is FurniturePose {
@@ -83,13 +89,14 @@ function transformedObstacle(box: FloorBox, def: FurnitureDefinition, pose: Furn
   const points = boxCorners(box).map(p => transformFurniturePoint(def, pose, p));
   return { minX: Math.min(...points.map(p => p.x)), maxX: Math.max(...points.map(p => p.x)), minZ: Math.min(...points.map(p => p.z)), maxZ: Math.max(...points.map(p => p.z)) };
 }
-export function layoutObstacles(layout: RoomLayout, environment = DEFAULT_LAYOUT_ENVIRONMENT): FloorBox[] {
+export function layoutObstacles(layout: RoomLayout, environment = DEFAULT_LAYOUT_ENVIRONMENT, fullTableFootprints = false): FloorBox[] {
   const boxes: FloorBox[] = [...environment.fixedObstacles, ...environment.structuralWalls];
   for (const def of environment.definitions) {
     const pose = layout.placed[def.id]; if (!pose) continue;
     // Keep leg-only navigation for tables. Shared old recliner bounds are replaced
     // with their individually authored footprints, so omission removes just one set.
     const authored = def.id.startsWith('table-') ? room.obstacles.filter(box => def.obstacleIds.includes(box.id)) : [];
+    if (fullTableFootprints && authored.length) boxes.push(...furnitureFootprints(def, pose));
     boxes.push(...(authored.length ? authored.map(box => transformedObstacle(box, def, pose)) : furnitureFootprints(def, pose)));
   }
   return boxes;
@@ -200,17 +207,28 @@ export function reconcileRoomLayout(layout: RoomLayout, environment = DEFAULT_LA
 export class RoomLayoutRuntime {
   layout: RoomLayout;
   revision = 0;
+  private festive = true;
   navigation: NavigationContext;
+  /** Bedroom flights need the tabletop envelope, not only walkable gaps between legs. */
+  roomNavigation: NavigationContext;
   spots: FurnitureSpot[];
   constructor(layout = defaultRoomLayout(), readonly environment = DEFAULT_LAYOUT_ENVIRONMENT) {
     this.layout = cloneRoomLayout(layout);
     this.navigation = createNavigationContext(layoutObstacles(layout, environment), environment.contains, environment.segment);
+    this.roomNavigation = createNavigationContext(layoutObstacles(layout, environment, true), environment.contains, environment.segment);
     this.spots = resolvedSpots(layout, environment, this.navigation);
+  }
+  setFestiveDecorations(enabled: boolean) {
+    if (this.festive === enabled) return;
+    this.festive = enabled; this.apply(this.layout);
   }
   apply(layout: RoomLayout) {
     this.layout = cloneRoomLayout(layout);
-    this.navigation = createNavigationContext(layoutObstacles(layout, this.environment), this.environment.contains, this.environment.segment);
-    this.spots = resolvedSpots(layout, this.environment, this.navigation);
+    const effective = cloneRoomLayout(layout);
+    if (!this.festive) delete effective.placed['christmas-tree'];
+    this.navigation = createNavigationContext(layoutObstacles(effective, this.environment), this.environment.contains, this.environment.segment);
+    this.roomNavigation = createNavigationContext(layoutObstacles(effective, this.environment, true), this.environment.contains, this.environment.segment);
+    this.spots = resolvedSpots(effective, this.environment, this.navigation);
     this.revision++;
   }
 }

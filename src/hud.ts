@@ -15,6 +15,8 @@ import type { LayoutPreviewRequest } from './room-layout-previews';
 import { CHRISTMAS_UI, christmasFrame, christmasGarland, christmasHolly, christmasSnowflake } from './christmas-ui';
 import { COSTUME_SLOTS, costumeItems } from './wardrobe';
 import { wardrobeLayout, wardrobeCards, wardrobeItemIcon, wardrobeMaxOffset } from './wardrobe-ui';
+import { catRoomIllustration, catRoomMoon, catRoomPortrait } from './cat-rooms-ui';
+import { roomMenuCats, roomMenuAction, roomMenuCapacity } from './cat-rooms-menu';
 
 const C = CHRISTMAS_UI;
 export interface Hit { id: string; x: number; y: number; w: number; h: number; eventId?: number; tool?: ToolId; arch?: PlayArea; regions?: { x: number; y: number; rx: number; ry: number }[]; label?: string; disabled?: boolean; }
@@ -153,6 +155,12 @@ export class Hud {
   rotateRequired = false;
   gyroStatus = 'off';
   freeCameraMode: 'look' | 'move' = 'look';
+  catRoomsOpen = false;
+  catRoomsMessage = '';
+  catRoomsCatIndex = 0;
+  catRoomsRoomIndex = 0;
+  catRoomsOffset = 0;
+  catRoomsGroup: 'lounge' | 'sleeping' = 'lounge';
   soundLabel = 'Sound: on';
   top = 12;
   bottom = 12;
@@ -240,6 +248,7 @@ export class Hud {
   get panelWidth() { return Math.min(this.width - this.left - this.right - 32, 500); }
   get center() { return (this.left + this.width - this.right) / 2; }
   get wardrobeLayout() { return wardrobeLayout(this.width, this.height, this.top, this.bottom); }
+  get catRoomsLayout() { return this.wardrobeLayout; }
   private addHit(hit: Hit) { this.hits.push({ ...hit, label: hit.label ? translate(hit.label) : undefined }); }
   hit(x: number, y: number): Hit | undefined {
     this.camera.updateMatrixWorld(); this.scene.updateMatrixWorld(true);
@@ -481,6 +490,7 @@ export class Hud {
 
   worldViewport(game: Game): GameLayout['room'] {
     if (game.phase === 'wardrobe') return this.wardrobeLayout.preview;
+    if (game.phase === 'free-play' && this.catRoomsOpen) return this.catRoomsLayout.preview;
     if (game.phase === 'room-editor') {
       const y = this.top + 148;
       return { x: this.left + 6, y, w: this.width - this.left - this.right - 12,
@@ -674,6 +684,7 @@ export class Hud {
   }
 
   private freePlay(game: Game, world: World) {
+    if (this.catRoomsOpen) { this.catRooms(game); return; }
     const { ctx, layout } = this, center = this.center, width = this.panelWidth, x = center - width / 2;
     const { header, pause } = layout;
     round(ctx, header.x, header.y, header.w, header.h, 12, C.paper, C.line);
@@ -685,7 +696,7 @@ export class Hud {
     this.button('pause', 'Ⅱ', pause.x, pause.y, pause.w, pause.h);
     this.button('wardrobe:open', 'Closet', header.x + header.w - arrangeWidth - closetWidth - 6, header.y, closetWidth, 44);
     this.button('room:open', 'Arrange room', header.x + header.w - arrangeWidth, header.y, arrangeWidth, 44);
-    if (!world.roomEditable) this.hits[this.hits.length - 1].disabled = true;
+    if (!world.roomEditable || game.roomTransitions.length > 0) this.hits[this.hits.length - 1].disabled = true;
     const catWidth = width / Math.max(1, game.cats.length);
     game.cats.forEach((cat, i) => {
       const cx = x + i * catWidth, selected = cat.id === game.selectedFreeCatId;
@@ -715,6 +726,7 @@ export class Hud {
     ctx.restore();
     const camera = game.freeInteraction === 'camera';
     const y = this.height - this.bottom - (camera ? 152 : 92);
+    this.button('cat-rooms:open', `${translate('Cat rooms')} · ${game.cats.length}/5`, x + 2, y - 52, width - 4, 44);
     const modeWidth = width / 3;
     ([['pet', 'Butt pats'], ['wand', 'Wand'], ['camera', 'Camera']] as const).forEach(([id, label], i) =>
       this.button(`free-mode:${id}`, label, x + i * modeWidth + 2, y, modeWidth - 4, 44, game.freeInteraction === id));
@@ -729,6 +741,82 @@ export class Hud {
     text(ctx, instruction, center, y + (camera ? 112 : 61), 12, C.ink, 'center', 'sans', width);
     if (camera) text(ctx, 'Two fingers: pan / pinch zoom · wheel: zoom', center, y + 130, 11, C.muted, 'center', 'sans', width);
     if (game.feedbackUntil > game.clock) text(ctx, game.feedback, center, y + (camera ? 146 : 81), 11, C.green, 'center', 'sans', width);
+  }
+
+  private catRooms(game: Game) {
+    const ctx = this.ctx, layout = this.catRoomsLayout, center = layout.header.x + layout.header.w / 2;
+    ctx.fillStyle = C.cream; ctx.fillRect(0, 0, this.width, this.height);
+    text(ctx, 'Cat rooms', layout.header.x + 4, layout.header.y + 24, 29, C.ink, 'left', 'serif', layout.header.w - 100);
+    this.button('cat-rooms:close', 'Done', layout.done.x, layout.done.y, layout.done.w, layout.done.h, true);
+    const group = roomMenuCats(game, this.catRoomsGroup);
+    const action = roomMenuAction(game, this.catRoomsCatIndex), selected = action.cat;
+    const capacity = roomMenuCapacity(game);
+    const navigation = (id: string, glyph: string, label: string, rect: GameLayout['room'], disabled: boolean) => {
+      ctx.save(); if (disabled) ctx.globalAlpha = .35;
+      this.button(id, glyph, rect.x, rect.y, rect.w, rect.h); ctx.restore();
+      this.hits[this.hits.length - 1].label = translate(label); this.hits[this.hits.length - 1].disabled = disabled;
+    };
+    navigation('cat-rooms:previous-cat', '‹', 'Previous cat', layout.catPrevious, group.length < 2);
+    navigation('cat-rooms:next-cat', '›', 'Next cat', layout.catNext, group.length < 2);
+    text(ctx, selected?.name ?? (this.catRoomsGroup === 'lounge' ? 'Lounge' : 'Sleeping'), center, layout.catPrevious.y + 15,
+      22, C.ink, 'center', 'serif', layout.header.w - 112);
+    text(ctx, `${capacity.inLounge} / 5 ${translate('in lounge')}`, center, layout.catPrevious.y + 37,
+      12, C.green, 'center', 'bold', layout.header.w - 104);
+    const preview = layout.preview;
+    ctx.clearRect(preview.x, preview.y, preview.w, preview.h);
+    ctx.save(); ctx.strokeStyle = C.line; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.roundRect(preview.x + .5, preview.y + .5, preview.w - 1, preview.h - 1, 18); ctx.stroke(); ctx.restore();
+    if (!selected) catRoomIllustration(ctx, { x: center - 50, y: preview.y + preview.h / 2 - 50, w: 100, h: 100 }, false);
+    const pending = [capacity.arriving ? `${capacity.arriving} ${translate('arriving')}` : '',
+      capacity.returning ? `${capacity.returning} ${translate('returning')}` : ''].filter(Boolean).join(' · ');
+    if (pending) text(ctx, pending, center, preview.y + 17, 11, C.muted, 'center', 'sans', preview.w - 24);
+    const explanation = action.reason || this.catRoomsMessage;
+    if (explanation) this.roomText(explanation, preview.x + 12, preview.y + preview.h - 30, preview.w - 24, C.muted, 11, 2);
+    else text(ctx, selected ? 'Drag to turn' : this.catRoomsGroup === 'sleeping' ? 'No sleeping cats' : 'No cats in lounge',
+      center, layout.hintY, 11, C.muted, 'center', 'sans', preview.w - 20);
+    const tabsY = layout.categoryTabs[0].y, tabWidth = (layout.header.w - 8) / 2;
+    (['lounge', 'sleeping'] as const).forEach((groupId, index) => {
+      const x = layout.header.x + index * (tabWidth + 8), active = this.catRoomsGroup === groupId;
+      round(ctx, x, tabsY, tabWidth, 44, 11, active ? C.green : C.paper, active ? C.green : C.line);
+      const ink = active ? C.paper : C.ink;
+      if (groupId === 'sleeping') catRoomMoon(ctx, x + 20, tabsY + 21, 12, ink);
+      else paw(ctx, x + 20, tabsY + 21, 17, ink);
+      const count = roomMenuCats(game, groupId).length;
+      text(ctx, `${translate(groupId === 'lounge' ? 'Lounge' : 'Sleeping')} · ${count}`, x + tabWidth / 2 + 8, tabsY + 21, 12, ink, 'center', 'bold', tabWidth - 40);
+      if (active) line(ctx, [[x + 16, tabsY + 38], [x + tabWidth - 16, tabsY + 38]], '#d9b665', 2);
+      this.addHit({ id: `cat-rooms:group:${groupId}`, label: `${translate(groupId === 'lounge' ? 'Lounge' : 'Sleeping')}, ${count}`, x, y: tabsY, w: tabWidth, h: 44 });
+    });
+    text(ctx, selected ? `${selected.name} · ${translate(action.status)}` : 'Swipe to choose a cat', center,
+      layout.selectedLabelY, 12, C.green, 'center', 'bold', layout.header.w - 12);
+    ctx.save(); ctx.beginPath(); ctx.rect(layout.carousel.x,layout.carousel.y,layout.carousel.w,layout.carousel.h); ctx.clip();
+    for (const { index, rect, hit } of wardrobeCards(layout, this.catRoomsOffset, group.length)) {
+      const cat = group[index], portraitIndex = PALETTE.findIndex(p => p.name === cat.name);
+      const cardAction = roomMenuAction(game, portraitIndex), chosen = portraitIndex === this.catRoomsCatIndex;
+      const sleeping = this.catRoomsGroup === 'sleeping';
+      round(ctx,rect.x + 1,rect.y + 1,rect.w - 2,rect.h - 2,12,chosen ? '#e2ece0' : C.paper,chosen ? C.green : C.line);
+      catRoomPortrait(ctx, rect, (x,y,size) => this.dexPortrait(portraitIndex,x,y,size,true));
+      if (sleeping) {
+        catRoomMoon(ctx,rect.x + rect.w - 13,rect.y + 13,10,C.green);
+        if (cardAction.roomIndex >= 0) {
+          ellipse(ctx,rect.x + 13,rect.y + 13,9,9,chosen ? C.green : C.paper);
+          text(ctx,String(cardAction.roomIndex + 1),rect.x + 13,rect.y + 13,11,chosen ? C.paper : C.ink,'center','bold');
+        }
+      } else paw(ctx,rect.x + rect.w - 13,rect.y + 13,13,C.green);
+      text(ctx,cat.name,rect.x + rect.w / 2,rect.y + rect.h - 24,12,C.ink,'center','bold',rect.w - 12);
+      text(ctx,cardAction.status === 'Waiting for doorway' ? 'Waiting…' : cardAction.status,
+        rect.x + rect.w / 2,rect.y + rect.h - 10,11,C.muted,'center','sans',rect.w - 8);
+      if (chosen) line(ctx,[[rect.x + 14,rect.y + rect.h - 3],[rect.x + rect.w - 14,rect.y + rect.h - 3]],C.green,2);
+      if (hit.w >= 44) this.addHit({id:`cat-rooms:cat:${portraitIndex}`,label:`${cat.name}, ${translate(cardAction.status)}`,...hit});
+    }
+    ctx.restore();
+    const maxOffset = wardrobeMaxOffset(group.length,layout);
+    navigation('cat-rooms:previous-items','‹','Previous cats',layout.previousItems,this.catRoomsOffset <= .001);
+    navigation('cat-rooms:next-items','›','More cats',layout.nextItems,this.catRoomsOffset >= maxOffset - .001);
+    ctx.save(); if (!action.enabled) ctx.globalAlpha=.4;
+    const verb = action.direction === 'wake' || (!action.direction && this.catRoomsGroup === 'sleeping') ? 'Invite out' : 'Send to bed';
+    this.button('cat-rooms:confirm',verb,layout.reset.x,layout.reset.y,layout.reset.w,layout.reset.h,true);
+    ctx.restore(); this.hits[this.hits.length - 1].disabled=!action.enabled;
+    this.hits[this.hits.length - 1].label = `${translate(verb)}${selected ? ': '+selected.name : ''}${action.reason ? ', '+translate(action.reason) : ''}`;
   }
 
   private roomLabel(id: string) { return FURNITURE_DEFINITIONS.find(item => item.id === id)?.label ?? id; }

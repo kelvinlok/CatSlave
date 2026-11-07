@@ -21,6 +21,7 @@ import { FurniturePreviews } from './furniture-previews';
 import { RoomLayoutPreviews } from './room-layout-previews';
 import { costumeItems, isCostumeSlot, isCostumeItemId } from './wardrobe';
 import { wardrobeMaxOffset } from './wardrobe-ui';
+import { roomMenuCats, roomMenuAction } from './cat-rooms-menu';
 import { setAssetShaderPreparation, ShaderPreparation } from './asset-shader-preparation';
 
 syncDocumentLanguage();
@@ -50,10 +51,12 @@ renderer.clear();
 const game = new Game(import.meta.env.MODE === 'test' ? 42 : undefined);
 try { game.restoreFreePlay(JSON.parse(localStorage.getItem('catslave-free-play') ?? 'null')); } catch { /* Storage may be unavailable. */ }
 try { game.restoreAdoptedCats(JSON.parse(localStorage.getItem('catslave-cat-dex') ?? 'null')); } catch { /* Keep session progress when storage is unavailable. */ }
+try { game.restoreCatRooms(JSON.parse(localStorage.getItem('catslave-cat-rooms') ?? 'null')); } catch { /* Keep the default lounge roster. */ }
 try { const saved = localStorage.getItem('catslave-wardrobe'); if (saved) game.wardrobe.restore(saved); } catch { /* Dressing still works for this session. */ }
 try { game.festiveDecorations = localStorage.getItem('catslave-festive-decorations') !== 'off'; } catch { /* Keep the default when storage is unavailable. */ }
 let savedAdoptedCats = '';
 let savedFreeRoster = JSON.stringify(game.freePlayRoster);
+let savedCatRooms = JSON.stringify(game.exportCatRooms());
 // Standalone entry is a test fixture; players encounter Pawdicure in bonus rounds.
 if (import.meta.env.MODE === 'test' && new URLSearchParams(location.search).get('minigame') === 'pawdicure') game.startPawdicurePractice();
 const world = new World();
@@ -140,7 +143,7 @@ function cancelEditorPointers() {
   if (hud.roomEditor) refreshEditor();
 }
 function enterRoomEditor() {
-  if (!world.roomEditable || !['free-play', 'room-notice'].includes(game.phase)) return;
+  if (!world.roomEditable || game.roomTransitions.length || !['free-play', 'room-notice'].includes(game.phase)) return;
   if (game.phase === 'room-notice' && hud.roomNotice) roomStore.acknowledge(roomStore.activeSlot, hud.roomNotice);
   cancelGesture();
   hud.roomEditor = new RoomEditor(hud.roomResumeBlocked && hud.roomNotice ? hud.roomNotice : game.roomLayout.layout);
@@ -289,14 +292,21 @@ function roomAction(id: string) {
   refreshEditor();
 }
 function updateWorld(dt: number, time: number, effectsDt = dt) {
-  const profile = game.phase === 'wardrobe' ? PALETTE[game.wardrobeCatIndex]
+  if (game.phase === 'free-play' && hud.catRoomsOpen) {
+    const name = PALETTE[hud.catRoomsCatIndex]?.name;
+    const inRoom = name && roomMenuCats(game, 'sleeping').some(cat => cat.name === name);
+    const inLounge = name && roomMenuCats(game, 'lounge').some(cat => cat.name === name);
+    const group = inRoom && !inLounge ? 'sleeping' : inLounge && !inRoom ? 'lounge' : hud.catRoomsGroup;
+    if (group !== hud.catRoomsGroup) { hud.catRoomsGroup = group; scrollCatRooms(0); hud.invalidate(); }
+  }
+  const profile = game.phase === 'free-play' && hud.catRoomsOpen ? PALETTE[hud.catRoomsCatIndex] : game.phase === 'wardrobe' ? PALETTE[game.wardrobeCatIndex]
     : game.phase === 'cat-dex' && hud.dexCat !== undefined ? PALETTE[hud.dexCat] : undefined;
   if (profile && game.adoptedCats.includes(profile.name) && isBlenderCat(profile.appearance)) {
     void preloadBlenderCatAsset(profile.appearance);
   }
   // Residents go first; prefetch the exact next adoption pair during their stage.
   // Title screens and saved free-play rosters do not trigger speculative loads.
-  const cats = game.phase === 'adoption' ? [...game.cats, ...game.candidates] : game.cats;
+  const cats = game.phase === 'adoption' ? [...game.cats, ...game.candidates] : game.inFreePlay ? [...game.cats, ...game.sleepingCats] : game.cats;
   for (const cat of cats) if (isBlenderCat(cat.appearance)) void preloadBlenderCatAsset(cat.appearance);
   if (game.phase === 'playing') {
     for (const cat of game.upcomingAdoption) if (isBlenderCat(cat.appearance)) void preloadBlenderCatAsset(cat.appearance);
@@ -342,15 +352,16 @@ function resize() {
   canvas.style.left = viewport.x + 'px'; canvas.style.top = viewport.y + 'px';
   renderer.setPixelRatio(Math.min(devicePixelRatio || 1, 1.5)); renderer.setSize(width, height, false);
   const safe = safeInsets(); hud.resize(width, height, safe.top, safe.bottom, safe.left, safe.right);
-  world.resize(width, height, hud.worldViewport(game), game.phase === 'wardrobe');
+  world.resize(width, height, hud.worldViewport(game), game.phase === 'wardrobe' || game.phase === 'free-play' && hud.catRoomsOpen);
   if (hud.roomEditor) refreshEditor();
   updateWorld(0, performance.now() / 1000); hud.draw(game, world, 0, true);
   if (!contextLost) renderFrame();
 }
 function syncWorldViewport() {
+  world.catRoomsCatIndex = game.phase === 'free-play' && hud.catRoomsOpen ? hud.catRoomsCatIndex : undefined;
   world.dexCatIndex = game.phase === 'cat-dex' ? hud.dexCat : undefined;
   const next = hud.worldViewport(game), current = world.viewport;
-  const presentation = game.phase === 'wardrobe';
+  const presentation = game.phase === 'wardrobe' || game.phase === 'free-play' && hud.catRoomsOpen;
   if (presentation !== world.isPresentationViewport || next.x !== current.x || next.y !== current.y || next.w !== current.w || next.h !== current.h)
     world.resize(width, height, next, presentation);
 }
@@ -374,11 +385,11 @@ function renderFrame() {
   renderer.setViewport(v.x, height - v.y - v.h, v.w, v.h);
   renderer.setScissor(v.x, height - v.y - v.h, v.w, v.h); renderer.setScissorTest(true);
   if (!hud.rotateRequired && !gallery) {
-    if (game.phase === 'wardrobe' || game.phase === 'cat-dex' && hud.dexCat !== undefined) renderer.render(world.dexScene, world.dexCamera);
+    if (game.phase === 'wardrobe' || game.phase === 'free-play' && hud.catRoomsOpen || game.phase === 'cat-dex' && hud.dexCat !== undefined) renderer.render(world.dexScene, world.dexCamera);
     else renderer.render(world.scene, game.phase === 'room-editor' && editorView ? editorView.camera : world.camera);
   }
   renderer.setScissorTest(false); renderer.setViewport(0, 0, width, height);
-  renderer.clearDepth(); if (!hud.rotateRequired && game.phase !== 'wardrobe') renderer.render(world.attackScene, world.attackCamera);
+  renderer.clearDepth(); if (!hud.rotateRequired && game.phase !== 'wardrobe' && !hud.catRoomsOpen) renderer.render(world.attackScene, world.attackCamera);
   renderer.clearDepth(); renderer.render(hud.scene, hud.camera);
 }
 function saveWardrobe() {
@@ -409,6 +420,19 @@ function wardrobeAction(id: string) {
   hud.clearInteraction(); audio.setBlocked(!game.running || document.hidden);
   syncWorldViewport(); updateWorld(0, performance.now() / 1000, 0); hud.draw(game, world, 0, true);
 }
+function scrollCatRooms(offset: number) {
+  hud.catRoomsOffset = THREE.MathUtils.clamp(offset, 0, wardrobeMaxOffset(roomMenuCats(game, hud.catRoomsGroup).length, hud.catRoomsLayout)); hud.invalidate();
+}
+function selectRoomCat(index: number) {
+  hud.catRoomsCatIndex = index;
+  const name = PALETTE[index]?.name;
+  if (name) {
+    hud.catRoomsGroup = roomMenuCats(game, 'sleeping').some(cat => cat.name === name) ? 'sleeping' : 'lounge';
+    const active = game.cats.find(cat => cat.name === name); if (active) game.chooseFreeCat(active.id);
+  }
+  const position = roomMenuCats(game, hud.catRoomsGroup).findIndex(cat => cat.name === name);
+  scrollCatRooms(Math.max(0, position - 1)); hud.catRoomsMessage = '';
+}
 function action(id: string) {
   // Resolve against the current screen, even if another input arrived before a frame.
   hud.draw(game, world, 0, true);
@@ -424,6 +448,38 @@ function action(id: string) {
     return;
   }
   if (id === 'sound') { audio.cycleVolume(); hud.soundLabel = audio.label; hud.invalidate(); return; }
+  if (id.startsWith('cat-rooms:')) {
+    if (game.phase !== 'free-play') return;
+    cancelGesture();
+    if (id === 'cat-rooms:open') {
+      hud.catRoomsOpen = true; hud.catRoomsMessage = '';
+      const invite = game.cats.length < 5 ? game.sleepingCats[0] : undefined;
+      const cat = invite ?? game.cats.find(cat => cat.id === game.selectedFreeCatId) ?? game.cats[0] ?? game.sleepingCats[0];
+      selectRoomCat(PALETTE.findIndex(item => item.name === cat?.name));
+    }
+    else if (id === 'cat-rooms:close') hud.catRoomsOpen = false;
+    else if (id.startsWith('cat-rooms:cat:')) {
+      const offset = hud.catRoomsOffset;
+      const index = Number(id.slice('cat-rooms:cat:'.length));
+      if (!Number.isInteger(index) || !roomMenuCats(game, hud.catRoomsGroup).some(cat => cat.name === PALETTE[index]?.name)) return;
+      selectRoomCat(index); scrollCatRooms(offset);
+    } else if (id === 'cat-rooms:confirm') {
+      const intent = roomMenuAction(game, hud.catRoomsCatIndex);
+      const accepted = intent.enabled && (intent.direction === 'wake' ? game.wakeRoomCat(intent.roomIndex) : intent.cat && game.sendCatToRoom(intent.cat.id, intent.roomIndex));
+      hud.catRoomsMessage = accepted ? '' : intent.reason || game.roomActionError || 'Move furniture away from the bedrooms';
+      if (accepted) { hud.catRoomsGroup = intent.direction === 'wake' ? 'lounge' : 'sleeping'; scrollCatRooms(0); }
+    } else if (id === 'cat-rooms:previous-items' || id === 'cat-rooms:next-items') {
+      scrollCatRooms(hud.catRoomsOffset + (id.includes('previous') ? -1 : 1));
+    } else if (id.startsWith('cat-rooms:group:') || id === 'cat-rooms:previous-cat' || id === 'cat-rooms:next-cat') {
+      if (id.startsWith('cat-rooms:group:')) hud.catRoomsGroup = id.endsWith('sleeping') ? 'sleeping' : 'lounge';
+      const cats = roomMenuCats(game, hud.catRoomsGroup);
+      const index = cats.findIndex(cat => cat.name === PALETTE[hud.catRoomsCatIndex]?.name);
+      const step = id.endsWith('previous-cat') ? -1 : id.endsWith('next-cat') ? 1 : 0;
+      const selected = cats.length ? cats[index < 0 ? (step < 0 ? cats.length - 1 : 0) : (index + step + cats.length) % cats.length] : undefined;
+      const group = hud.catRoomsGroup; selectRoomCat(PALETTE.findIndex(item => item.name === selected?.name)); hud.catRoomsGroup = group;
+    }
+    syncWorldViewport(); updateWorld(0, performance.now() / 1000, 0); hud.invalidate(); hud.draw(game, world, 0, true); return;
+  }
   if (id === 'festive-decorations') {
     game.festiveDecorations = !game.festiveDecorations;
     layoutPreviews.invalidate();
@@ -531,7 +587,7 @@ function waveWand(p: Point) {
 function point(event: PointerEvent): Point { const rect = canvas.getBoundingClientRect(); return { x: event.clientX - rect.left, y: event.clientY - rect.top }; }
 function inDexPreview(p: Point) {
   const v = world.viewport;
-  return (game.phase === 'wardrobe' || game.phase === 'cat-dex' && hud.dexCat !== undefined)
+  return (game.phase === 'wardrobe' || game.phase === 'free-play' && hud.catRoomsOpen || game.phase === 'cat-dex' && hud.dexCat !== undefined)
     && p.x >= v.x && p.x <= v.x + v.w && p.y >= v.y && p.y <= v.y + v.h;
 }
 function dragFreeCamera(dx: number, dy: number, pan = false) {
@@ -567,7 +623,7 @@ canvas.addEventListener('pointerdown', event => {
     }
   }
   // Camera touches have their own capture set so a second finger can pan/zoom.
-  if (event.pointerType === 'touch' && game.phase === 'free-play' && game.freeInteraction === 'camera'
+  if (event.pointerType === 'touch' && game.phase === 'free-play' && !hud.catRoomsOpen && game.freeInteraction === 'camera'
     && !hud.rotateRequired && !contextLost && pointerId === undefined) {
     const p = point(event), v = world.viewport;
     if (p.x >= v.x && p.x <= v.x + v.w && p.y >= v.y && p.y <= v.y + v.h && !hud.hit(p.x, p.y)) {
@@ -591,11 +647,11 @@ canvas.addEventListener('pointerdown', event => {
   if (game.phase === 'bonus' && hit?.id.startsWith('pat:')) { action(hit.id); return; }
   if (game.phase === 'bonus' && hit?.id === 'paw-clip') { action(hit.id); return; }
   pointerId = event.pointerId; canvas.setPointerCapture(event.pointerId);
-  if (game.phase === 'wardrobe') {
-    const r = hud.wardrobeLayout.carousel;
+  if (game.phase === 'wardrobe' || game.phase === 'free-play' && hud.catRoomsOpen) {
+    const rooms = game.phase === 'free-play', r = (rooms ? hud.catRoomsLayout : hud.wardrobeLayout).carousel;
     if (p.x >= r.x && p.x <= r.x + r.w && p.y >= r.y && p.y <= r.y + r.h) {
-      wardrobeDrag = { start: p, offset: game.wardrobeItemOffset,
-        item: hit?.id.startsWith('wardrobe:item:') ? hit.id : undefined, moved: false };
+      wardrobeDrag = { start: p, offset: rooms ? hud.catRoomsOffset : game.wardrobeItemOffset,
+        item: hit?.id.startsWith(rooms ? 'cat-rooms:cat:' : 'wardrobe:item:') ? hit.id : undefined, moved: false };
       hud.pressedId = wardrobeDrag.item; hud.invalidate(); return;
     }
   }
@@ -610,7 +666,7 @@ canvas.addEventListener('pointerdown', event => {
     }
     freeDrag = { point: p, pan: event.button === 2 || event.shiftKey, mode };
     if (mode === 'pet' && game.selectedFreeCatId !== undefined && world.freePetHit(game.selectedFreeCatId, p)) {
-      game.interactFreeCat('pet'); world.freePat(game.selectedFreeCatId); audio.play('pat'); audio.play('purr');
+      if (game.interactFreeCat('pet')) { world.freePat(game.selectedFreeCatId); audio.play('pat'); audio.play('purr'); }
     } else if (mode === 'wand') { waveWand(p); }
     return;
   }
@@ -668,12 +724,13 @@ canvas.addEventListener('pointermove', event => {
     canvas.style.cursor = dexDrag || freeDrag?.mode === 'camera' ? 'grabbing' : hover?.disabled ? 'not-allowed' : hover || wheelHover ? 'pointer' : game.active || inDexPreview(p) || cameraHover ? 'grab' : 'default';
   }
   if (event.pointerId !== pointerId) return;
-  if (wardrobeDrag && game.phase === 'wardrobe') {
+  if (wardrobeDrag && (game.phase === 'wardrobe' || game.phase === 'free-play' && hud.catRoomsOpen)) {
     const dx = p.x - wardrobeDrag.start.x, dy = p.y - wardrobeDrag.start.y;
     if (Math.hypot(dx, dy) > 7) wardrobeDrag.moved = true;
     if (wardrobeDrag.moved) {
-      const layout = hud.wardrobeLayout;
-      scrollWardrobe(wardrobeDrag.offset - (Math.abs(dx) >= Math.abs(dy) ? dx : dy) / (layout.cardWidth + layout.cardGap));
+      const layout = hud.catRoomsOpen ? hud.catRoomsLayout : hud.wardrobeLayout;
+      const offset = wardrobeDrag.offset - (Math.abs(dx) >= Math.abs(dy) ? dx : dy) / (layout.cardWidth + layout.cardGap);
+      if (hud.catRoomsOpen) scrollCatRooms(offset); else scrollWardrobe(offset);
       hud.pressedId = undefined;
     }
     return;
@@ -685,7 +742,7 @@ canvas.addEventListener('pointermove', event => {
       dragFreeCamera(dx, dy, freeDrag.pan);
     } else if (freeDrag.mode === 'wand') { waveWand(p); }
     else if (game.selectedFreeCatId !== undefined && world.freePetHit(game.selectedFreeCatId, p) && game.clock >= game.freePatUntil) {
-      game.interactFreeCat('pet'); world.freePat(game.selectedFreeCatId); audio.play('pat'); audio.play('purr');
+      if (game.interactFreeCat('pet')) { world.freePat(game.selectedFreeCatId); audio.play('pat'); audio.play('purr'); }
     }
     freeDrag.point = p; hud.invalidate(); return;
   }
@@ -725,14 +782,16 @@ canvas.addEventListener('lostpointercapture', event => { if (event.pointerId ===
 canvas.addEventListener('pointerleave', () => { hud.hoveredId = undefined; hud.invalidate(); });
 canvas.addEventListener('contextmenu', event => event.preventDefault());
 canvas.addEventListener('wheel', event => {
-  if (game.phase === 'wardrobe') {
-    const bounds = canvas.getBoundingClientRect(), r = hud.wardrobeLayout.carousel;
+  if (game.phase === 'wardrobe' || game.phase === 'free-play' && hud.catRoomsOpen) {
+    const layout = hud.catRoomsOpen ? hud.catRoomsLayout : hud.wardrobeLayout;
+    const bounds = canvas.getBoundingClientRect(), r = layout.carousel;
     const x = event.clientX - bounds.left, y = event.clientY - bounds.top;
     if (x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h) {
       event.preventDefault();
       const delta = Math.abs(event.deltaX) > Math.abs(event.deltaY) ? event.deltaX : event.deltaY;
       const unit = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? r.w : 1;
-      scrollWardrobe(game.wardrobeItemOffset + delta * unit / (hud.wardrobeLayout.cardWidth + hud.wardrobeLayout.cardGap));
+      const offset = (hud.catRoomsOpen ? hud.catRoomsOffset : game.wardrobeItemOffset) + delta * unit / (layout.cardWidth + layout.cardGap);
+      if (hud.catRoomsOpen) scrollCatRooms(offset); else scrollWardrobe(offset);
     }
     return;
   }
@@ -783,6 +842,7 @@ window.addEventListener('keydown', event => {
   if (event.key === ' ' && game.phase === 'bonus' && game.bonus?.paw) { event.preventDefault(); action('paw-clip'); return; }
   if (event.key === 'Escape') {
     event.preventDefault(); cancelGesture();
+    if (game.phase === 'free-play' && hud.catRoomsOpen) { action('cat-rooms:close'); return; }
     if (game.phase === 'wardrobe') { action('wardrobe:close'); return; }
     if (game.phase === 'cat-dex') { action('dex-back'); return; }
     if (hud.modal) { hud.modal = undefined; hud.clearInteraction(); }
@@ -869,7 +929,12 @@ function frame(now: number) {
     if (game.freePlayUnlocked && roster !== savedFreeRoster) {
       try { localStorage.setItem('catslave-free-play', roster); savedFreeRoster = roster; } catch { /* Keep the unlock for this session. */ }
     }
+    const rooms = game.exportCatRooms(), roomSave = JSON.stringify(rooms);
+    if (rooms && roomSave !== savedCatRooms) {
+      try { localStorage.setItem('catslave-cat-rooms', roomSave!); savedCatRooms = roomSave; } catch { /* Keep the roster for this session. */ }
+    }
     if (game.phase !== previousPhase) {
+      hud.catRoomsOpen = false; hud.catRoomsMessage = '';
       cancelGesture();
       if (game.phase === 'adoption' || game.phase === 'victory' || (game.phase === 'playing' && previousPhase === 'upgrade')) {
         // The two adoption previews need a wider frame than active play.

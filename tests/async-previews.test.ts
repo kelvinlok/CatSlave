@@ -6,6 +6,24 @@ import type { RoomLayout } from '../src/room-layout';
 
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
+it('discards a pending fallback thumbnail when the authored wall kit arrives', async () => {
+  let finish!: (image: HTMLCanvasElement) => void;
+  const render = vi.spyOn(previews, 'renderPreview').mockImplementation(() => new Promise(resolve => { finish = resolve; }));
+  const cache = new RoomLayoutPreviews(), root = new THREE.Group(); root.userData.loaded = true;
+  const requests = [{ id: 'draft', layout: { roomRevision: 1, placed: {}, unplaced: [] } }];
+  cache.renderNext({} as THREE.WebGLRenderer, root, requests);
+  root.userData.visualRevision = 1;
+  cache.renderNext({} as THREE.WebGLRenderer, root, requests);
+  finish({} as HTMLCanvasElement);
+  await new Promise(resolve => setTimeout(resolve, 0));
+  expect(cache.images.has('draft')).toBe(false);
+  cache.renderNext({} as THREE.WebGLRenderer, root, requests);
+  expect(render).toHaveBeenCalledTimes(2);
+  const replacement = {} as HTMLCanvasElement; finish(replacement);
+  await new Promise(resolve => setTimeout(resolve, 0));
+  expect(cache.images.get('draft')).toBe(replacement);
+});
+
 it('restores renderer state before awaiting pixels and retains the target until completion', async () => {
   let finish!: () => void, target: THREE.WebGLRenderTarget | null = null;
   const previous = new THREE.WebGLRenderTarget(1, 1);

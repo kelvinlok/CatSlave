@@ -3,6 +3,7 @@ import { DEFAULT_LAYOUT_ENVIRONMENT, FURNITURE_DEFINITIONS, RoomLayoutRuntime, c
 import { clearFloor, floorRoute } from '../src/room-navigation';
 import { Game } from '../src/simulation';
 import { PALETTE } from '../src/config';
+import preset from '../assets/lounge/default-layout.json';
 
 function fixture(): LayoutEnvironment {
   const definitions: FurnitureDefinition[] = ['a', 'b'].map((id, index) => ({ id, label: id,
@@ -15,13 +16,37 @@ function fixture(): LayoutEnvironment {
 }
 
 describe('room layouts', () => {
-  it('validates the authored default and keeps all 18 placements on reconciliation', () => {
+  it('uses the supplied arrangement, retaining all 16 placements and three stored poses', () => {
     const layout = defaultRoomLayout();
-    expect(Object.keys(layout.placed)).toHaveLength(18);
+    expect(layout.placed).toEqual(preset.placed);
+    expect(layout.unplaced).toEqual(preset.unplaced);
+    expect(Object.keys(layout.placed)).toHaveLength(16);
     expect(validateRoomLayout(layout)).toBeUndefined();
     const reconciled = reconcileRoomLayout(layout);
-    expect(reconciled.unplaced).toEqual([]);
+    expect(reconciled.unplaced).toEqual(preset.unplaced);
     expect(reconciled.placed).toEqual(layout.placed);
+  });
+  it('keeps preset copies independent and preserves authored model pivots', () => {
+    const first = defaultRoomLayout(), second = defaultRoomLayout();
+    first.placed.sofa.x = 100; first.unplaced[0].pose!.x = 100;
+    expect(second.placed).toEqual(preset.placed); expect(second.unplaced).toEqual(preset.unplaced);
+    expect(FURNITURE_DEFINITIONS.find(item => item.id === 'sofa')!.defaultPose).toEqual({ x: 2.65, z: 6.4, turn: 0 });
+    expect(FURNITURE_DEFINITIONS.find(item => item.id === 'table-1')!.defaultPose).toEqual({ x: -4.85, z: -6, turn: 0 });
+  });
+  it('uses full tabletop footprints for bedroom routes while ordinary walking retains leg gaps', () => {
+    const runtime = new RoomLayoutRuntime(), table = runtime.layout.placed['table-1'];
+    expect(runtime.roomNavigation.obstacles).toEqual(expect.arrayContaining([...runtime.navigation.obstacles]));
+    expect(clearFloor(table, 'whole-room', runtime.navigation)).toBe(true);
+    expect(clearFloor(table, 'whole-room', runtime.roomNavigation)).toBe(false);
+    const next = cloneRoomLayout(runtime.layout); next.placed['table-1'] = { x: -1, z: 0, turn: 1 }; runtime.apply(next);
+    expect(clearFloor(table, 'whole-room', runtime.roomNavigation)).toBe(true);
+    expect(clearFloor(next.placed['table-1'], 'whole-room', runtime.roomNavigation)).toBe(false);
+    delete next.placed['table-1']; runtime.apply(next);
+    expect(clearFloor({ x: -1, z: 0 }, 'whole-room', runtime.roomNavigation)).toBe(true);
+    const tree = next.placed['christmas-tree']; runtime.setFestiveDecorations(false);
+    expect(clearFloor(tree, 'whole-room', runtime.roomNavigation)).toBe(true);
+    runtime.setFestiveDecorations(true);
+    expect(clearFloor(tree, 'whole-room', runtime.roomNavigation)).toBe(false);
   });
   it('omits only furniture outside a changed floorplan and preserves its last pose', () => {
     const environment = fixture(), saved = defaultRoomLayout(environment);
@@ -119,8 +144,8 @@ describe('room layouts', () => {
     first.apply(next);
     expect(first.spots.some(spot => ['tree', 'post', 'wheel'].includes(spot.id))).toBe(false);
     expect(second.spots.some(spot => spot.id === 'wheel')).toBe(true);
-    expect(clearFloor({ x: -1.65, z: 6.5 }, 'whole-room', first.navigation)).toBe(true);
-    expect(clearFloor({ x: -1.65, z: 6.5 }, 'whole-room', second.navigation)).toBe(false);
+    expect(clearFloor(second.layout.placed.wheel, 'whole-room', first.navigation)).toBe(true);
+    expect(clearFloor(second.layout.placed.wheel, 'whole-room', second.navigation)).toBe(false);
   });
   it('repositions residents safely when committing and resets custom state for timed play', () => {
     const game = new Game(42);

@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
+import { loadChristmasWallDecor } from './christmas-wall-decor';
 
 // Seasonal dressing lives on fixed architecture and high shelves. It never
 // occupies a cat route or becomes part of the movable furniture/save format.
@@ -14,7 +15,9 @@ type V3 = [number, number, number];
 export function createChristmasRoom() {
   const root = new THREE.Group(); root.name = 'Christmas lounge';
   root.userData.christmas = true;
-  const pieces = new Map<Paint, THREE.BufferGeometry[]>();
+  const fixedPieces = new Map<Paint, THREE.BufferGeometry[]>();
+  const wallPieces = new Map<Paint, THREE.BufferGeometry[]>();
+  let pieces = fixedPieces;
   const markers: { name: string; position: V3 }[] = [];
   const matrix = new THREE.Matrix4(), rotation = new THREE.Quaternion();
   const add = (geometry: THREE.BufferGeometry, paint: Paint, p: V3, scale: V3 = [1, 1, 1], euler: V3 = [0, 0, 0]) => {
@@ -101,6 +104,7 @@ export function createChristmasRoom() {
   }
 
   function garland(name: string, from: V3, to: V3, swags: number, sag = .22) {
+    const previous = pieces; pieces = wallPieces;
     mark(name, from);
     const a = new THREE.Vector3(...from), b = new THREE.Vector3(...to), length = a.distanceTo(b);
     const points: V3[] = [], count = Math.ceil(length / .11);
@@ -116,9 +120,11 @@ export function createChristmasRoom() {
       }
     }
     tube('dark', points, .04, count);
+    pieces = previous;
   }
 
   function wreath(p: V3, r: number, turn = 0) {
+    const previous = pieces; pieces = wallPieces;
     mark('Evergreen wreath', p);
     add(new THREE.TorusGeometry(r, r * .17, 6, 40), 'dark', p, [1, 1, 1], [0, turn, 0]);
     const transform = new THREE.Matrix4().makeRotationY(turn);
@@ -130,9 +136,11 @@ export function createChristmasRoom() {
       if (i % 7 === 0) ball(i % 2 ? 'red' : 'gold', at(Math.cos(a) * r, Math.sin(a) * r, r * .18), [r * .09, r * .09, r * .09]);
     }
     bow(at(0, -r * .8, r * .24), r * .75, turn);
+    pieces = previous;
   }
 
   function stocking(p: V3, turn = 0) {
+    const previous = pieces; pieces = wallPieces;
     mark('Hanging stocking', p);
     const shape = new THREE.Shape();
     shape.moveTo(-.13, .18); shape.lineTo(.13, .18); shape.lineTo(.12, -.17);
@@ -143,16 +151,19 @@ export function createChristmasRoom() {
     add(new THREE.BoxGeometry(.31, .12, .1), 'cream', [p[0], p[1] + .16, p[2] + .03], [1, 1, 1], [0, turn, -.06]);
     const starPos = new THREE.Vector3(0, -.1, .085).applyAxisAngle(new THREE.Vector3(0, 1, 0), turn).add(new THREE.Vector3(...p));
     star(starPos.toArray() as V3, .075, turn);
+    pieces = previous;
   }
 
-  // Rear wall and fixed cubbies: all shelf ornaments stay clear of the perch at z=-.85.
-  tree([-7.03, 1.65, -6.75], 2.0);
-  gift([-6.96, 1.82, -5.8], [.48, .34, .42], 'red');
-  gift([-6.99, 1.79, -5.28], [.4, .28, .4], 'teal');
-  gift([-6.98, 1.94, -4.75], [.46, .58, .38], 'cream');
+  // Leave the bedroom landing at z[-5.7,-4.8] and the perch at z=-.85 clear.
+  tree([-7.03, 1.65, -3.4], 2.0);
+  gift([-6.96, 1.82, -2.6], [.48, .34, .42], 'red');
+  gift([-6.99, 1.79, -2.1], [.4, .28, .4], 'teal');
+  gift([-6.98, 1.94, -1.6], [.46, .58, .38], 'cream');
   garland('Mural garland', [-6.12, 4.49, -7.66], [.9, 4.49, -7.66], 3, .3);
   garland('Cubby fairy lights', [-6.35, 3.55, -7.35], [-6.35, 3.55, -.55], 3, .23);
+  pieces = wallPieces;
   for (const x of [-5.7, -3.35, -.95]) bow([x, 4.24, -7.57], .32);
+  pieces = fixedPieces;
   // Projecting wall faces into the lounge; mounted dressing has no floor footprint.
   wreath([1.16, 2.7, -3.6], .66, -Math.PI / 2);
   garland('Right wall garland', [1.14, 4.15, -7.6], [1.14, 4.15, -1.5], 3, .28);
@@ -182,7 +193,8 @@ export function createChristmasRoom() {
   }
 
   // One draw per material for the whole room, rather than per bulb or needle.
-  for (const [paint, geometries] of pieces) {
+  const wallFallback = new THREE.Group(); wallFallback.name = 'Wall decoration loading fallback'; root.add(wallFallback);
+  for (const [bucket, parent] of [[fixedPieces, root], [wallPieces, wallFallback]] as const) for (const [paint, geometries] of bucket) {
     const material = new THREE.MeshStandardMaterial({ name: `Christmas | ${paint}`,
       color: paint === 'light' ? '#fff1c2' : palette[paint],
       roughness: paint === 'gold' ? .3 : paint === 'red' ? .48 : .84,
@@ -192,8 +204,9 @@ export function createChristmasRoom() {
     const geometry = mergeGeometries(geometries)!; geometries.forEach(part => part.dispose());
     geometry.computeBoundingSphere();
     const mesh = new THREE.Mesh(geometry, material); mesh.name = `Christmas | ${paint}`;
-    root.add(mesh);
+    parent.add(mesh);
   }
   root.userData.decorations = markers;
+  if (typeof window !== 'undefined') void loadChristmasWallDecor(root, wallFallback);
   return root;
 }

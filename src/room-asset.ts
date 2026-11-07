@@ -4,6 +4,7 @@ import { prepareAssetShaders } from './asset-shader-preparation';
 import layout from '../assets/lounge/layout.json';
 import { ROOM_ENTRANCE } from './room-boundaries';
 import { createChristmasRoom } from './christmas-room';
+import { createChristmasTree } from './christmas-tree';
 
 let source: THREE.Group | undefined;
 let pending: Promise<THREE.Group | undefined> | undefined;
@@ -41,6 +42,8 @@ function loadRoom() {
 export function createRoom() {
   const root = new THREE.Group(); root.name = 'video-lounge'; root.userData.loaded = false;
   root.add(createChristmasRoom());
+  const christmasTree = createChristmasTree(); root.add(christmasTree);
+  root.userData.christmasTree = christmasTree.uuid;
   const shell = new THREE.Group(); shell.name = 'room-loading-shell'; root.add(shell);
   const floor = new THREE.MeshStandardMaterial({ color: '#bd956b', roughness: 0.8 });
   const wall = new THREE.MeshStandardMaterial({ color: '#e5e0d4', roughness: 0.95 });

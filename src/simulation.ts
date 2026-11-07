@@ -5,6 +5,7 @@ import { FURNITURE } from './furniture';
 import { RoomLayoutRuntime, defaultRoomLayout, findSafeFloorPositions, type RoomLayout } from './room-layout';
 import { beginVisit, tickVisit } from './cat-behavior';
 import { FreeRoam } from './free-roam';
+import { CatRooms } from './cat-rooms';
 import { BONUS_GAMES, BonusRound } from './bonus';
 import { WHEEL } from './cat-wheel';
 import { roomFloorContains, type FloorArea } from './room-boundaries';
@@ -18,7 +19,17 @@ export class Random {
 }
 
 export class Game {
-  festiveDecorations = true;
+  private festive = true;
+  get festiveDecorations() { return this.festive; }
+  set festiveDecorations(enabled: boolean) {
+    this.festive = enabled;
+    this.roomLayout.setFestiveDecorations(enabled);
+    this.defaultLayout.setFestiveDecorations(enabled);
+    if (!enabled) for (const cat of this.cats) if (cat.visit?.id === 'christmas-tree') {
+      cat.visit = undefined; cat.elevation = 0; cat.jumpDrop = undefined; cat.jumpRise = undefined; cat.pose = 0; cat.activity = 'idle';
+      cat.destination = { ...cat.position }; cat.decisionAt = this.clock + 2;
+    }
+  }
   phase: Phase = 'title';
   resumePhase: 'playing' | 'tutorial' | 'bonus' | 'free-play' = 'playing';
   adoptedCats: string[] = [PALETTE[0].name];
@@ -75,12 +86,39 @@ export class Game {
   }
   freePlayUnlocked = false;
   freePlayRoster: string[] = [];
+  private readonly catRooms = new CatRooms();
+  roomActionError = '';
+  get roomSlots() { return this.catRooms.slots as readonly (CatState | undefined)[]; }
+  get sleepingCats() { return this.catRooms.sleeping; }
+  get roomTransitions() { return [...this.catRooms.transitions.values()]; }
+  exportCatRooms() { return this.catRooms.export(); }
+  restoreCatRooms(value: unknown) { return this.catRooms.restore(value, this.adoptedCats); }
+  sendCatToRoom(catId: number, roomIndex?: number) {
+    this.roomActionError = '';
+    if (this.phase !== 'free-play') { this.roomActionError = 'Return to Free Play first.'; return false; }
+    const cat = this.cats.find(cat => cat.id === catId);
+    if (!cat) { this.roomActionError = 'Choose a cat in the lounge.'; return false; }
+    if (!this.catRooms.send(cat, this.cats, this.roomLayout.roomNavigation, roomIndex, this.roomLayout.navigation)) { this.roomActionError = this.catRooms.lastError; return false; }
+    this.freeRoam.cancel(cat.id, this.cats, this.clock); cat.decisionAt = Infinity;
+    this.say(`${cat.name} is heading to bed.`); this.revision++; return true;
+  }
+  wakeRoomCat(roomIndex: number) {
+    this.roomActionError = '';
+    if (this.phase !== 'free-play') { this.roomActionError = 'Return to Free Play first.'; return false; }
+    if (!Number.isInteger(roomIndex) || roomIndex < 0 || roomIndex >= 8) { this.roomActionError = 'Choose a room first.'; return false; }
+    const cat = this.roomSlots[roomIndex];
+    if (!cat) { this.roomActionError = 'This room is empty.'; return false; }
+    if (!this.adoptedCats.includes(cat.name)) { this.roomActionError = 'This cat is not unlocked.'; return false; }
+    if (!this.catRooms.wake(roomIndex, this.cats, this.roomLayout.roomNavigation)) { this.roomActionError = this.catRooms.lastError; return false; }
+    this.selectedFreeCatId = cat.id; this.say(`${cat.name} is coming out to play!`); this.revision++; return true;
+  }
   selectedFreeCatId?: number;
   freeInteraction: 'pet' | 'wand' | 'camera' = 'pet';
   freePatUntil = 0;
   readonly freeRoam = new FreeRoam();
   readonly roomLayout = new RoomLayoutRuntime();
-  private get layoutRuntime() { return this.inFreePlay ? this.roomLayout : undefined; }
+  private readonly defaultLayout = new RoomLayoutRuntime();
+  private get layoutRuntime() { return this.inFreePlay ? this.roomLayout : this.defaultLayout; }
   get inFreePlay() { return this.phase === 'free-play' || this.phase === 'room-editor' || this.phase === 'room-notice' || this.phase === 'paused' && this.resumePhase === 'free-play'
     || this.phase === 'wardrobe' && this.wardrobeReturnPhase === 'free-play'; }
   private get catFloorArea(): FloorArea { return this.inFreePlay ? 'whole-room' : 'main-room'; }
@@ -128,9 +166,10 @@ export class Game {
   get timeLeft() { return Math.max(0, this.config.duration - this.stageElapsed); }
 
   private makeCat(palette: typeof PALETTE[number], index: number): CatState {
+    const position = findSafeFloorPositions(this.defaultLayout.navigation, [{ x: 0, z: -1.2 }, { x: 0, z: 1.2 }], 1)[0];
     return { ...palette, id: this.nextId++, appearance: palette.appearance ?? 'primitive', behavior: { needRate: 1, patience: 1 },
       nextNeedAt: 0, happyUntil: 0, attackUntil: 0,
-      position: { x: 0, z: -1.2 }, destination: { x: 0, z: -1.2 }, yaw: 0.65, stride: 0, activity: 'idle', decisionAt: 0.6, elevation: 0, pose: 0 };
+      position: { ...position }, destination: { ...position }, yaw: 0.65, stride: 0, activity: 'idle', decisionAt: 0.6, elevation: 0, pose: 0 };
   }
 
   restoreFreePlay(names: unknown) {
@@ -146,7 +185,7 @@ export class Game {
 
   startFreePlay() {
     if (!this.freePlayUnlocked || !['title', 'victory'].includes(this.phase)) return false;
-    if (this.phase === 'title') this.cats = this.freePlayRoster.map((name, i) => this.makeCat(PALETTE.find(p => p.name === name)!, i));
+    this.cats = this.catRooms.initialize(this.freePlayRoster, this.adoptedCats, name => this.makeCat(PALETTE.find(p => p.name === name)!, 0), this.cats);
     this.startStage(); this.phase = 'free-play'; this.events = []; this.bonus = undefined;
     this.hp = 100; this.selectedFreeCatId = this.cats[0]?.id; this.freeInteraction = 'pet';
     this.cats.forEach((cat, i) => { cat.nextNeedAt = Infinity; cat.pendingNeed = undefined; cat.decisionAt = this.clock + 5 + i * 2; });
@@ -160,10 +199,11 @@ export class Game {
       this.cats.filter(cat => cat.elevation === 0).map(cat => cat.position), this.cats.length);
   }
   /** Check before persisting; this does not change the simulation or its caches. */
-  canApplyRoomLayout(layout: RoomLayout) { return this.layoutPositions(layout).length === this.cats.length; }
+  canApplyRoomLayout(layout: RoomLayout) { return !this.roomTransitions.length && this.layoutPositions(layout).length === this.cats.length; }
 
   /** Commit layout and safe cat placement together; callers validate/reconcile first. */
   applyRoomLayout(layout: RoomLayout) {
+    if (this.roomTransitions.length && this.inFreePlay) return false;
     const positions = this.layoutPositions(layout);
     if (positions.length !== this.cats.length) return false;
     // Reserve reusable points for their original residents before assigning any
@@ -180,7 +220,7 @@ export class Game {
     this.roomLayout.apply(layout);
     this.cats.forEach((cat, i) => {
       cat.position = assigned.get(cat.id)!; cat.destination = { ...cat.position };
-      cat.visit = undefined; cat.lastFurniture = undefined; cat.elevation = 0;
+      cat.visit = undefined; cat.lastFurniture = undefined; cat.elevation = 0; cat.jumpDrop = undefined; cat.jumpRise = undefined;
       cat.activity = 'idle'; cat.pose = 0; cat.wheelRunSpeed = 0;
       cat.stretchStartedAt = undefined; cat.nextStretchAt = this.clock + 12 + i * 3;
       cat.decisionAt = this.clock + 5 + i * 2;
@@ -198,7 +238,7 @@ export class Game {
   interactFreeCat(kind: 'pet' | 'wand', catId = this.selectedFreeCatId) {
     if (this.phase !== 'free-play') return false;
     const cat = this.cats.find(c => c.id === catId);
-    if (!cat) return false;
+    if (!cat || this.catRooms.transitions.has(cat.id)) return false;
     this.freeRoam.cancel(cat.id, this.cats, this.clock);
     cat.happyUntil = this.clock + 2;
     if (kind === 'wand' && cat.visit) cat.visit.leaveRequested = true;
@@ -238,15 +278,15 @@ export class Game {
     this.bonus = undefined;
     this.practiceBonus = false;
     this.stageDamageStart = this.damageSerial;
+    const starts = findSafeFloorPositions(this.roomLayout.navigation,
+      [{ x: 0, z: 1.2 }, { x: -0.7, z: -3.8 }, { x: 0.5, z: -4.4 }, { x: -0.3, z: 2.8 }, { x: 2, z: 3.2 }], this.cats.length);
     this.cats.forEach((cat, i) => {
       cat.nextNeedAt = this.clock + 1.5 + i * 1.1; cat.attackUntil = 0;
-      // These five starts sit in the lounge's open aisle, outside the table legs
-      // and loveseat. Free play shares this reset path.
-      const starts = [{ x: 0, z: 1.2 }, { x: -0.7, z: -3.8 }, { x: 0.5, z: -4.4 }, { x: -0.3, z: 2.8 }, { x: 2, z: 3.2 }];
+      // Keep preferred aisle starts when clear, and relocate any covered by the preset.
       cat.position = { ...starts[i] };
       cat.destination = { ...cat.position }; cat.activity = 'idle'; cat.decisionAt = this.clock + 0.6 + i * 0.3;
       cat.stretchStartedAt = undefined; cat.nextStretchAt = this.clock + 12 + i * 3;
-      cat.elevation = 0; cat.pose = 0; cat.visit = undefined; cat.lastFurniture = undefined; cat.pendingNeed = undefined;
+      cat.elevation = 0; cat.jumpDrop = undefined; cat.jumpRise = undefined; cat.pose = 0; cat.visit = undefined; cat.lastFurniture = undefined; cat.pendingNeed = undefined;
       cat.wheelRunSpeed = 0;
     });
     this.revision++;
@@ -336,8 +376,16 @@ export class Game {
   private moveCats(dt: number) {
     const area = this.catFloorArea;
     this.wheelSpeed = 0;
-    if (this.inFreePlay) this.freeRoam.update(this.cats, this.clock, dt, this.movementRandom, this.layoutRuntime?.navigation);
+    if (this.inFreePlay) {
+      if (this.catRooms.tick(this.cats, this.roomLayout.roomNavigation, dt, this.clock, this.roomLayout.navigation)) {
+        this.roomActionError = this.catRooms.lastError;
+        if (!this.cats.some(cat => cat.id === this.selectedFreeCatId)) this.selectedFreeCatId = this.cats[0]?.id;
+        this.freeRoam.reset(this.cats, this.clock); this.revision++;
+      }
+      this.freeRoam.update(this.cats.filter(cat => !this.catRooms.transitions.has(cat.id)), this.clock, dt, this.movementRandom, this.layoutRuntime.navigation);
+    }
     for (const cat of this.cats) {
+      if (this.inFreePlay && this.catRooms.transitions.has(cat.id) && !cat.visit) continue;
       if (this.inFreePlay && this.freeRoam.busy(cat.id)) continue;
       const need = this.events.find(e => e.catId === cat.id);
       if (cat.visit) {
@@ -383,7 +431,7 @@ export class Game {
       }
       if (cat.activity !== 'walking' && this.clock >= cat.decisionAt) {
         if (!need && cat.nextNeedAt > this.clock + 2 && this.movementRandom.next() < (this.inFreePlay ? 0.45 : 0.8)) {
-          const spots = (this.layoutRuntime?.spots ?? FURNITURE).filter(spot => spot.id !== cat.lastFurniture && !this.cats.some(other => other.visit?.id === spot.id)
+          const spots = (this.layoutRuntime?.spots ?? FURNITURE).filter(spot => (spot.id !== 'christmas-tree' || this.festiveDecorations) && spot.id !== cat.lastFurniture && !this.cats.some(other => other.visit?.id === spot.id)
             && spot.route.every(point => roomFloorContains(point, 0.22, area)));
           if (spots.length && this.visitFurniture(cat.id, this.movementRandom.choose(spots).id)) continue;
         }
@@ -421,6 +469,7 @@ export class Game {
     const cat = this.cats.find(c => c.id === this.selectedFreeCatId);
     let accepted = false;
     if (!cat) this.say('Choose a cat first');
+    else if (this.catRooms.transitions.has(cat.id)) this.say(`${cat.name} is moving between rooms.`);
     else if (cat.visit?.id === 'wheel') this.say(`${cat.name} already has the wheel.`);
     else if (this.cats.some(c => c.visit?.id === 'wheel')) this.say('The wheel is busy. Try when it is free.');
     else if (cat.visit) this.say(`${cat.name} is busy. Try after they step down.`);
@@ -433,6 +482,7 @@ export class Game {
   }
 
   visitFurniture(catId: number, id: string) {
+    if (id === 'christmas-tree' && !this.festiveDecorations || this.inFreePlay && this.catRooms.transitions.has(catId)) return false;
     const cat = this.cats.find(c => c.id === catId);
     if ((!this.active && this.phase !== 'free-play') || !cat || this.inFreePlay && this.freeRoam.busy(catId) || this.events.some(e => e.catId === catId)) return false;
     return beginVisit(cat, id, this.cats, this.catFloorArea, this.layoutRuntime);
@@ -532,8 +582,11 @@ export class Game {
     const candidate = this.candidates.find(c => c.id === id);
     if (!candidate) return;
     this.restoreAdoptedCats([candidate.name]);
+    const position = findSafeFloorPositions(this.defaultLayout.navigation,
+      [...this.cats.map(cat => cat.position), { x: 0, z: 1.2 }], this.cats.length + 1)
+      .find(point => this.cats.every(cat => Math.hypot(cat.position.x - point.x, cat.position.z - point.z) >= .7))!;
     this.cats.push({ ...candidate, nextNeedAt: 0, happyUntil: 0, attackUntil: 0,
-      position: { x: 0, z: -1.2 }, destination: { x: 0, z: -1.2 }, yaw: 0.65, stride: 0, activity: 'idle', decisionAt: this.clock + 1, elevation: 0, pose: 0 });
+      position: { ...position }, destination: { ...position }, yaw: 0.65, stride: 0, activity: 'idle', decisionAt: this.clock + 1, elevation: 0, pose: 0 });
     this.candidates = []; this.upcomingAdoption = []; this.phase = 'upgrade'; this.revision++;
   }
   upgrade(tool: ToolId) {

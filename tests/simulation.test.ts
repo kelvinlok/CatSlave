@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { Game, Random } from '../src/simulation';
 import { ROOM, STAGES, TOOLS } from '../src/config';
 import { winBonus } from './support/bonus';
+import { clearFloor } from '../src/room-navigation';
 
 function active(seed = 42) { const game = new Game(seed); game.reset(); return game; }
 function completeAll(game: Game) {
@@ -13,6 +14,14 @@ function spendUpgrades(game: Game) {
 }
 
 describe('simulation', () => {
+  it('starts tutorial, stages and newly adopted cats on clear floor in the default layout', () => {
+    const game = new Game(42);
+    const check = () => game.cats.forEach(cat => expect(clearFloor(cat.position, 'whole-room', game.roomLayout.navigation)).toBe(true));
+    check(); game.reset(true); check(); game.reset(); check();
+    survive(game); game.adopt(game.candidates[0].id);
+    expect(clearFloor(game.cats.at(-1)!.position, 'whole-room', game.roomLayout.navigation)).toBe(true);
+    game.startStage(); check();
+  });
   it('retains the prefetched pair through each stage and bonus, then prepares the next pair', () => {
     const game = new Game(42);
     expect(game.upcomingAdoption).toEqual([]);
@@ -167,7 +176,7 @@ describe('simulation', () => {
   });
   it('wanders deterministically, leaving each cleaning mess at its birth location', () => {
     const a = active(17), b = active(17);
-    for (const g of [a, b]) { g.cats[0].position = { x: 1.2, z: -0.5 }; g.spawn(g.cats[0], 'fur'); }
+    for (const g of [a, b]) { g.cats[0].position = { x: 1.5, z: 0.5 }; g.spawn(g.cats[0], 'fur'); }
     const origin = { ...a.events[0].position };
     expect(Math.hypot(origin.x - a.cats[0].position.x, origin.z - a.cats[0].position.z)).toBeLessThan(0.7);
     a.tick(8); b.tick(8);
@@ -188,8 +197,17 @@ describe('simulation', () => {
   });
   it('allows a cat to cross the entire shared floor while staying inside its bounds', () => {
     const game = new Game(17); game.reset(true);
-    const positions = [];
-    for (let i = 0; i < 600; i++) { game.tick(0.5); positions.push({ ...game.cats[0].position }); }
+    const positions = [], cat = game.cats[0];
+    cat.nextNeedAt = Infinity; cat.nextStretchAt = Infinity; cat.decisionAt = Infinity;
+    // Verify navigation across the shared floor independently of the random
+    // furniture itinerary, which changes whenever another interaction is added.
+    for (const target of [{ x: -5.2, z: 3.5 }, { x: 2.2, z: 3.5 }, { x: -5, z: -5.5 }]) {
+      cat.activity = 'walking'; cat.destination = target;
+      for (let i = 0; i < 1600 && cat.activity === 'walking'; i++) {
+        game.tick(.05); positions.push({ ...cat.position });
+      }
+      expect(Math.hypot(cat.position.x - target.x, cat.position.z - target.z), JSON.stringify({ target, actual: cat.position })).toBeLessThan(.03);
+    }
     expect(Math.min(...positions.map(p => p.x))).toBeLessThan(-5);
     expect(Math.max(...positions.map(p => p.x))).toBeGreaterThan(2);
     expect(Math.min(...positions.map(p => p.z))).toBeLessThan(-4.5);

@@ -33,7 +33,7 @@ it('preserves every accessor, material, and image while sharing the eight identi
       expect({ ...next, bufferView: accessor.bufferView }).toEqual(accessor);
       if (accessor.bufferView !== undefined) expect(bytesAt(after, next.bufferView).equals(bytesAt(before, accessor.bufferView))).toBe(true);
     });
-    before.json.images.forEach((image: { bufferView: number }, index: number) => {
+    (before.json.images ?? []).forEach((image: { bufferView: number }, index: number) => {
       const next = after.json.images[index];
       if (next.uri) {
         const uri = path.posix.normalize(path.posix.join(path.posix.dirname(file), next.uri));
@@ -47,6 +47,7 @@ it('preserves every accessor, material, and image while sharing the eight identi
   // Unsupported Meshopt data and non-sharing room are byte-identical.
   expect(models.get('models/momo.glb')).toBe(inputs.get('models/momo.glb'));
   expect(models.get('models/lounge.glb')).toBe(inputs.get('models/lounge.glb'));
+  expect(models.get('models/christmas-tree.glb')).toBe(inputs.get('models/christmas-tree.glb'));
   const oldSize = [...inputs.values()].reduce((sum, bytes) => sum + gzipSync(bytes, { level: 9 }).length, 0);
   const newSize = [...models.values()].reduce((sum, bytes) => sum + gzipSync(bytes, { level: 9 }).length, 0)
     + [...shared.values()].reduce((sum, bytes) => sum + bytes.length, 0);

@@ -32,6 +32,18 @@ export function tickVisit(cat: CatState, clock: number, dt: number, cats: readon
     cat.yaw += delta * Math.min(1, dt * 7); return delta;
   };
   if (visit.phase === 'use') {
+    if (spot.id === 'christmas-tree') {
+      // Paw up the branches, lose purchase, then slide back to the exact safe
+      // approach point. This tree never provides a perch or an elevated exit.
+      const p = Math.min(1, Math.max(0, 1 - (visit.until - clock) / spot.duration));
+      turnToward(spot.yaw); cat.activity = 'scratching'; cat.pose = p;
+      cat.elevation = p < .45 ? .55 * p / .45 : p < .7 ? .55 * (1 - (p - .45) / .25) ** 2 : 0;
+      if (p < 1) return wheelDistance;
+      cat.visit = undefined; cat.lastFurniture = spot.id; cat.elevation = 0;
+      cat.activity = 'idle'; cat.pose = 0; cat.decisionAt = clock + pacing.rest;
+      cat.destination = { ...cat.position };
+      return wheelDistance;
+    }
     cat.activity = spot.activity; const turn = turnToward(spot.yaw);
     const finish = clock >= visit.until || visit.leaveRequested && clock >= visit.until - spot.duration * pacing.durationScale + 1;
     if (spot.id === 'wheel') {
@@ -45,7 +57,7 @@ export function tickVisit(cat: CatState, clock: number, dt: number, cats: readon
   const target = visit.route[visit.index];
   if (!target) {
     if (visit.phase === 'approach') {
-      visit.phase = 'use'; visit.until = clock + spot.duration * pacing.durationScale;
+      visit.phase = 'use'; visit.until = clock + spot.duration * (spot.id === 'christmas-tree' ? 1 : pacing.durationScale);
       cat.activity = spot.activity;
     } else {
       cat.visit = undefined; cat.lastFurniture = spot.id; cat.elevation = 0;

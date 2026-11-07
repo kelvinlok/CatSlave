@@ -12,6 +12,7 @@ export class RoomLayoutPreviews {
   private pending = false;
   private completed = false;
   private generation = 0;
+  private visualRevision = 0;
   invalidate() {
     this.generation++; this.images.clear(); this.signatures.clear(); this.desired.clear();
   }
@@ -20,6 +21,8 @@ export class RoomLayoutPreviews {
     for (const request of requests) if (this.signatures.get(request.id) !== JSON.stringify(request.layout)) this.images.delete(request.id);
   }
   renderNext(renderer: THREE.WebGLRenderer, root: THREE.Group, requests: LayoutPreviewRequest[]) {
+    const visualRevision = root.userData.visualRevision ?? 0;
+    if (visualRevision !== this.visualRevision) { this.visualRevision = visualRevision; this.invalidate(); }
     const completed = this.completed; this.completed = false;
     if (!root.userData.loaded) return completed;
     this.prepare(requests);

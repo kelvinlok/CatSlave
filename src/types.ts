@@ -14,6 +14,10 @@ export interface CatState extends CatDefinition {
   activity: CatActivity; decisionAt: number;
   nextStretchAt?: number; stretchStartedAt?: number;
   elevation: number; pose: number;
+  /** Positive support-height drop for the current descending jump only. */
+  jumpDrop?: number;
+  /** Positive height gained by a bedroom ascent, for its push/reach pose. */
+  jumpRise?: number;
   /** Tread speed during a reserved exercise-wheel visit, in world units/second. */
   wheelRunSpeed?: number;
   visit?: import('./furniture').FurnitureVisit; lastFurniture?: string;

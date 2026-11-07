@@ -270,6 +270,77 @@ describe('articulated cat animation', () => {
     }
   });
 
+  it('drops nose first with reaching forepaws, then absorbs contact before bringing the hind paws down', () => {
+    const { cat, model } = fixture('jumping'); cat.jumpDrop = 2;
+    model.root.position.set(2, .6, -1);
+    const sample = (progress: number) => {
+      cat.pose = progress; animateCat(model, cat, 1 + progress * JUMP_DURATION);
+      return model.paws.map(footPosition);
+    };
+    const stance = sample(0), rest = model.body.position.y;
+    sample(.08);
+    expect(rest - model.body.position.y).toBeGreaterThan(.05);
+    expect(rest - model.body.position.y).toBeLessThan(.1);
+    const departure = sample(JUMP_TAKEOFF);
+    departure.slice(2).forEach((foot,i) => expect(foot.distanceTo(stance[i+2])).toBeLessThan(.00001));
+    const flight = sample(.6);
+    expect(model.body.rotation.x).toBeGreaterThan(.18);
+    expect(flight[0].y).toBeLessThan(flight[2].y - .05);
+    expect(flight[1].y).toBeLessThan(flight[3].y - .05);
+    expect(flight[0].z).toBeGreaterThan(stance[0].z + .07);
+    const contact = sample(JUMP_TOUCHDOWN);
+    contact.slice(0,2).forEach((foot,i) => expect(foot.distanceTo(stance[i])).toBeLessThan(.00001));
+    contact.slice(2).forEach((foot,i) => expect(foot.y).toBeGreaterThan(stance[i+2].y + .02));
+    sample(.89); expect(model.body.position.y).toBeLessThan(rest - .12);
+    const compressed = snapshot(model.root);
+    animateCat(model, cat, 1 + .89 * JUMP_DURATION); expect(snapshot(model.root)).toEqual(compressed);
+    const settled = sample(.95);
+    settled.forEach((foot,i) => expect(foot.distanceTo(stance[i])).toBeLessThan(.00001));
+    sample(1); expect(model.body.position.y).toBeCloseTo(rest);
+    expect(model.body.rotation.x).toBe(0); expect(model.root.position.toArray()).toEqual([2,.6,-1]);
+  });
+
+  it('keeps descent paws planted throughout takeoff and landing, with finite continuous joint poses', () => {
+    for (const drop of [.18, 1.2, 2.4]) {
+      const {cat,model}=fixture('jumping'); cat.jumpDrop=drop;
+      let previous: number[] | undefined;
+      for (let frame=0;frame<=120;frame++) {
+        cat.pose=frame/120; animateCat(model,cat,1+cat.pose*JUMP_DURATION);
+        const current=snapshot(model.root); expect(current.every(Number.isFinite)).toBe(true);
+        if (previous) expect(Math.max(...current.map((value,i)=>Math.abs(value-previous![i]))), `drop=${drop},frame=${frame}`).toBeLessThan(.2);
+        previous=current;
+        if(cat.pose<=JUMP_TAKEOFF) for(const paw of model.paws.slice(2)) expect(footPosition(paw).y).toBeCloseTo(.07*.52,6);
+        if(cat.pose>=JUMP_TOUCHDOWN) for(const paw of model.paws.slice(0,2)) expect(footPosition(paw).y).toBeCloseTo(.07*.52,6);
+        if(cat.pose>=.9) for(const paw of model.paws) expect(footPosition(paw).y).toBeCloseTo(.07*.52,6);
+      }
+    }
+  });
+
+  it('pushes upward and reaches for higher shelves while keeping contact poses grounded', () => {
+    for (const rise of [.18, 1.62, 2.16]) {
+      const {cat,model}=fixture('jumping'); cat.jumpRise=rise;
+      let previousFeet: ReturnType<typeof footPosition>[] | undefined;
+      for (let frame=0;frame<=120;frame++) {
+        cat.pose=frame/120; animateCat(model,cat,1+cat.pose*JUMP_DURATION);
+        const current=snapshot(model.root); expect(current.every(Number.isFinite)).toBe(true);
+        const feet = model.paws.map(footPosition);
+        if(previousFeet) feet.forEach((foot,i) => expect(foot.distanceTo(previousFeet![i]), `rise=${rise},frame=${frame}`).toBeLessThan(.08));
+        previousFeet=feet;
+        if(cat.pose<=JUMP_TAKEOFF) for(const paw of model.paws.slice(2)) expect(footPosition(paw).y).toBeCloseTo(.07*.52,6);
+        if(frame===48) expect(model.body.rotation.x).toBeLessThan(rise > 1 ? -.15 : 0);
+        if(cat.pose>=.95) for(const paw of model.paws) expect(footPosition(paw).y).toBeCloseTo(.07*.52,6);
+      }
+    }
+  });
+
+  it('preserves ordinary jumps when no positive drop is supplied', () => {
+    const baseline=fixture('jumping'); baseline.cat.pose=.6; animateCat(baseline.model,baseline.cat,2);
+    for(const drop of [undefined,0,-1,NaN]) {
+      const {cat,model}=fixture('jumping');cat.pose=.6;cat.jumpDrop=drop;animateCat(model,cat,2);
+      expect(snapshot(model.root)).toEqual(snapshot(baseline.model.root));
+    }
+  });
+
   it('uses visible curved lids for happy squints and restores open eyes afterwards', () => {
     const { model, cat } = fixture();
     animateCat(model, cat, 1, { happy: true });

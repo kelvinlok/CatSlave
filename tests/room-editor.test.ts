@@ -18,7 +18,7 @@ class MemoryStorage {
 }
 function spareTable(): RoomLayout {
   const layout = defaultRoomLayout();
-  layout.unplaced = Object.entries(layout.placed).filter(([id]) => id !== 'table-1').map(([id, pose]) => ({ id, pose, reason: 'Not placed' }));
+  layout.unplaced = [...layout.unplaced, ...Object.entries(layout.placed).filter(([id]) => id !== 'table-1').map(([id, pose]) => ({ id, pose, reason: 'Not placed' }))];
   layout.placed = { 'table-1': { x: -2, z: 0, turn: 0 } };
   return layout;
 }
@@ -30,7 +30,7 @@ describe('room editor transactions', () => {
     expect(editor.storeSelected()).toBe(true);
     expect(editor.draft.placed.wheel).toBeUndefined(); expect(editor.previewPose).toBeUndefined();
     expect(editor.selectedId).toBeUndefined();
-    expect(editor.draft.unplaced).toEqual([{ id: 'wheel', pose, reason: 'Stored in inventory', stored: true }]);
+    expect(editor.draft.unplaced).toEqual([...original.unplaced, { id: 'wheel', pose, reason: 'Stored in inventory', stored: true }]);
     expect(original.placed.wheel).toEqual(pose);
     expect(editor.storeSelected()).toBe(false);
     editor.undo(); expect(editor.draft).toEqual(original);
@@ -87,13 +87,35 @@ describe('room editor transactions', () => {
 });
 
 describe('room layout files and slots', () => {
+  it('seeds all new slots and resets/exports with independent copies of the selected default', () => {
+    const memory = new MemoryStorage(), store = new RoomLayoutStore(memory), preset = defaultRoomLayout();
+    expect(store.activeSlot).toBe(0); expect(store.slots).toEqual([preset, preset, preset]);
+    expect(memory.writes).toEqual([]);
+    store.slots[0].placed.sofa.x = 100; store.slots[0].unplaced[0].pose!.x = 100;
+    expect(store.slots[1]).toEqual(preset); expect(store.slots[2]).toEqual(preset);
+    const editor = new RoomEditor(spareTable()); editor.reset();
+    expect(editor.draft).toEqual(preset);
+    expect(importRoomLayout(editor.export())).toEqual(preset);
+  });
+  it('preserves all existing saved slots and active selection when the bundled default changes', () => {
+    const memory = new MemoryStorage(), first = spareTable(), second = defaultRoomLayout(), third = spareTable();
+    first.placed['table-1'] = { x: -2.25, z: 0, turn: 1 };
+    third.placed['table-1'] = { x: -1.5, z: 0, turn: 2 };
+    const record = { formatVersion: 1, activeSlot: 2, slots: [first, second, third] }, raw = JSON.stringify(record);
+    memory.values.set(ROOM_LAYOUT_STORAGE_KEY, raw);
+    const store = new RoomLayoutStore(memory);
+    expect(store.activeSlot).toBe(2); expect(store.slots).toEqual(record.slots);
+    expect(store.load().placed).toEqual(third.placed);
+    expect(store.load().unplaced).toEqual([...third.unplaced].sort((a,b) => a.id.localeCompare(b.id)));
+    expect(memory.getItem(ROOM_LAYOUT_STORAGE_KEY)).toBe(raw); expect(memory.writes).toEqual([]);
+  });
   it('persists inventory through slots and files without warnings, while still reporting update omissions and retired items', () => {
     const editor = new RoomEditor(defaultRoomLayout()); editor.select('wheel'); editor.storeSelected();
     const memory = new MemoryStorage(), store = new RoomLayoutStore(memory);
     store.save(1, importRoomLayout(editor.export()));
     const reload = new RoomLayoutStore(memory), layout = reload.load();
     expect(layout.placed.wheel).toBeUndefined();
-    expect(layout.unplaced[0]).toMatchObject({ id: 'wheel', stored: true, pose: defaultRoomLayout().placed.wheel });
+    expect(layout.unplaced.find(item => item.id === 'wheel')).toMatchObject({ id: 'wheel', stored: true, pose: defaultRoomLayout().placed.wheel });
     expect(reload.noticeNeeded(1, layout)).toBe(false);
     layout.placed['table-1'].x = 99;
     const updated = reconcileRoomLayout(layout);

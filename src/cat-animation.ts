@@ -145,15 +145,48 @@ function targetPose(model: CatModel, cat: CatState, time: number, angry: boolean
     case 'jumping': {
       const progress = clamp(cat.pose);
       const curve = (keys: readonly (readonly [number, number])[]) => jumpCurve(progress, keys);
+      if (Number.isFinite(cat.jumpDrop) && cat.jumpDrop! > 0) {
+        const drop = clamp(cat.jumpDrop! / 2);
+        const crouch = curve([[0,0],[.08,1],[JUMP_TAKEOFF,0],[1,0]]);
+        const airborne = curve([[0,0],[JUMP_TAKEOFF,0],[.29,1],[.70,1],[JUMP_TOUCHDOWN,0],[1,0]]);
+        const push = curve([[0,0],[JUMP_TAKEOFF,1],[.28,0],[1,0]]);
+        const landing = curve([[0,0],[JUMP_TOUCHDOWN,0],[.89,1],[1,0]]);
+        // A drop pushes out from the shelf rather than springing upward. The
+        // chest leads, while the hocks gather behind it before landing in turn.
+        p.bodyPitch = curve([[0,0],[JUMP_TAKEOFF,.035],[.38,.17 + drop * .09],
+          [.64,.17 + drop * .06],[JUMP_TOUCHDOWN,.055],[.9,.025],[1,0]]);
+        p.hipY += -.07 * crouch + .012 * push - .13 * landing + p.bodyPitch * .55;
+        p.frontHipDrop = p.bodyPitch + .015 * landing;
+        p.bodyY += -.075 * crouch + .015 * push - .14 * landing;
+        p.bodyZ = -.035 * crouch + .035 * push;
+        p.headY -= .04 * crouch + .09 * airborne + .08 * landing;
+        p.headPitch += .18 * airborne; p.headYaw *= 1 - airborne;
+        p.tailPitch -= .32 * airborne; p.tailCurl += .08 * airborne;
+        p.feet.forEach((foot,i) => {
+          if (i < 2) {
+            // Front paws reach down first and remain planted throughout the
+            // landing compression; both endpoints preserve the normal stance.
+            foot.y += curve([[0,0],[JUMP_TAKEOFF,0],[.30,.10],[.50,.015],
+              [.66,-.035],[JUMP_TOUCHDOWN,0],[1,0]]);
+            foot.z += curve([[0,0],[JUMP_TAKEOFF,0],[.31,.08],[.60,.18],
+              [JUMP_TOUCHDOWN,0],[1,0]]);
+          } else {
+            foot.y += curve([[0,0],[JUMP_TAKEOFF,0],[.26,.065],[.43,.20],[.72,.13],[JUMP_TOUCHDOWN,.07],[.90,0],[1,0]]);
+            foot.z += curve([[0,0],[JUMP_TAKEOFF,0],[.23,-.12],[.43,.09],[.75,.07],[.90,0],[1,0]]);
+          }
+        });
+        break;
+      }
+      const rise = Number.isFinite(cat.jumpRise) && cat.jumpRise! > 0 ? clamp(cat.jumpRise! / 2.2) : 0;
       const crouch = curve([[0, 0], [0.09, 1], [0.18, 0], [1, 0]]);
       const release = curve([[0, 0], [0.09, 0], [0.18, 1], [0.30, 1], [0.46, 0], [1, 0]]);
       const landing = curve([[0, 0], [0.77, 0], [0.88, 1], [1, 0]]);
       const airborne = curve([[0, 0], [0.25, 1], [0.72, 1], [1, 0]]);
-      p.hipY += -0.17 * crouch + 0.12 * release - 0.12 * landing;
+      p.hipY += -(0.17 + .025 * rise) * crouch + 0.12 * release - 0.12 * landing;
       p.frontHipDrop = 0.025 * landing;
-      p.bodyY += -0.18 * crouch + 0.11 * release - 0.14 * landing;
+      p.bodyY += -(0.18 + .025 * rise) * crouch + 0.11 * release - 0.14 * landing;
       p.bodyZ = -0.08 * crouch + 0.045 * release + 0.025 * landing;
-      p.bodyPitch = curve([[0, 0], [0.10, -0.055], [0.25, -0.21], [0.51, -0.02], [0.76, 0.12], [0.9, 0.045], [1, 0]]);
+      p.bodyPitch = curve([[0, 0], [0.10, -0.055], [0.25, -0.21 - .18 * rise], [0.51, -0.02 - .15 * rise], [0.76, 0.12 * (1 - rise)], [0.9, 0.045], [1, 0]]);
       // Carry the shoulders and hips with the pitched torso; otherwise folded
       // upper legs can visibly pull away from the chest during takeoff.
       p.hipY += p.bodyPitch * 0.55;
@@ -170,10 +203,10 @@ function targetPose(model: CatModel, cat: CatState, time: number, angry: boolean
         const front = i < 2, first = i % 2 === (front ? lead : 1 - lead);
         const delay = first ? 0 : 0.035;
         if (front) {
-          foot.y += curve([[0, 0], [0.08 + delay, 0], [0.29 + delay, first ? 0.29 : 0.24],
-            [0.50 + delay, first ? 0.27 : 0.23], [0.70 + delay, 0.09], [JUMP_TOUCHDOWN + delay, 0], [1, 0]]);
+          foot.y += curve([[0, 0], [0.08 + delay, 0], [0.29 + delay, (first ? 0.29 : 0.24) + .08 * rise],
+            [0.50 + delay, (first ? 0.27 : 0.23) + .10 * rise], [0.70 + delay, 0.09], [JUMP_TOUCHDOWN + delay, 0], [1, 0]]);
           foot.z += curve([[0, 0], [JUMP_TAKEOFF, 0.035], [0.32 + delay, first ? 0.04 : -0.025],
-            [0.65 + delay, first ? 0.22 : 0.16], [JUMP_TOUCHDOWN + delay, 0], [1, 0]]);
+            [0.65 + delay, (first ? 0.22 : 0.16) + .10 * rise], [JUMP_TOUCHDOWN + delay, 0], [1, 0]]);
         } else {
           // Hold a long, nearly straight rear-leg push as the chest springs up.
           // Only gather the hocks after that extension has had time to read.
@@ -212,12 +245,26 @@ function targetPose(model: CatModel, cat: CatState, time: number, angry: boolean
       p.eyeOpen *= 0.7; p.tailSway *= 0.35;
       break;
     }
-    case 'scratching':
+    case 'scratching': {
+      if (cat.visit?.id === 'christmas-tree' && cat.visit.phase === 'use') {
+        const progress = clamp(cat.pose);
+        const reach = smooth(progress / .14) * (1 - smooth((progress - .55) / .18));
+        const landing = smooth((progress - .65) / .06) * (1 - smooth((progress - .71) / .15));
+        const scrabble = Math.sin(progress * TAU * 12) * .09 * reach;
+        p.rear = .68 * reach; p.headPitch = -.16 * reach; p.headYaw = 0;
+        p.eyeOpen = 1; p.earBack = progress > .45 ? .25 * reach : 0;
+        p.hipY -= .09 * landing; p.bodyY -= .09 * landing; p.headY -= .06 * landing;
+        p.feet[0] = { y: .07 + .23 * reach + scrabble, z: .085 + .16 * reach };
+        p.feet[1] = { y: .07 + .23 * reach - scrabble, z: .085 + .16 * reach };
+        p.tailSway = Math.sin(progress * TAU * 3) * .22 * reach;
+        break;
+      }
       p.bodyPitch = -0.12; p.headPitch = -0.14; p.headY = 0.015;
       p.feet[0] = { y: 0.66 + Math.sin(time * 11) * 0.085, z: 0.38 };
       p.feet[1] = { y: 0.66 - Math.sin(time * 11) * 0.085, z: 0.38 };
       p.tailSway = Math.sin(time * 2.8) * 0.13;
       break;
+    }
     case 'eating':
       p.headY = -0.23 + Math.sin(time * 7.5) * 0.012; p.headZ = 0.035;
       p.headPitch = 0.54 + Math.sin(time * 7.5) * 0.035; p.headYaw = 0;

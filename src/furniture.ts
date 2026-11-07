@@ -17,6 +17,7 @@ export const BENCH = { x: 2.65, z: 6.4 };
 export const BED = { x: 0.45, z: -5.5 };
 export const POST = { x: -6.85, z: 1.7 };
 export const WHEEL = layout.furniture.wheel;
+export const CHRISTMAS_TREE = { x: -2, z: -2 };
 export const FURNITURE: readonly FurnitureSpot[] = [
   { id: 'tree', activity: 'perching', yaw: 0.25, duration: 4.5, route: [
     { x: -5.75, z: 2.15, height: 0 },
@@ -56,6 +57,9 @@ export const FURNITURE: readonly FurnitureSpot[] = [
   ] },
   { id: 'post', activity: 'scratching', yaw: -Math.PI / 2, duration: 3.2, route: [
     { x: -5.75, z: 1.4, height: 0 }, { x: POST.x + 0.31, z: POST.z, height: 0.08 },
+  ] },
+  { id: 'christmas-tree', activity: 'scratching', yaw: Math.PI, duration: 3.2, route: [
+    { x: CHRISTMAS_TREE.x, z: CHRISTMAS_TREE.z + 1.15, height: 0 },
   ] },
 ];
 

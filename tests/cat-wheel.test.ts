@@ -52,7 +52,8 @@ describe('cat exercise wheel', () => {
       return game.wheelSpeed === WHEEL_RUN_SPEED;
     });
     expect(cat.activity).toBe('running');
-    expect(cat.position).toEqual({ x: WHEEL.x, z: WHEEL.z });
+    const placedWheel = game.roomLayout.layout.placed.wheel;
+    expect(cat.position).toEqual({ x: placedWheel.x, z: placedWheel.z });
     expect(cat.elevation).toBeCloseTo(WHEEL.height);
     expect(cat.yaw).toBeCloseTo(Math.PI / 2, 2);
     const stride = cat.stride, angle = game.wheelAngle, position = { ...cat.position };
@@ -64,7 +65,7 @@ describe('cat exercise wheel', () => {
     expect(game.wheelSpeed).toBe(0);
     const stoppedAngle = game.wheelAngle;
     until(game, () => !cat.visit);
-    expect(cat.elevation).toBe(0); expect(clearFloor(cat.position)).toBe(true);
+    expect(cat.elevation).toBe(0); expect(clearFloor(cat.position, 'whole-room', game.roomLayout.navigation)).toBe(true);
     expect(cat.lastFurniture).toBe('wheel'); expect(game.wheelAngle).toBe(stoppedAngle);
   });
 
@@ -84,7 +85,7 @@ describe('cat exercise wheel', () => {
     expect(game.wheelSpeed).toBe(0); expect(game.visitFurniture(other.id, 'wheel')).toBe(false);
     until(game, () => game.events.length > 0);
     expect(cat.visit).toBeUndefined(); expect(cat.elevation).toBe(0);
-    expect(clearFloor(game.events[0].position)).toBe(true);
+    expect(clearFloor(game.events[0].position, 'whole-room', game.roomLayout.navigation)).toBe(true);
     expect(game.visitFurniture(other.id, 'wheel')).toBe(true);
   });
 
@@ -127,7 +128,7 @@ describe('cat exercise wheel', () => {
     game.resume(); game.tick(.1); expect(game.wheelAngle).toBeLessThan(angle);
     expect(game.interactFreeCat('wand', cat.id)).toBe(true);
     until(game, () => !cat.visit);
-    expect(game.wheelSpeed).toBe(0); expect(cat.elevation).toBe(0); expect(clearFloor(cat.position)).toBe(true);
+    expect(game.wheelSpeed).toBe(0); expect(cat.elevation).toBe(0); expect(clearFloor(cat.position, 'whole-room', game.roomLayout.navigation)).toBe(true);
   });
 
   it('keeps paws on or above the curved inner tread and preserves a paused pose', () => {

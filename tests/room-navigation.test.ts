@@ -68,15 +68,15 @@ describe('video lounge navigation', () => {
     expect(game.startFreePlay()).toBe(true);
     const checkStarts = () => {
       for (const cat of game.cats) {
-        expect(clearFloor(cat.position), `cat ${cat.id} starts clear`).toBe(true);
-        for (const spot of FURNITURE) expect(floorRoute(cat.position, spot.route[0]).length, `${cat.id} can reach ${spot.id}`).toBeGreaterThan(0);
+        expect(clearFloor(cat.position, 'whole-room', game.roomLayout.navigation), `cat ${cat.id} starts clear`).toBe(true);
+        for (const spot of game.roomLayout.spots) expect(floorRoute(cat.position, spot.route[0], 'whole-room', game.roomLayout.navigation).length, `${cat.id} can reach ${spot.id}`).toBeGreaterThan(0);
       }
       game.cats.forEach((cat, i) => {
         const bowl = freeBowlPosition(i, game.cats.length);
         const eatingPosition = { x: bowl.x, z: bowl.z + 0.55 };
-        expect(clearFloor(bowl), `bowl ${i} clears all six floor chairs`).toBe(true);
-        expect(clearFloor(eatingPosition), `cat ${i} has floor space to eat`).toBe(true);
-        expect(floorRoute(cat.position, eatingPosition).length).toBeGreaterThan(0);
+        expect(clearFloor(bowl, 'whole-room', game.roomLayout.navigation), `bowl ${i} clears furniture`).toBe(true);
+        expect(clearFloor(eatingPosition, 'whole-room', game.roomLayout.navigation), `cat ${i} has floor space to eat`).toBe(true);
+        expect(floorRoute(cat.position, eatingPosition, 'whole-room', game.roomLayout.navigation).length).toBeGreaterThan(0);
       });
     };
     checkStarts();
@@ -87,7 +87,7 @@ describe('video lounge navigation', () => {
     const starts = game.cats.map(cat => ({ ...cat.position }));
     game.cats.forEach(cat => {
       cat.nextNeedAt = Infinity; cat.activity = 'walking'; cat.decisionAt = Infinity;
-      cat.destination = { x: 0, z: -1.2 };
+      cat.destination = { x: 0, z: 0 };
     });
     game.tick(2);
     game.cats.forEach((cat, i) => expect(Math.hypot(cat.position.x - starts[i].x, cat.position.z - starts[i].z)).toBeGreaterThan(0.1));
@@ -119,16 +119,16 @@ describe('video lounge navigation', () => {
   it('keeps floor roaming outside solid furniture after visits and care interruptions', () => {
     const game = new Game(32); game.reset(); game.phase = 'tutorial';
     const cat = game.cats[0]; cat.nextNeedAt = Infinity;
-    for (const spot of FURNITURE) {
+    for (const spot of game.roomLayout.spots) {
       if (spot.id === 'window') continue; // Sunroom visits are Free Play only.
       // Return the fixture to the clear center before each visit.
-      cat.position = { x: 0, z: -1.2 }; cat.elevation = 0; cat.visit = undefined;
+      cat.position = { x: 0, z: 0 }; cat.elevation = 0; cat.visit = undefined;
       game.events = []; cat.nextNeedAt = Infinity;
       expect(game.visitFurniture(cat.id, spot.id)).toBe(true);
       for (let i = 0; i < 1200 && cat.visit; i++) {
         game.tick(0.05);
         if (game.cats[0].visit?.phase === 'use') game.spawn(cat, 'hunger');
-        if (!cat.visit) expect(clearFloor(cat.position)).toBe(true);
+        if (!cat.visit) expect(clearFloor(cat.position, 'whole-room', game.roomLayout.navigation)).toBe(true);
       }
       expect(cat.visit).toBeUndefined();
     }

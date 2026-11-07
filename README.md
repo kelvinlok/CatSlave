@@ -10,7 +10,19 @@ The lounge is dressed for Christmas throughout: evergreen garlands and warm fair
 
 Each cat wears a Christmas outfit chosen for its appearance, including Santa, elf, reindeer, winter knitwear, holly, and gift-bow variations. Matching footwear includes Santa buckle boots, curled elf shoes with bells, reindeer lace-up booties, and winter or festive slippers. Accessories follow the animated head, body, and each paw in the room and 3D previews. The theme is always active and does not depend on the calendar or change saved progress.
 
-### Closet
+### Cat rooms
+
+In free play, **Cat rooms** opens the eight numbered sleeping rooms in the narrow mural-end section of the left wall (two columns, four rows). The lounge starts with the five-cat victory roster and never admits more than five cats, including reserved places for arriving cats. Browse **Lounge** or **Sleeping** in the closet-style view, swipe the cat portraits, and drag the large preview to turn it. Pick a cat and press **Send to bed** or **Invite out**; empty beds are assigned automatically. When space is available, the screen opens on a sleeping cat ready to invite. The counter distinguishes cats in the lounge from those arriving or returning, and invitations sharing a doorway queue automatically. Cats walk to the rooms, use the shared cabinet and ledge routes, and curl up inside. Other unlocked cats occupy available rooms automatically. Room assignments and the active roster save when transfers finish, without changing outfits or adoption progress. Reloading during a transfer returns to the last settled arrangement. Room editing waits until transfers finish.
+
+The bedrooms are part of the lounge, independent of the festive-decoration switch. The Blender correction is reproducible through `scripts/lounge-cat-rooms.py` and remains editable in `assets/lounge/lounge.blend`.
+
+Cats use the same supported route in both directions: the upper two rows connect through the cabinet and extended side ledge, while the lower rows connect directly to clear floor space. Jumps use gravity-driven arcs, a crouch and push, forepaw-first landing, and recovery. Landing reservations keep cats apart; the upper rooms share the cabinet route and queue to keep it clear.
+
+### Closet and decorations
+
+Wall garlands, wreaths and hanging stockings use the Blender-authored kit in `assets/christmas-wall-decor/decor.blend` (rebuild with `scripts/build-christmas-wall-decor.py`). It replaces the lightweight loading decorations after download, retaining the same festive switch and fixed wall positions.
+
+The movable **Christmas tree** is available in the free-play room editor. Move, rotate or store it like other furniture; existing room saves list it among new furniture to place. Its spiral light strip pulses slowly (steady with reduced motion). Curious cats sometimes climb partway up, slip, and land safely without reaching a perch. The festive switch hides it during play; it remains visible in the editor for arranging. The editable Blender source is `assets/christmas-tree/tree.blend`, rebuilt with `scripts/build-christmas-tree.py`.
 
 The main menu's **Festive decorations** switch shows or hides the room's Christmas trees, garlands, wreaths, stockings, gifts and window snowflakes. The setting is remembered on this browser. It is independent of the closet and each cat's saved outfit; turning decorations off does not remove clothing or lock any pieces.
 
@@ -99,6 +111,8 @@ After the furnished room loads, choose **Arrange room** in Free Play. Cats pause
 **Furniture** lists all 18 movable units. The recliners move with their footstools; cushions, blankets and soft contact shadows stay with their furniture. Built-ins, walls, the feeding shelf and the window access step stay fixed. Placement checks keep furniture inside the room and preserve access for cats. Red outlines explain invalid placements; releasing an invalid move restores its previous position.
 
 **Layouts** loads one of three slots into a draft. **Save** chooses the destination slot and applies the room; saving to another slot copies it. **Cancel** discards the draft, and **Reset room** is undoable. Saves belong to this browser profile and site address, with no backend or device synchronization. **Export JSON** backs up or shares a layout; **Import JSON** previews it before saving. If storage is unavailable, the editor offers retry, export and session-only use.
+
+New games, newly created layout slots, and **Reset room** use the arrangement in `assets/lounge/default-layout.json`: 16 placed pieces, with chairs 3 and 4 and table 2 stored in inventory. Existing saved slots keep their own placements.
 
 Drag furniture to move it. A selected piece shows **↻** to rotate and **×** to store it in Inventory; a brief toast names the stored item. Open **Furniture**, choose the box filter, and place a stored item on clear floor to return it. **Free view / Top view** switches between an orbitable perspective and the overhead editing camera; drag empty floor to orbit in free view, or pan in top view. Pinch/wheel zoom works in either view. Undo, redo, grid snapping, fit-room and reset are directly accessible in the compact toolbar. Keyboard shortcuts remain available. Save and Layouts show visual room cards for the draft and three slots, including placed/inventory counts and an active-slot marker. Storing is undoable; slots and JSON exports retain stored items and their last positions. Deliberately stored furniture does not trigger update warnings.
 
